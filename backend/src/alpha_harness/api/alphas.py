@@ -23,7 +23,13 @@ from ..labs.fastexpr import ParseError, data_fields, operator_count, operator_na
 from ..labs.params import TASK_SAMPLERS
 from ..schemas import Out
 from ..tools import portfolio
-from ..vault.yields import PLATFORM_ALPHA_URL, Verdict, checks_of, verdict
+from ..vault.yields import (
+    PLATFORM_ALPHA_URL,
+    Verdict,
+    checks_of,
+    verdict,
+    without_quota_checks,
+)
 from .deps import State
 from .portfolio import PortfolioResult
 
@@ -218,7 +224,9 @@ def _info(alpha_id: str, body: dict[str, Any]) -> AlphaInfo:
     sample = body.get("is") or {}
     settings = body.get("settings") or {}
     counted, fields, operators = _power_pool_counts(code.get("code"))
-    checks = [c for c in sample.get("checks") or [] if isinstance(c, dict)]
+    # BRAIN sends the day's submission quota alongside the Alpha's own checks; it says
+    # nothing about the Alpha and resets tomorrow, so it is dropped here as everywhere.
+    checks = without_quota_checks([c for c in sample.get("checks") or [] if isinstance(c, dict)])
     return AlphaInfo(
         alpha_id=alpha_id,
         type=body.get("type"),

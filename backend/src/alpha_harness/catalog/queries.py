@@ -99,6 +99,9 @@ class FieldFilter(BaseModel):
     #: region-agnostically on. Meaningless when the scope already is ``ALL``.
     region_agnostic: bool = False
 
+    #: Only fields found in no other synced region, region ``ALL`` included.
+    region_exclusive: bool = False
+
     #: ``smart`` (ranked words) or ``text`` (literal substring).
     search_mode: str = SMART
 
@@ -177,6 +180,10 @@ class FieldFilter(BaseModel):
             # being asked is whether the field exists there at all.
             clauses.append("field_id IN (SELECT field_id FROM data_field WHERE region = ?)")
             params.append(REGION_AGNOSTIC_REGION)
+
+        if self.region_exclusive:
+            clauses.append("field_id NOT IN (SELECT field_id FROM data_field WHERE region <> ?)")
+            params.append(scope.region)
 
         if self.has_theme is not None:
             clauses.append("themes IS NOT NULL" if self.has_theme else "themes IS NULL")

@@ -132,6 +132,12 @@ class SettingsParams(TaskParams):
         validation_alias=AliasChoices("nanHandling", "nan_handling"),
         serialization_alias="nanHandling",
     )
+    #: ``P{years}Y{months}M0D``. Empty on a task added before it was recorded.
+    test_period: str = Field(
+        default="",
+        validation_alias=AliasChoices("testPeriod", "test_period"),
+        serialization_alias="testPeriod",
+    )
 
 
 class BreakerParams(TaskParams):

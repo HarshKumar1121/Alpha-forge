@@ -399,12 +399,29 @@ async def _unsynced(state: Any, schema: dict[str, Any]) -> int:
     return len(offered - synced)
 
 
+#: Neutralization that neutralizes against nothing.
+NO_NEUTRALIZATION = "NONE"
+
+
+def market_neutral(neutralization: str, trade: str, position: str) -> bool:
+    """Whether this combination holds the book against the market at all.
+
+    ``NONE`` with neither Max Trade nor Max Position is the one combination that does not:
+    nothing is projected out and nothing is capped, so the Alpha carries the market's own
+    direction. Either constraint on its own is enough, which is why this is not simply
+    "neutralization is not NONE".
+    """
+    return neutralization != NO_NEUTRALIZATION or trade == "ON" or position == "ON"
+
+
 def expand(
     plan_rows: list[dict[str, Any]],
     chosen: set[tuple[str, int, str]],
     neutralizations: set[str],
     pairs: set[tuple[str, str]],
     source: dict[str, Any],
+    *,
+    market_neutral_only: bool = True,
 ) -> list[SimulationRequest]:
     """Every simulation the selection asks for, ordered for both packing and watching.
 
@@ -454,6 +471,8 @@ def expand(
         for market, neutralization, (trade, position) in product(
             markets, legal_neutral, legal_pairs
         ):
+            if market_neutral_only and not market_neutral(neutralization, trade, position):
+                continue
             key = (str(market["region"]), int(market["delay"]))
             request = SimulationRequest(
                 settings=SimulationSettings(

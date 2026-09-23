@@ -1,226 +1,129 @@
-/** Every submittable Alpha from every task in one sortable list. */
+/**
+ * Every submittable Alpha from every task, on the same pane a single task's results use.
+ */
 
 import { useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import { cn } from '@/lib/cn'
 import { DASH, fmt } from '@/lib/format'
 import { useRefetchOn } from '@/lib/ws'
-import { MetricBadge, signTone, TEXT_TONE } from '@/ui/kit'
-import { type Column, DataTable, type Sort } from '@/ui/table'
-import { labTasks, type TaskAlpha } from './api'
+import { AlphaPane } from '@/screens/tasks/alpha-pane'
+import { labTasks, type RankedAlpha, type TaskAlpha } from '@/screens/tasks/api'
+import { AFTER_COST_HEADER, DELAY, INVESTABILITY, investability } from '@/screens/tasks/columns'
+import { signTone, TEXT_TONE } from '@/ui/kit'
+import type { Column, Sort } from '@/ui/table'
 
-const setting = (r: TaskAlpha, key: string) => r.settings?.[key] as string | number | undefined
+const setting = (r: RankedAlpha, key: string) => String(r.settings?.[key] ?? '')
+const task = (r: RankedAlpha) => (r as TaskAlpha).taskName ?? ''
 
-/** What each column sorts on: numbers as numbers, the rest as text, missing values last. */
-const SORT: Record<string, (r: TaskAlpha) => number | string | null | undefined> = {
-  alphaId: (r) => r.alphaId,
-  sharpe: (r) => r.sharpe,
-  turnover: (r) => r.turnover,
-  fitness: (r) => r.fitness,
-  returns: (r) => r.returns,
-  drawdown: (r) => r.drawdown,
-  margin: (r) => r.margin,
-  longCount: (r) => r.longCount,
-  shortCount: (r) => r.shortCount,
-  region: (r) => setting(r, 'region'),
-  universe: (r) => setting(r, 'universe'),
-  delay: (r) => setting(r, 'delay'),
-  neutralization: (r) => setting(r, 'neutralization'),
-  decay: (r) => setting(r, 'decay'),
-  maxTrade: (r) => setting(r, 'maxTrade'),
-  maxPosition: (r) => setting(r, 'maxPosition'),
-  checks: (r) => (r.pending ? 'PENDING' : 'PASS'),
-  task: (r) => r.taskName,
-}
+const METRICS: { key: keyof RankedAlpha; label: string; show: (v: number | null) => string }[] = [
+  { key: 'sharpe', label: 'Sharpe', show: (v) => fmt.ratio(v) },
+  { key: 'turnover', label: 'Turnover', show: (v) => fmt.pct(v, 2) },
+  { key: 'fitness', label: 'Fitness', show: (v) => fmt.ratio(v) },
+  { key: 'returns', label: 'Returns', show: (v) => fmt.pct(v, 2) },
+  { key: 'drawdown', label: 'Drawdown', show: (v) => fmt.pct(v, 2) },
+  { key: 'margin', label: 'Margin', show: (v) => fmt.bps(v, 2) },
+  { key: 'afterCostSharpe', label: 'After-Cost Sharpe', show: (v) => fmt.ratio(v) },
+]
 
-const num = (value: string) => <span className="num">{value}</span>
+const SIGNED = new Set(['sharpe', 'fitness', 'returns', 'margin', 'afterCostSharpe'])
 
-const COLUMNS: Column<TaskAlpha>[] = [
-  {
-    key: 'alphaId',
-    header: 'Alpha',
-    width: '104px',
-    sortable: true,
-    cell: (r) => num(r.alphaId ?? DASH),
-  },
-  {
-    key: 'sharpe',
-    header: 'Sharpe',
-    width: '88px',
-    align: 'right',
-    sortable: true,
-    cell: (r) => (
-      <MetricBadge tone={signTone(r.sharpe) === 'loss' ? 'loss' : 'profit'}>
-        {fmt.ratio(r.sharpe)}
-      </MetricBadge>
-    ),
-  },
-  {
-    key: 'turnover',
-    header: 'Turnover',
-    width: '92px',
-    align: 'right',
-    sortable: true,
-    cell: (r) => num(fmt.pct(r.turnover, 2)),
-  },
-  {
-    key: 'fitness',
-    header: 'Fitness',
-    width: '80px',
-    align: 'right',
-    sortable: true,
-    cell: (r) => (
-      <span className={`num ${TEXT_TONE[signTone(r.fitness)]}`}>{fmt.ratio(r.fitness)}</span>
-    ),
-  },
-  {
-    key: 'returns',
-    header: 'Returns',
-    width: '88px',
-    align: 'right',
-    sortable: true,
-    cell: (r) => num(fmt.pct(r.returns, 2)),
-  },
-  {
-    key: 'drawdown',
-    header: 'Drawdown',
-    width: '96px',
-    align: 'right',
-    sortable: true,
-    cell: (r) => num(fmt.pct(r.drawdown, 2)),
-  },
-  {
-    key: 'margin',
-    header: 'Margin',
-    width: '96px',
-    align: 'right',
-    sortable: true,
-    cell: (r) => num(fmt.bps(r.margin, 2)),
-  },
-  {
-    key: 'longCount',
-    header: 'Long',
-    width: '72px',
-    align: 'right',
-    sortable: true,
-    cell: (r) => num(r.longCount == null ? DASH : String(r.longCount)),
-  },
-  {
-    key: 'shortCount',
-    header: 'Short',
-    width: '72px',
-    align: 'right',
-    sortable: true,
-    cell: (r) => num(r.shortCount == null ? DASH : String(r.shortCount)),
-  },
+/** The task's own columns, minus Checks Failed — every row here has none — plus the task. */
+const columns = (): Column<RankedAlpha>[] => [
   {
     key: 'region',
     header: 'Region',
-    width: '76px',
+    width: 'minmax(70px,0.7fr)',
     sortable: true,
-    cell: (r) => setting(r, 'region') ?? DASH,
+    cell: (r) => <span className="num">{setting(r, 'region') || DASH}</span>,
   },
+  DELAY,
   {
     key: 'universe',
     header: 'Universe',
-    width: '104px',
+    width: 'minmax(84px,0.9fr)',
     sortable: true,
-    cell: (r) => setting(r, 'universe') ?? DASH,
-  },
-  {
-    key: 'delay',
-    header: 'Delay',
-    width: '68px',
-    sortable: true,
-    cell: (r) => (setting(r, 'delay') == null ? DASH : `D${setting(r, 'delay')}`),
+    cell: (r) => <span className="num truncate">{setting(r, 'universe') || DASH}</span>,
   },
   {
     key: 'neutralization',
     header: 'Neutralization',
-    width: '150px',
+    width: 'minmax(96px,1fr)',
     sortable: true,
-    cell: (r) => setting(r, 'neutralization') ?? DASH,
+    cell: (r) => <span className="num truncate">{setting(r, 'neutralization') || DASH}</span>,
   },
-  {
-    key: 'decay',
-    header: 'Decay',
-    width: '68px',
-    align: 'right',
-    sortable: true,
-    cell: (r) => num(String(setting(r, 'decay') ?? DASH)),
-  },
-  {
-    key: 'maxTrade',
-    header: 'Max Trade',
-    width: '96px',
-    sortable: true,
-    cell: (r) => setting(r, 'maxTrade') ?? DASH,
-  },
-  {
-    key: 'maxPosition',
-    header: 'Max Position',
-    width: '112px',
-    sortable: true,
-    cell: (r) => setting(r, 'maxPosition') ?? DASH,
-  },
-  {
-    key: 'checks',
-    header: 'Checks',
-    width: '92px',
-    sortable: true,
-    cell: (r) =>
-      // Green either way: nothing has refused these, which is what the pane lists.
-      r.pending ? (
-        <span className="text-pnl-positive">Pending</span>
-      ) : (
-        <span className="text-pnl-positive">Pass</span>
-      ),
-  },
+  INVESTABILITY,
+  ...METRICS.map(
+    (m): Column<RankedAlpha> => ({
+      key: String(m.key),
+      header: m.key === 'afterCostSharpe' ? AFTER_COST_HEADER : m.label,
+      width: 'minmax(84px,0.8fr)',
+      align: 'right',
+      sortable: true,
+      cell: (r) => {
+        const value = r[m.key] as number | null
+        return (
+          <span className={cn('num', SIGNED.has(String(m.key)) && TEXT_TONE[signTone(value)])}>
+            {m.show(value)}
+          </span>
+        )
+      },
+    }),
+  ),
   {
     key: 'task',
     header: 'Task',
-    width: 'minmax(200px,1fr)',
+    width: 'minmax(180px,1.4fr)',
     sortable: true,
-    cell: (r) => <span className="truncate text-ink-muted">{r.taskName}</span>,
+    cell: (r) => <span className="truncate text-ink-muted">{task(r)}</span>,
   },
 ]
 
-function compare(a: TaskAlpha, b: TaskAlpha, sort: Sort) {
-  const get = SORT[sort.key] ?? SORT['sharpe']
-  const x = get?.(a)
-  const y = get?.(b)
-  // Missing values sink to the bottom whichever way the column is sorted.
-  if (x == null || y == null) return x == null ? (y == null ? 0 : 1) : -1
-  const order =
-    typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y))
+function compare(a: RankedAlpha, b: RankedAlpha, sort: Sort): number {
+  const pick = (r: RankedAlpha): string | number | null => {
+    switch (sort.key) {
+      case 'region':
+      case 'universe':
+      case 'neutralization':
+        return setting(r, sort.key)
+      case 'investability':
+        return investability(r)
+      case 'delay':
+        return (r.settings?.['delay'] as number | undefined) ?? null
+      case 'task':
+        return task(r)
+      default:
+        return (r as unknown as Record<string, number | null>)[sort.key] ?? null
+    }
+  }
+  const x = pick(a)
+  const y = pick(b)
+  if (x == null) return y == null ? 0 : 1
+  if (y == null) return -1
+  const order = typeof x === 'string' ? x.localeCompare(String(y)) : Number(x) - Number(y)
   return sort.desc ? -order : order
 }
 
-export function SubmittableAlphas({ onOpenAlpha }: { onOpenAlpha: (alphaId: string) => void }) {
+export function SubmittableAlphas() {
   const query = useQuery({ queryKey: ['submittable-alphas'], queryFn: labTasks.submittable })
   // Its own key, refreshed at most every 30s: reading every task's Alphas takes about a second,
   // too long to redo on each of the Tasks screen's two-second updates.
   useRefetchOn('studies', ['submittable-alphas'], 30_000)
   const [sort, setSort] = useState<Sort>({ key: 'sharpe', desc: true })
-  const rows = [...(query.data ?? [])].sort((a, b) => compare(a, b, sort))
+  const rows = useMemo<RankedAlpha[]>(() => query.data ?? [], [query.data])
+
   return (
-    <div className="flex flex-col gap-3">
-      <p className="text-body-compact text-ink-subtle">
-        <span className="num text-ink">{fmt.int(rows.length)}</span> submittable Alphas from every
-        task: no check fails, only PASS, WARNING or PENDING, apart from checks that never block a
-        submission (Prod Correlation, Regular Submission and the theme and pyramid labels).
-      </p>
-      <DataTable
-        label="Submittable Alphas"
-        rows={rows}
-        columns={COLUMNS}
-        rowKey={(r) => r.alphaId ?? String(r.trialId)}
-        onRowClick={(r) => r.alphaId && onOpenAlpha(r.alphaId)}
-        sort={sort}
-        onSort={setSort}
-        loading={query.isPending}
-        error={query.error}
-        empty="No submittable Alphas yet."
-      />
-    </div>
+    <AlphaPane
+      title="Submittable Alphas"
+      rows={rows}
+      columns={columns}
+      compare={compare}
+      poolColumnAfter="investability"
+      sort={sort}
+      onSort={setSort}
+      loading={query.isPending}
+      error={query.error}
+      onRefresh={() => query.refetch()}
+    />
   )
 }

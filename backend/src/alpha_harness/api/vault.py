@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import timedelta
 from typing import Annotated, Any, Literal
 
@@ -11,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from ..brain.filters import AlphaQuery
 from ..schemas import Out
-from ..vault.yields import PLATFORM_ALPHA_URL
+from ..vault.yields import PLATFORM_ALPHA_URL, checks_of
 from .deps import State, refuse
 
 router = APIRouter(prefix="/api/vault", tags=["vault"])
@@ -272,7 +271,7 @@ async def alpha_detail(alpha_id: str, state: State) -> AlphaDetail:
                 k: row.get(k)
                 for k in ("region", "universe", "delay", "neutralization", "decay", "truncation")
             },
-            "checks": json.loads(row["checks"]) if row.get("checks") else [],
+            "checks": checks_of(row.get("checks")),
             "pnl": values,
             "dates": dates,
             "days": len(values),

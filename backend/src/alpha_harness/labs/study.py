@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 from datetime import UTC, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -38,7 +37,7 @@ from ..db.models import (
     TrialState,
     utcnow,
 )
-from ..vault.yields import verdict
+from ..vault.yields import IGNORED_CHECKS, QUOTA_CHECKS, checks_of, verdict
 from . import objectives as obj
 from . import scheduler
 from .objectives import StudyNotFoundError
@@ -639,7 +638,15 @@ def ranked(
                 "drawdown": stats.get("drawdown"),
                 "margin": stats.get("margin"),
                 "feasible": t.feasible,
-                "failedChecks": result.get("failedChecks") or [],
+                # A trial's own list is frozen at simulation time and predates the rule that
+                # a quota check is not the Alpha's business, so it is filtered on the way out
+                # as well as on the way in.
+                "failedChecks": (failed := without_quota_checks_by_name(result)),
+                # Of those, the ones that actually refuse the Alpha. A check in
+                # ``IGNORED_CHECKS`` can FAIL without meaning anything about the Alpha --
+                # ``REGULAR_SUBMISSION`` is your submission quota -- so ``verdict`` skips it
+                # and anything counting refusals has to skip it too, or the two disagree.
+                "refusedBy": [c for c in failed if str(c).upper() not in IGNORED_CHECKS],
                 "submittable": submittable(result),
                 "pending": still_judging(result),
                 "source": bool((t.params or {}).get("source")),
@@ -648,13 +655,15 @@ def ranked(
     return rows
 
 
+def without_quota_checks_by_name(result: dict[str, Any]) -> list[str]:
+    """A result's failed checks, less the ones that describe the day's submission quota."""
+    failed = result.get("failedChecks") or []
+    return [c for c in failed if str(c).upper() not in QUOTA_CHECKS]
+
+
 def vault_summary(saved: dict[str, Any]) -> dict[str, Any]:
     """The result row for an Alpha read from the local store instead of from BRAIN."""
-    try:
-        checks = json.loads(saved.get("checks") or "[]")
-    except ValueError:
-        checks = []
-    checks = [c for c in checks if isinstance(c, dict)] if isinstance(checks, list) else []
+    checks = checks_of(saved.get("checks"))
     failed = [c.get("name") for c in checks if c.get("result") == "FAIL"]
     return {
         "alphaId": saved.get("alpha_id"),

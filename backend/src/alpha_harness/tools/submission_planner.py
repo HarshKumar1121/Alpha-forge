@@ -76,7 +76,7 @@ def grid(
     return kept, dates, m
 
 
-def correlations(m: Floats) -> Floats:
+def correlations(m: Floats, against: Floats | None = None) -> Floats:
     """Pairwise Pearson correlation, each pair measured only on the days both Alphas traded.
 
     One masked matrix operation rather than ``labs.ga.correlation`` per pair: that is the same
@@ -86,28 +86,39 @@ def correlations(m: Floats) -> Floats:
     once. ``z`` is exactly zero where an Alpha did not trade, which is what lets a pair's sums
     carry only the *other* Alpha's mask; only the day count needs both. Measured 19x faster
     than the same arithmetic walked column by column, and identical to the last bit.
+
+    ``against``, on the same calendar, asks for one block only: each column of ``m`` against
+    each of its own. A sweep judged against a pool of fifty never reads its own pairs, which
+    at 2,500 Alphas were 98% of a second's work and half a gigabyte.
     """
     # Float: ``@`` on two boolean arrays is an OR-of-ANDs, which would turn ``count`` into
     # "did they ever overlap" and quietly retire the whole correlation ceiling.
     have = (~np.isnan(m)).astype(np.float64)
     z = np.nan_to_num(m)
     zz = z * z
+    if against is None:
+        have_r, z_r, zz_r = have, z, zz
+    else:
+        have_r = (~np.isnan(against)).astype(np.float64)
+        z_r = np.nan_to_num(against)
+        zz_r = z_r * z_r
 
-    count = have.T @ have
-    sum_l = z.T @ have
-    sum_r = sum_l.T
-    square_l = zz.T @ have
-    square_r = square_l.T
+    count = have.T @ have_r
+    sum_l = z.T @ have_r
+    sum_r = sum_l.T if against is None else have.T @ z_r
+    square_l = zz.T @ have_r
+    square_r = square_l.T if against is None else have.T @ zz_r
     safe = np.maximum(count, 1.0)
 
-    cov = (z.T @ z) - sum_l * sum_r / safe
+    cov = (z.T @ z_r) - sum_l * sum_r / safe
     dev_l = np.sqrt(np.maximum(square_l - sum_l**2 / safe, 0.0))
     dev_r = np.sqrt(np.maximum(square_r - sum_r**2 / safe, 0.0))
     usable = (dev_l > 0) & (dev_r > 0) & (count >= MIN_OVERLAP)
     # Cancellation in the one-pass moments can land a correlation a few ulps outside [-1, 1],
     # which is harmless arithmetic and an alarming thing to print next to a 0.50 ceiling.
     out = np.clip(np.where(usable, cov / np.maximum(dev_l * dev_r, 1e-12), np.nan), -1.0, 1.0)
-    np.fill_diagonal(out, 1.0)
+    if against is None:
+        np.fill_diagonal(out, 1.0)
     return out
 
 

@@ -31,7 +31,7 @@ from sqlalchemy import String, func, select, type_coerce
 from ..brain.schemas import TEST_PERIOD, SimulationRequest, SimulationSettings
 from ..db.models import Study, Trial, TrialState
 from ..vault.store import EVOLVABLE, EVOLVABLE_TYPES, SUBMITTED
-from ..vault.yields import IGNORED_CHECKS
+from ..vault.yields import IGNORED_CHECKS, checks_of
 from . import search, template
 from .fastexpr import (
     UNCOUNTED,
@@ -144,11 +144,7 @@ def seed_score(row: dict[str, Any]) -> float:
     A negative score is divided instead, so passing more checks always ranks higher.
     """
     score = utility(row)
-    try:
-        checks = json.loads(row.get("checks") or "[]")
-    except ValueError:
-        checks = []
-    rate = pass_rate(checks if isinstance(checks, list) else [])
+    rate = pass_rate(checks_of(row.get("checks")))
     if rate is None or not math.isfinite(score):
         return score
     return score * (1 + rate) if score >= 0 else score / (1 + rate)

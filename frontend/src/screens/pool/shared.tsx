@@ -128,7 +128,10 @@ export function AstInspector({
         className,
       )}
     >
-      <code className="num block min-w-0 flex-1 break-all text-body-compact leading-relaxed text-ink selection:bg-primary-subtle">
+      {/* `pre-wrap`, not the browser's default for `code`, which collapses every run of
+          whitespace: a multi-statement expression is written across lines and reads as one
+          line without it. Still wraps, so a long single line is not pushed off the panel. */}
+      <code className="num block min-w-0 flex-1 break-all whitespace-pre-wrap text-body-compact leading-relaxed text-ink selection:bg-primary-subtle">
         {tokens.map((token, i) => (
           <span key={i} className={AST_CLASS[token.kind]}>
             {token.text}

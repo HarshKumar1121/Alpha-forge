@@ -33,18 +33,25 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
-#: Checks that label an alpha rather than gate it. The platform reports these as
-#: ``WARNING`` on every alpha checked, passing or failing, so judging them would make
-#: nothing submittable.
+#: Checks that describe the *account's* submission quota rather than the Alpha, and are
+#: therefore not kept at all -- not stored, not read back, not shown.
 #:
-#: ``PROD_CORRELATION`` and ``REGULAR_SUBMISSION`` gate nothing a consultant is kept from
-#: submitting, so they are excused too. ``SELF_CORRELATION`` is deliberately *not* here: an
-#: alpha too close to the pool genuinely cannot be submitted, and excusing it would hide the
-#: signal that should reallocate cores.
+#: BRAIN attaches them to every Alpha it checks and they answer a question about the day:
+#: ``REGULAR_SUBMISSION`` fails once four Alphas have gone in, ``D0_SUBMISSION`` once the D0
+#: allowance is spent. Both reset tomorrow, so a FAIL frozen into an Alpha's row is a fact
+#: about an afternoon that outlives it -- and the Alpha reads as refused forever.
+QUOTA_CHECKS = frozenset({"REGULAR_SUBMISSION", "D0_SUBMISSION"})
+
+#: Checks that label an alpha rather than gate it. The platform reports these as ``WARNING``
+#: on every alpha checked, passing or failing, so judging them would make nothing submittable.
+#:
+#: ``PROD_CORRELATION`` gates nothing a consultant is kept from submitting, so it is excused
+#: too. ``SELF_CORRELATION`` is deliberately *not* here: an alpha too close to the pool
+#: genuinely cannot be submitted, and excusing it would hide the signal that should
+#: reallocate cores.
 IGNORED_CHECKS = frozenset(
     {
         "PROD_CORRELATION",
-        "REGULAR_SUBMISSION",
         "MATCHES_COMPETITION",
         "MATCHES_PYRAMID",
         "MATCHES_THEMES",
@@ -54,6 +61,32 @@ IGNORED_CHECKS = frozenset(
         "POWER_POOL_DESCRIPTION_FORMAT",
     }
 )
+
+#: BRAIN attaches this check to an Alpha it considers Power Pool eligible, and to no other.
+#: Being Power Pool is independent of being submittable: an Alpha can carry this and still
+#: FAIL a regular threshold, which is the usual case for a Sharpe between Power Pool's 1.0
+#: and the region's own bar.
+#:
+#: The check itself sits at ``PENDING`` until BRAIN is asked to run it, so its *presence* is
+#: the signal and its result is not. Measured on a consultant's vault: it separates 2,553 of
+#: 29,753 Alphas and agrees with the ``Power Pool Alpha`` classification on every submitted
+#: one. The classification cannot stand in for it, because BRAIN assigns that only after
+#: submission -- no unsubmitted Alpha carries it.
+#:
+#: Being Power Pool is independent of being submittable, so this never enters :func:`verdict`.
+#: An Alpha whose Sharpe clears Power Pool's 1.0 but not its region's own bar carries this
+#: check *and* a ``LOW_SHARPE`` FAIL: 49 of one sweep's 279 Power Pool Alphas, measured.
+POWER_POOL_CHECK = "POWER_POOL_CORRELATION"
+
+
+def is_power_pool(checks: list[dict[str, Any]]) -> bool:
+    """Whether BRAIN judges this Alpha as a Power Pool Alpha.
+
+    Matched on the whole name: ``POWER_POOL_DESCRIPTION_LENGTH`` and
+    ``POWER_POOL_DESCRIPTION_FORMAT`` share the prefix and say nothing about eligibility.
+    """
+    return any(str(c.get("name", "")).upper() == POWER_POOL_CHECK for c in checks)
+
 
 #: Results that refuse an alpha. ``WARNING`` is not one: a threshold missed by an alpha that
 #: qualifies another way (Power Pool, ATOM) stays ``WARNING`` once BRAIN has finished, and BRAIN
@@ -65,15 +98,26 @@ REFUSING = frozenset({"FAIL", "ERROR"})
 Verdict = Literal["submittable", "pending", "refused"]
 
 
+def without_quota_checks(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The checks worth keeping: everything but :data:`QUOTA_CHECKS`."""
+    return [c for c in checks if str(c.get("name", "")).upper() not in QUOTA_CHECKS]
+
+
 def checks_of(checks_json: str | None) -> list[dict[str, Any]]:
-    """The stored checks array, or empty when missing or unreadable."""
+    """The stored checks array, or empty when missing or unreadable.
+
+    Quota checks are dropped here as well as on the way in, so rows written before they were
+    refused still read as if they never carried one. Nothing has to be migrated for that.
+    """
     if not checks_json:
         return []
     try:
         checks = json.loads(checks_json)
     except json.JSONDecodeError, TypeError:
         return []
-    return [c for c in checks if isinstance(c, dict)] if isinstance(checks, list) else []
+    if not isinstance(checks, list):
+        return []
+    return without_quota_checks([c for c in checks if isinstance(c, dict)])
 
 
 def verdict(checks: list[dict[str, Any]], simulation_mode: str | None = None) -> Verdict | None:
@@ -113,8 +157,8 @@ def is_submittable(checks_json: str | None, simulation_mode: str | None = None) 
 def is_promising(checks_json: str | None, simulation_mode: str | None = None) -> bool:
     """Whether this alpha can still come out submittable: nothing refused it, some check PENDING.
 
-    A finished simulation leaves ``SELF_CORRELATION``, ``PROD_CORRELATION``,
-    ``REGULAR_SUBMISSION`` and ``IS_LADDER_SHARPE`` ``PENDING`` until BRAIN is asked to check it.
+    A finished simulation leaves ``SELF_CORRELATION``, ``PROD_CORRELATION`` and
+    ``IS_LADDER_SHARPE`` ``PENDING`` until BRAIN is asked to check it.
     """
     return verdict(checks_of(checks_json), simulation_mode) == "pending"
 
@@ -227,7 +271,7 @@ class YieldBook:
                 "margin": row.get("margin"),
                 "trainSharpe": row.get("train_sharpe"),
                 "testSharpe": row.get("test_sharpe"),
-                "checks": json.loads(row["checks"]) if row.get("checks") else [],
+                "checks": checks_of(row.get("checks")),
                 "pnl": series.get(alpha_id, []),
                 "brainUrl": f"{PLATFORM_ALPHA_URL}{alpha_id}",
             }
@@ -287,6 +331,11 @@ FIXABLE_CHECKS = frozenset(
 )
 
 #: Where an alpha lives on the platform. The consultant submits it there, never here.
+#:
+#: Singular. ``/alphas/:id`` in the router's table is the *list* and its ``:id`` is a tab --
+#: ``/alphas/unsubmitted``, ``/alphas/lists`` -- not an Alpha. A "does not exist or belongs to
+#: another user" from this link means BRAIN no longer keeps that simulation: it retains the
+#: last 10,000, and an account past that loses the oldest.
 PLATFORM_ALPHA_URL = "https://platform.worldquantbrain.com/alpha/"
 
 #: Points in a sparkline. More than this is invisible at the size it is drawn.

@@ -242,16 +242,21 @@ class BrainClient:
     def _measure(self, bucket: str, headers: httpx.Headers) -> None:
         """Read this endpoint's window off the response: how many, and how long until reset."""
         limit = _header_num(headers, "ratelimit-limit")
+        left = _header_num(headers, "ratelimit-remaining")
         reset = _header_num(headers, "ratelimit-reset")
         if reset is not None and reset > EPOCH_SECONDS:
             # Some gateways report the moment the window rolls over rather than how long
             # until it does. Taken literally that is a sleep measured in decades.
             reset = max(0.0, reset - time.time())
-        if limit and limit > 0 and reset and 0 < reset <= MAX_MEASURED_GAP:
-            # Paces starts, not finishes. ``remaining`` is deliberately unused: a one-slot
-            # window reports nothing left after every request, and deferring from the moment
-            # a slow download *ends* would queue the next start behind its transfer.
-            self._gap[bucket] = reset / limit
+        if left is None:
+            left = limit
+        if limit and limit > 0 and left is not None and reset and reset > 0:
+            # What is left of the window over what is left of its time, pacing starts rather
+            # than finishes. ``reset / limit`` speeds up as the window runs down, whatever was
+            # spent: BRAIN's hour of 2,000 then runs dry with a third of it to go. Capped, not
+            # dropped: past the cap the window is all but spent, and unpaced only draws the 429
+            # sooner. ``max``: a one-slot window reports none left after every request.
+            self._gap[bucket] = min(reset / max(left, 1.0), MAX_MEASURED_GAP)
         else:
             # Not metered this way, or a window we cannot make sense of. Left unpaced and
             # left to the Retry-After gate, which is safer than obeying a nonsense number.

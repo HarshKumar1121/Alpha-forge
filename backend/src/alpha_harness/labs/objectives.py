@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..brain.schemas import Alpha, Check, CheckResult, SampleStats
+from ..vault.yields import without_quota_checks
 
 Direction = str  # "maximize" | "minimize"
 
@@ -192,6 +193,7 @@ def summarise(alpha: Alpha) -> dict[str, Any]:
     """The per-trial result row the UI shows, with nothing dropped."""
     stats = alpha.in_sample
     violations, detail = constraints(alpha)
+    detail = without_quota_checks(detail)
     return {
         "alphaId": alpha.id,
         "grade": alpha.grade,

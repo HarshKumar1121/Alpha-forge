@@ -16,11 +16,13 @@ import { toast } from 'sonner'
 import { errorMessage } from '@/api/http'
 import { cn } from '@/lib/cn'
 import { DASH, fmt } from '@/lib/format'
+import { neutralizationLabel } from '@/lib/neutralization'
 import { DEFAULT_SCOPE, regionLabel, useScopeOptions } from '@/lib/scope'
 import { AstInspector } from '@/screens/pool/shared'
 import { NeutralizationPicker } from '@/screens/research-labs/neutralization'
 import {
   Button,
+  Chips,
   Empty,
   ErrorNotice,
   Field,
@@ -110,6 +112,7 @@ function resolve(
   chosen: ReadonlySet<string>,
   neutralizations: string[],
   pairs: string[],
+  marketNeutralOnly: boolean,
 ) {
   const neutral = new Set(neutralizations)
   const pairSet = new Set(pairs)
@@ -120,8 +123,18 @@ function resolve(
   for (const region of plan?.regions ?? []) {
     const live = region.markets
     const neutHere = region.neutralizations.filter((n) => neutral.has(n)).length
-    const pairsHere = region.pairs.filter((p) => pairSet.has(pairKey(p))).length
-    const per = neutHere * pairsHere
+    const legalPairs = region.pairs.filter((p) => pairSet.has(pairKey(p)))
+    const pairsHere = legalPairs.length
+    // The one combination the sweep drops when it is asked to: neither neutralized nor
+    // constrained. Counted per market, so the estimate matches what actually runs.
+    const unhedged =
+      marketNeutralOnly &&
+      neutral.has('NONE') &&
+      region.neutralizations.includes('NONE') &&
+      legalPairs.some((p) => p.maxTrade === 'OFF' && p.maxPosition === 'OFF')
+        ? 1
+        : 0
+    const per = neutHere * pairsHere - unhedged
 
     const byDelay = new Map<number, typeof live>()
     for (const market of live) {
@@ -435,6 +448,7 @@ export function SettingsSamplerScreen() {
   const [neutralizations, setNeutralizations] = useState<string[]>([])
   const [pairs, setPairs] = useState<string[]>([])
   const [cores, setCores] = useState(1)
+  const [marketNeutralOnly, setMarketNeutralOnly] = useState(true)
 
   useEffect(() => {
     setDraft(search.alpha ?? '')
@@ -506,12 +520,20 @@ export function SettingsSamplerScreen() {
             new Set(all.map(marketKey)),
             [...new Set(plan.regions.flatMap((r) => r.neutralizations))],
             [...new Set(plan.regions.flatMap((r) => r.pairs.map(pairKey)))],
+            marketNeutralOnly,
           ).simulations
         : 0,
-    [plan, all],
+    [plan, all, marketNeutralOnly],
   )
   const { branches, picks, simulations, batches, markets } = useMemo(
-    () => resolve(plan, chosen, neutralizations, pairs),
+    () => resolve(plan, chosen, neutralizations, pairs, marketNeutralOnly),
+    [plan, chosen, neutralizations, pairs, marketNeutralOnly],
+  )
+  // What the skip is worth right now, so the choice is made against a number.
+  const unhedged = useMemo(
+    () =>
+      resolve(plan, chosen, neutralizations, pairs, false).simulations -
+      resolve(plan, chosen, neutralizations, pairs, true).simulations,
     [plan, chosen, neutralizations, pairs],
   )
 
@@ -563,7 +585,7 @@ export function SettingsSamplerScreen() {
     }
     return names
       .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
-      .map((value) => ({ value, label: labels.get(value) ?? value }))
+      .map((value) => ({ value, label: neutralizationLabel(value, labels.get(value)) }))
   }, [plan, labelled])
 
   const add = useMutation({
@@ -572,6 +594,7 @@ export function SettingsSamplerScreen() {
         ...(source ?? { alphaId: '' }),
         ...holding,
         markets: picks,
+        marketNeutralOnly,
         neutralizations,
         pairs: allPairs.filter((p) => pairs.includes(pairKey(p))),
         cores,
@@ -818,7 +841,28 @@ export function SettingsSamplerScreen() {
                 value={neutralizations}
                 onChange={setNeutralizations}
               />
-              <Fieldset legend="Max Trade / Max Position">
+              {/* A chip, like every other choice in this column, rather than a checkbox
+                  that would be the only one of its kind here. It sits between the two pickers
+                  because it is a rule about their combination, not about either one: NONE
+                  neutralization is fine with an investability constraint, and no constraint is
+                  fine with a neutralization. */}
+              <Chips
+                label="Market-Neutral"
+                value={marketNeutralOnly ? ['on'] : []}
+                onChange={(next) => setMarketNeutralOnly(next.includes('on'))}
+                items={[
+                  {
+                    value: 'on',
+                    label: 'Market-Neutral',
+                    title:
+                      'Skips NONE Neutralization with no Max Trade and no Max Position.' +
+                      (unhedged > 0
+                        ? ` Skipping ${fmt.int(unhedged)} Simulation${unhedged === 1 ? '' : 's'}.`
+                        : ''),
+                  },
+                ]}
+              />
+              <Fieldset legend="Investability">
                 <div className="flex flex-wrap gap-1.5">
                   {allPairs.map((pair) => (
                     <GroupChip

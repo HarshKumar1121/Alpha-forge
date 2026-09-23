@@ -36,6 +36,8 @@ export type SampleRequest = Source & {
   pairs: Pair[]
   /** Concurrent slots the task holds; ten simulations ride in each. */
   cores: number
+  /** Drop NONE neutralization with no investability constraint: it is not market neutral. */
+  marketNeutralOnly?: boolean
 }
 
 const B = '/api/tools/settings-sampler'
@@ -47,9 +49,11 @@ export const settingsSampler = {
 }
 
 export const marketKey = (m: MarketPick) => `${m.region}|${m.delay}|${m.universe}`
+/** How an Alpha is held to its instruments' liquidity. BRAIN refuses both ON, so the two
+ *  settings are one three-way choice; `None` matches the Investability column on the tables. */
 export const pairLabel = (p: Pair) =>
   p.maxTrade === 'OFF' && p.maxPosition === 'OFF'
-    ? 'Neither'
+    ? 'None'
     : p.maxTrade === 'ON'
       ? 'Max Trade'
       : 'Max Position'

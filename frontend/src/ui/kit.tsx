@@ -42,17 +42,17 @@ export const signTone = (v: number | null | undefined): Tone =>
   v == null || v === 0 ? 'neutral' : v > 0 ? 'profit' : 'loss'
 
 /**
- * One BRAIN submission check, coloured by what it says on its own: passed, noted, or not
- * a yes. A ``PENDING`` check has not been run, so it is not green — nothing about the Alpha
- * has been established yet. Whether the Alpha as a whole can still come good is a different
- * question with a different answer; see the Tasks results pane.
+ * One BRAIN submission check, coloured by what it says on its own: passed, unsettled, or
+ * refused. ``PENDING`` is not green — nothing has been established yet — but it is not red
+ * either, because BRAIN has not refused anything. Whether the Alpha as a whole counts as
+ * submittable while a check is pending is a different question; see the Tasks results pane.
  */
 export const checkTone = (result: CheckResult | null | undefined): Tone =>
   result === 'PASS'
     ? 'profit'
-    : result === 'WARNING'
+    : result === 'WARNING' || result === 'PENDING'
       ? 'warn'
-      : result === 'FAIL' || result === 'ERROR' || result === 'PENDING'
+      : result === 'FAIL' || result === 'ERROR'
         ? 'loss'
         : 'muted'
 

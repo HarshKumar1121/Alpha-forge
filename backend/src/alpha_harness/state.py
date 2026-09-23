@@ -134,12 +134,19 @@ class AppState:
 
     #: Held so the event loop keeps a strong reference while it runs.
     _indexing: asyncio.Task[None] | None = None
+    _backfilling_after_cost: asyncio.Task[None] | None = None
 
     async def _index_search(self) -> None:
         try:
             await search.rebuild(self.catalog)
         except Exception:
             log.warning("startup.search_index_failed", exc_info=True)
+
+    async def _rebuild_after_cost(self) -> None:
+        try:
+            await self.alphas.rebuild_after_cost_sharpe()
+        except Exception:
+            log.warning("startup.after_cost_sharpe_failed", exc_info=True)
 
     # -- lifecycle -------------------------------------------------------
 
@@ -150,6 +157,11 @@ class AppState:
         # costs a couple of seconds and nothing else depends on it, so it must not block.
         if not await search.ready(self.catalog):
             self._indexing = asyncio.create_task(self._index_search(), name="catalog-fts-index")
+        # Same shape: an Alpha whose series was stored before After-Cost Sharpe existed has none,
+        # and it is worked out from that series rather than downloaded again.
+        self._backfilling_after_cost = asyncio.create_task(
+            self._rebuild_after_cost(), name="vault-after-cost-sharpe"
+        )
 
         # Reuse a cached session before anything else; a restart should not cost a
         # proof-of-work solve or count against the sign-in lockout budget.

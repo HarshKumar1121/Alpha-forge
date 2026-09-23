@@ -69,18 +69,7 @@ def compute(
             "measured_pairs": 0,
             "highest": None,
         }
-    days = {a: alpha_days(series[a], meta.get(a, {})) for a in ids}
-    dates = sorted({d for a in ids for d, _, _ in days[a]})
-    at = {d: i for i, d in enumerate(dates)}
-    pnl = np.full((len(dates), len(ids)), np.nan)
-    turnover = np.zeros((len(dates), len(ids)))
-    closing = np.zeros((len(dates), len(ids)), dtype=bool)
-    for col, alpha_id in enumerate(ids):
-        rows = days[alpha_id]
-        for day, value, traded in rows:
-            pnl[at[day], col] = value
-            turnover[at[day], col] = traded
-            closing[at[day], col] = day not in series[alpha_id]
+    dates, pnl, turnover, closing = frame(series, meta, ids)
     filled = np.nan_to_num(pnl)
     count = len(ids)
     # BRAIN averages over the Alphas already trading that day: one that has not made its
@@ -107,6 +96,32 @@ def compute(
         # Without the final days: BRAIN's correlations match to four decimals without them.
         **_correlation(ids, dates, np.where(closing, np.nan, pnl)),
     }
+
+
+def frame(
+    series: dict[str, dict[date, tuple[float, float]]],
+    meta: dict[str, dict[str, Any]],
+    ids: list[str],
+) -> tuple[list[date], Floats, Floats, Bools]:
+    """These Alphas laid out day by day: the calendar, PnL, turnover, and which cells are
+    closing days.
+
+    A cell is NaN where the Alpha has no row for that day. ``closing`` marks the final days
+    rebuilt from the Alpha's own figures rather than exported by BRAIN; correlations leave
+    them out, which is what makes them match BRAIN's to four decimals.
+    """
+    days = {a: alpha_days(series[a], meta.get(a, {})) for a in ids}
+    dates = sorted({d for a in ids for d, _, _ in days[a]})
+    at = {d: i for i, d in enumerate(dates)}
+    pnl = np.full((len(dates), len(ids)), np.nan)
+    turnover = np.zeros((len(dates), len(ids)))
+    closing = np.zeros((len(dates), len(ids)), dtype=bool)
+    for col, alpha_id in enumerate(ids):
+        for day, value, traded in days[alpha_id]:
+            pnl[at[day], col] = value
+            turnover[at[day], col] = traded
+            closing[at[day], col] = day not in series[alpha_id]
+    return dates, pnl, turnover, closing
 
 
 def alpha_days(

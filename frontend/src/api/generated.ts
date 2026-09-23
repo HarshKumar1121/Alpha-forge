@@ -761,6 +761,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/lab-tasks/power-pool-correlation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Power Pool Correlation For
+         * @description The same measurement over an explicit set of Alphas, for the panes that span tasks.
+         */
+        post: operations["power_pool_correlation_for_api_lab_tasks_power_pool_correlation_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/lab-tasks/power-pool-workflow": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Power Pool Workflow
+         * @description Narrow these Alphas in three steps, each on what the one before kept: unsubmitted, then
+         *     no check FAIL or ERROR, then Power Pool Correlation passed. The survivors get After-Cost
+         *     Sharpe.
+         *
+         *     PnL alone decides Power Pool Correlation, so it comes first: two requests per Alpha (BRAIN
+         *     answers the first with a Retry-After while it builds the series), and only in a region
+         *     where a submitted Power Pool Alpha exists to collide with. Turnover and yearly-stats, one
+         *     each, follow only for the Alphas that pass: After-Cost Sharpe on one the Power Pool
+         *     refuses is requests spent on nothing. None of it spends quota.
+         */
+        post: operations["power_pool_workflow_api_lab_tasks_power_pool_workflow_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/lab-tasks/run-all": {
         parameters: {
             query?: never;
@@ -1906,6 +1954,14 @@ export interface components {
             problem: string | null;
             settings: components["schemas"]["AlphaSettings"];
         };
+        /**
+         * AlphaIds
+         * @description An explicit set of Alphas, for the panes that are not one task's results.
+         */
+        AlphaIds: {
+            /** Alphaids */
+            alphaIds: string[];
+        };
         /** AlphaInfo */
         AlphaInfo: {
             /** Alphaid */
@@ -2896,6 +2952,11 @@ export interface components {
              * @default false
              */
             region_agnostic: boolean;
+            /**
+             * Region Exclusive
+             * @default false
+             */
+            region_exclusive: boolean;
             /** Search */
             search?: string | null;
             /**
@@ -3182,6 +3243,8 @@ export interface components {
             decay: number | null;
             /** Delay */
             delay: number | null;
+            /** Expression */
+            expression?: string | null;
             /** Failed */
             failed: number;
             /** Fields */
@@ -3208,6 +3271,8 @@ export interface components {
             population: number | null;
             /** Queued */
             queued: number;
+            /** Queuedat */
+            queuedAt?: string | null;
             /** Region */
             region: string | null;
             /** Running */
@@ -3227,6 +3292,8 @@ export interface components {
             template: string | null;
             /** Templatename */
             templateName: string | null;
+            /** Testperiod */
+            testPeriod?: string | null;
             /** Truncation */
             truncation?: number | null;
             /** Universe */
@@ -3580,6 +3647,28 @@ export interface components {
             /** Taskid */
             taskId: string;
         };
+        /**
+         * PowerPoolCorrelation
+         * @description What the Power Pool panel shows for one task.
+         */
+        PowerPoolCorrelation: {
+            /** Ceiling */
+            ceiling: number;
+            /** Otheralphas */
+            otherAlphas: number;
+            /** Poolsize */
+            poolSize: number;
+            /** Powerpoolalphas */
+            powerPoolAlphas: number;
+            /** Rows */
+            rows: components["schemas"]["PowerPoolRow"][];
+            /** Scopes */
+            scopes: components["schemas"]["PowerPoolScope"][];
+            /** Sharpeedge */
+            sharpeEdge: number;
+            /** Withoutpnl */
+            withoutPnl: string[];
+        };
         /** PowerPoolModel */
         PowerPoolModel: {
             /** Id */
@@ -3653,6 +3742,49 @@ export interface components {
             simulations: number;
             /** Universe */
             universe: string;
+        };
+        /**
+         * PowerPoolRow
+         * @description One of the task's Alphas, against the submitted Power Pool of its own region.
+         */
+        PowerPoolRow: {
+            /** Against */
+            against: number;
+            /** Alphaid */
+            alphaId: string;
+            /** Closest */
+            closest: string | null;
+            /** Closestsharpe */
+            closestSharpe: number | null;
+            /** Correlation */
+            correlation: number | null;
+            /** Delay */
+            delay: number | null;
+            /** Needed */
+            needed: number | null;
+            /** Region */
+            region: string;
+            /** Sharpe */
+            sharpe: number | null;
+            /** Universe */
+            universe: string | null;
+            /**
+             * Verdict
+             * @enum {string}
+             */
+            verdict: "clear" | "beats" | "blocked" | "unmeasured";
+        };
+        /**
+         * PowerPoolScope
+         * @description One region: the pool its Alphas are measured against.
+         */
+        PowerPoolScope: {
+            /** Pool */
+            pool: string[];
+            /** Poolwithoutpnl */
+            poolWithoutPnl: string[];
+            /** Region */
+            region: string;
         };
         /** Preview */
         Preview: {
@@ -3845,6 +3977,8 @@ export interface components {
         };
         /** RankedAlpha */
         RankedAlpha: {
+            /** Aftercostsharpe */
+            afterCostSharpe?: number | null;
             /** Alphaid */
             alphaId: string | null;
             /** Drawdown */
@@ -3868,6 +4002,8 @@ export interface components {
              * @default false
              */
             pending: boolean;
+            /** Refusedby */
+            refusedBy: string[];
             /** Returns */
             returns: number | null;
             /** Settings */
@@ -3885,6 +4021,11 @@ export interface components {
             source: boolean;
             /** Submittable */
             submittable: boolean;
+            /**
+             * Submitted
+             * @default false
+             */
+            submitted: boolean;
             /** Trialid */
             trialId: number;
             /** Turnover */
@@ -3966,6 +4107,11 @@ export interface components {
             decay?: number | null;
             /** Expression */
             expression?: string | null;
+            /**
+             * Marketneutralonly
+             * @default true
+             */
+            marketNeutralOnly: boolean;
             /** Markets */
             markets?: components["schemas"]["MarketPick"][];
             /** Nanhandling */
@@ -4471,6 +4617,8 @@ export interface components {
          * @description A submittable Alpha, with the task that found it.
          */
         TaskAlpha: {
+            /** Aftercostsharpe */
+            afterCostSharpe?: number | null;
             /** Alphaid */
             alphaId: string | null;
             /** Drawdown */
@@ -4494,6 +4642,8 @@ export interface components {
              * @default false
              */
             pending: boolean;
+            /** Refusedby */
+            refusedBy: string[];
             /** Returns */
             returns: number | null;
             /** Settings */
@@ -4511,6 +4661,11 @@ export interface components {
             source: boolean;
             /** Submittable */
             submittable: boolean;
+            /**
+             * Submitted
+             * @default false
+             */
+            submitted: boolean;
             /** Taskid */
             taskId: number;
             /** Taskname */
@@ -4842,6 +4997,11 @@ export interface components {
             inSample: components["schemas"]["PortfolioStats"] | null;
             test: components["schemas"]["PortfolioStats"] | null;
             train: components["schemas"]["PortfolioStats"] | null;
+        };
+        /** WorkflowStarted */
+        WorkflowStarted: {
+            /** Taskid */
+            taskId: string;
         };
         /** YearRow */
         YearRow: {
@@ -5985,6 +6145,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LabTasks"];
+                };
+            };
+        };
+    };
+    power_pool_correlation_for_api_lab_tasks_power_pool_correlation_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AlphaIds"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PowerPoolCorrelation"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    power_pool_workflow_api_lab_tasks_power_pool_workflow_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AlphaIds"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowStarted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

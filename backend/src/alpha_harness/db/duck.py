@@ -159,6 +159,13 @@ ALTER TABLE alpha ADD COLUMN IF NOT EXISTS end_date DATE;
 ALTER TABLE alpha ADD COLUMN IF NOT EXISTS test_turnover DOUBLE;
 -- How the stored daily series was built (``vault.store.SERIES_VERSION``); older ones are refetched.
 ALTER TABLE alpha ADD COLUMN IF NOT EXISTS series_version INTEGER;
+-- The same, for a daily PnL stored without its turnover: enough to correlate, not to cost.
+ALTER TABLE alpha ADD COLUMN IF NOT EXISTS pnl_version INTEGER;
+-- The after-cost t-stat over sqrt(10) (``vault.metrics.after_cost_sharpe``), worked out when the
+-- series is stored so a table of a thousand Alphas need not read a thousand series to show it.
+-- An older database also carries `after_cost_sharpe`, the plain after-cost Sharpe, which
+-- nothing reads now; a new column rather than a rewrite, so startup rebuilds every value.
+ALTER TABLE alpha ADD COLUMN IF NOT EXISTS after_cost_t10 DOUBLE;
 -- In-sample figures rebuilt from the stored series (final days included), kept so the Portfolio
 -- list need not read every series. Apart from BRAIN's own, which a listing overwrites.
 -- An older database still carries `series_sharpe` and its five siblings, rebuilt locally
@@ -402,6 +409,8 @@ ARROW_TYPES: dict[str, dict[str, pa.DataType]] = {
         "simulation_mode": _STR,
         "test_turnover": _F64,
         "series_version": _I32,
+        "pnl_version": _I32,
+        "after_cost_t10": _F64,
     },
     "alpha_pnl": {
         "alpha_id": _STR,
@@ -651,9 +660,16 @@ class Catalog:
 
     async def query(self, sql: str, params: list[Any] | None = None) -> list[dict[str, Any]]:
         """Run a read query and return rows as dicts. Does not wait for writes."""
+        return await self._read(self._query_sync, sql, params or [])
+
+    async def arrow(self, sql: str, params: list[Any] | None = None) -> pa.Table:
+        """:meth:`query` as an Arrow table, for results too large for a Python object per row."""
+        return await self._read(self._arrow_sync, sql, params or [])
+
+    async def _read[T](self, fn: Callable[[str, list[Any]], T], sql: str, params: list[Any]) -> T:
         if self._closing or self._conn is None:
             raise RuntimeError("Catalog is closed or shutting down")
-        work = asyncio.ensure_future(asyncio.to_thread(self._query_sync, sql, params or []))
+        work = asyncio.ensure_future(asyncio.to_thread(fn, sql, params))
         self._reads.add(work)
         work.add_done_callback(self._reads.discard)
         return await asyncio.shield(work)
@@ -663,6 +679,10 @@ class Catalog:
             cur.execute(sql, params)
             columns = [d[0] for d in cur.description or []]
             return [dict(zip(columns, row, strict=True)) for row in cur.fetchall()]
+
+    def _arrow_sync(self, sql: str, params: list[Any]) -> pa.Table:
+        with self._require().cursor() as cur:
+            return cur.execute(sql, params).to_arrow_table()
 
     async def scalar(self, sql: str, params: list[Any] | None = None) -> Any:
         rows = await self.query(sql, params)
