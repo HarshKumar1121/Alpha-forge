@@ -423,6 +423,11 @@ class BreakerRecipe(Out):
     transform: str
     #: Why it cannot run here, empty when it can.
     blocked: str
+    #: The whole program, counted the way Power Pool counts it.
+    operators: int
+    data_fields: int
+    #: For a Power Pool Alpha, the limit this re-shape would cross; empty when none is.
+    over_power_pool: str
 
 
 class BreakerPlan(Out):
@@ -433,6 +438,11 @@ class BreakerPlan(Out):
     settings: BreakerSettings
     #: BRAIN's own production-correlation check, as it last reported it.
     correlation: dict[str, Any] | None
+    #: BRAIN judges it as a Power Pool Alpha, so its re-shapes are held to the pool's limits.
+    power_pool: bool
+    #: The source expression's own counts; null when it could not be read.
+    operators: int | None
+    data_fields: int | None
     recipes: list[BreakerRecipe]
     problems: list[str]
 
@@ -471,11 +481,7 @@ async def breaker_task(body: BreakerRequest, state: State) -> AddedTask:
     wanted = set(body.recipes)
     # A recipe the plan marked blocked is never queued, whether or not it was asked for.
     runnable = {r["id"] for r in found["recipes"] if not r["blocked"]}
-    chosen = [
-        r
-        for r in correlation_breaker.RECIPES
-        if r.id in runnable and (not wanted or r.id in wanted)
-    ]
+    chosen = [r for r in found["recipeSet"] if r.id in runnable and (not wanted or r.id in wanted)]
     if not chosen:
         raise refuse(
             422,

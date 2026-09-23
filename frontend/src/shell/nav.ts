@@ -43,9 +43,11 @@ export const TOOL_TABS = [
   { tab: 'correlation-breaker', label: 'Correlation Breaker', to: '/tools/correlation-breaker' },
 ] as const
 
+/** `group` heads a run of items in the sidebar; empty sits above every heading. */
 export const NAV = [
   {
     to: '/dashboard',
+    group: '',
     area: 'dashboard',
     label: 'Dashboard',
     icon: LayoutGridIcon,
@@ -53,6 +55,7 @@ export const NAV = [
   },
   {
     to: '/matrix',
+    group: '',
     area: 'matrix',
     label: 'Simulation Matrix',
     icon: Grid3x3Icon,
@@ -60,6 +63,7 @@ export const NAV = [
   },
   {
     to: '/data',
+    group: 'Research',
     area: 'data',
     label: 'Data Explorer',
     icon: DatabaseIcon,
@@ -67,6 +71,7 @@ export const NAV = [
   },
   {
     to: '/labs',
+    group: 'Research',
     area: 'labs',
     label: 'Research Labs',
     icon: FlaskConicalIcon,
@@ -74,6 +79,7 @@ export const NAV = [
   },
   {
     to: '/tools',
+    group: 'Research',
     area: 'tools',
     label: 'Tools',
     icon: WrenchIcon,
@@ -81,6 +87,7 @@ export const NAV = [
   },
   {
     to: '/tasks',
+    group: 'Results',
     area: 'tasks',
     label: 'Tasks',
     icon: ListChecksIcon,
@@ -88,6 +95,7 @@ export const NAV = [
   },
   {
     to: '/pool',
+    group: 'Results',
     area: 'pool',
     label: 'Alphas',
     icon: LayersIcon,
@@ -95,6 +103,7 @@ export const NAV = [
   },
   {
     to: '/portfolio',
+    group: 'Results',
     area: 'portfolio',
     label: 'Portfolio',
     icon: ChartPieIcon,
@@ -102,6 +111,7 @@ export const NAV = [
   },
   {
     to: '/ai',
+    group: 'Setup',
     area: 'ai',
     label: 'LLM Integration',
     icon: SparklesIcon,
@@ -109,6 +119,7 @@ export const NAV = [
   },
   {
     to: '/pyramids',
+    group: 'Setup',
     area: 'pyramids',
     label: 'Sync with BRAIN',
     icon: RefreshCwIcon,

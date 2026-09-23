@@ -2388,8 +2388,14 @@ export interface components {
             correlation: {
                 [key: string]: unknown;
             } | null;
+            /** Datafields */
+            dataFields: number | null;
             /** Expression */
             expression: string;
+            /** Operators */
+            operators: number | null;
+            /** Powerpool */
+            powerPool: boolean;
             /** Problems */
             problems: string[];
             /** Recipes */
@@ -2402,10 +2408,16 @@ export interface components {
             blocked: string;
             /** Caution */
             caution: string;
+            /** Datafields */
+            dataFields: number;
             /** Id */
             id: string;
             /** Name */
             name: string;
+            /** Operators */
+            operators: number;
+            /** Overpowerpool */
+            overPowerPool: string;
             /** Transform */
             transform: string;
             /** Why */

@@ -16,13 +16,17 @@ import { useRefetchOn } from '@/lib/ws'
 import { Button, STATUS } from '@/ui/kit'
 import { Tooltip } from '@/ui/overlay'
 import { useCommandMenu } from './command-menu'
+import { SidebarToggle } from './sidebar'
 
 export function Header() {
   const openMenu = useCommandMenu((s) => s.setOpen)
 
   return (
     <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-hairline bg-canvas px-4">
-      <HeaderCores />
+      <div className="flex min-w-0 items-center gap-3">
+        <SidebarToggle />
+        <HeaderCores />
+      </div>
       <div className="flex items-center gap-4">
         <Clocks />
         <ConnectionNotice />
