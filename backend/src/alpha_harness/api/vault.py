@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 from datetime import timedelta
 from typing import Annotated, Any, Literal
 
@@ -10,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from ..brain.filters import AlphaQuery
 from ..schemas import Out
+from ..vault import yields
 from ..vault.yields import PLATFORM_ALPHA_URL, checks_of
 from .deps import State, refuse
 
@@ -182,7 +184,9 @@ async def submittable(
     Each entry carries the platform's own check results, the numbers behind them, and a
     link to the alpha on BRAIN — which is where it gets submitted. This application never does.
     """
-    found = await state.yields.submittable(
+    found = await yields.submittable(
+        state.db,
+        state.alphas,
         region=region,
         delay=delay,
         universe=universe,
@@ -234,7 +238,7 @@ async def sync_alphas(state: State) -> SyncStarted:
     complete = latest is not None and stored >= int(remote["count"])
     since = latest - timedelta(days=1) if complete and latest else None
     try:
-        task_id = await state.backfill.start(include_returns=False, limit=100_000, since=since)
+        task_id = await state.backfill.start(since=since)
     except RuntimeError as exc:
         raise refuse(409, "already_running", str(exc)) from exc
     return SyncStarted(task_id=task_id, since=since.isoformat() if since else None)
@@ -257,11 +261,7 @@ async def alpha_detail(alpha_id: str, state: State) -> AlphaDetail:
             problem = f"Could not download the daily PnL: {exc}"
     rows = await state.alphas.pnl_series(alpha_id)
     # Stored rows are daily PnL; the chart wants the running total, every day with its date.
-    values: list[float] = []
-    total = 0.0
-    for r in rows:
-        total += float(r["pnl"])
-        values.append(round(total, 2))
+    values = [round(total, 2) for total in itertools.accumulate(float(r["pnl"]) for r in rows)]
     dates = [str(r["date"]) for r in rows]
     return AlphaDetail.model_validate(
         {

@@ -14,8 +14,7 @@ import { toast } from 'sonner'
 import { errorMessage } from '@/api/http'
 import { cn } from '@/lib/cn'
 import { DASH, fmt } from '@/lib/format'
-import { CORES } from '@/screens/research-labs/lab-task'
-import { Setting } from '@/screens/research-labs/task-settings'
+import { CoresSetting } from '@/screens/research-labs/task-settings'
 import {
   Button,
   Empty,
@@ -28,7 +27,6 @@ import {
   Page,
   PageHeader,
   Panel,
-  Segmented,
   Skeleton,
 } from '@/ui/kit'
 import { correlationBreaker } from './api'
@@ -201,16 +199,7 @@ export function CorrelationBreakerScreen() {
           <Panel
             title="Re-shapes"
             description="Each one wraps the Alpha below. Only the re-shape is shown; the binding is the same for all of them."
-            actions={
-              <Setting label="Cores">
-                <Segmented
-                  label="Cores"
-                  items={CORES.map((v) => ({ value: v, label: v }))}
-                  value={cores}
-                  onChange={setCores}
-                />
-              </Setting>
-            }
+            actions={<CoresSetting value={cores} onChange={setCores} />}
           >
             {plan.powerPool && (
               <Notice tone="info" className="mb-4" title="A Power Pool Alpha">

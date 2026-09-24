@@ -962,29 +962,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/llm/context": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Context
-         * @description Exactly what the model is shown about your data.
-         *
-         *     The hierarchy with metadata, and no individual fields — tens of thousands of field
-         *     names would fill the context window. Set ``rendered`` to read the literal text.
-         */
-        get: operations["context_api_llm_context_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/llm/keys": {
         parameters: {
             query?: never;
@@ -1099,7 +1076,8 @@ export interface paths {
         };
         /**
          * List Prompts
-         * @description Every prompt, in full.
+         * @description Every system prompt the application sends, in full. The token estimate is shown
+         *     because prompt tokens come out of the same per-minute budget as the answer.
          */
         get: operations["list_prompts_api_llm_prompts_get"];
         put?: never;
@@ -1333,30 +1311,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/search-lab/quick": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Quick
-         * @description Run some of today's unclaimed simulations now, split across tasks that run side by side.
-         *
-         *     :data:`DEFAULT_RUN` unless the body asks for more, never beyond what is left. The
-         *     datasets are the ones last chosen, else every synced dataset in a pyramid not yet
-         *     formulated this quarter, highest multiplier first. Nothing is added unless all of it can run.
-         */
-        post: operations["quick_api_search_lab_quick_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/search-lab/tasks": {
         parameters: {
             query?: never;
@@ -1368,7 +1322,7 @@ export interface paths {
         put?: never;
         /**
          * Add Task
-         * @description Add the search to Tasks: queued when ``run``, else not started and spending nothing.
+         * @description Add the search to Tasks, queued to run.
          */
         post: operations["add_task_api_search_lab_tasks_post"];
         delete?: never;
@@ -2261,7 +2215,7 @@ export interface components {
         /** Assistant */
         Assistant: {
             /** Budget */
-            budget: components["schemas"]["ModelBudget"][];
+            budget: components["schemas"]["LLMBudget"][];
             /** Enabledkeys */
             enabledKeys: number;
             /** Headline */
@@ -2400,7 +2354,7 @@ export interface components {
             problems: string[];
             /** Recipes */
             recipes: components["schemas"]["BreakerRecipe"][];
-            settings: components["schemas"]["BreakerSettings"];
+            settings: components["schemas"]["AlphaSettings"];
         };
         /** BreakerRecipe */
         BreakerRecipe: {
@@ -2434,24 +2388,6 @@ export interface components {
             cores: number;
             /** Recipes */
             recipes?: string[];
-        };
-        /**
-         * BreakerSettings
-         * @description What every simulation runs at: the source Alpha's own, never varied.
-         */
-        BreakerSettings: {
-            /** Decay */
-            decay: number | null;
-            /** Delay */
-            delay: number | null;
-            /** Neutralization */
-            neutralization: string | null;
-            /** Region */
-            region: string | null;
-            /** Truncation */
-            truncation: number | null;
-            /** Universe */
-            universe: string | null;
         };
         /** CancelResult */
         CancelResult: {
@@ -2565,11 +2501,7 @@ export interface components {
         };
         /** ChatOptions */
         ChatOptions: {
-            /**
-             * Defaultreasoning
-             * @enum {string}
-             */
-            defaultReasoning: "quick" | "normal" | "careful" | "deep";
+            defaultReasoning: components["schemas"]["Reasoning"];
             models: components["schemas"]["LLMModels"];
             /** Note */
             note: string;
@@ -2590,11 +2522,7 @@ export interface components {
             picks: {
                 [key: string]: unknown;
             }[];
-            /**
-             * Reasoning
-             * @enum {string}
-             */
-            reasoning: "quick" | "normal" | "careful" | "deep";
+            reasoning: components["schemas"]["Reasoning"];
             /** Reply */
             reply: string;
             /** Threadid */
@@ -2621,17 +2549,6 @@ export interface components {
             title: string;
             /** Updatedat */
             updatedAt: string | null;
-        };
-        /** ContextCounts */
-        ContextCounts: {
-            /** Categories */
-            categories: number;
-            /** Datasets */
-            datasets: number;
-            /** Fields */
-            fields: number;
-            /** Subcategories */
-            subcategories: number;
         };
         /** CorrelatedPair */
         CorrelatedPair: {
@@ -2803,13 +2720,6 @@ export interface components {
             /** Slotsused */
             slotsUsed: number;
         };
-        /** EvolutionDefaults */
-        EvolutionDefaults: {
-            /** Mutationrate */
-            mutationRate: number;
-            /** Population */
-            population: number | null;
-        };
         /**
          * EvolutionMarket
          * @description A market holding unsubmitted Alphas, and how many.
@@ -2826,18 +2736,12 @@ export interface components {
         };
         /** EvolutionOptions */
         EvolutionOptions: {
-            defaults: components["schemas"]["EvolutionDefaults"];
             /** Markets */
             markets: components["schemas"]["EvolutionMarket"][];
-            /** Maxcores */
-            maxCores: number;
-            /** Maxseeds */
-            maxSeeds: number;
             /** Maxsimulations */
             maxSimulations: number;
             /** Mutationrates */
             mutationRates: number[];
-            operators: components["schemas"]["OperatorsRead"];
             /** Populations */
             populations: number[];
         };
@@ -2855,8 +2759,6 @@ export interface components {
             seeds: components["schemas"]["SeedRow"][];
             /** Skipped */
             skipped: components["schemas"]["SeedReason"][];
-            /** Warnings */
-            warnings: string[];
         };
         /** EvolutionRequest */
         EvolutionRequest: {
@@ -2945,8 +2847,6 @@ export interface components {
             dataset_ids?: string[];
             /** Field Types */
             field_types?: string[];
-            /** Has Theme */
-            has_theme?: boolean | null;
             /**
              * Limit
              * @default 100
@@ -2986,8 +2886,6 @@ export interface components {
              * @default true
              */
             sort_desc: boolean;
-            /** Subcategory Ids */
-            subcategory_ids?: string[];
             /** User Count Max */
             user_count_max?: number | null;
             /** User Count Min */
@@ -3082,28 +2980,6 @@ export interface components {
             /** Remainingtoday */
             remainingToday: number;
         };
-        /** LLMContextRendered */
-        LLMContextRendered: {
-            /** Characters */
-            characters: number;
-            counts: components["schemas"]["ContextCounts"];
-            /** Estimatedtokens */
-            estimatedTokens: number;
-            /** Scope */
-            scope: string;
-            /** Text */
-            text: string;
-        };
-        /** LLMContextTree */
-        LLMContextTree: {
-            /** Categories */
-            categories: {
-                [key: string]: unknown;
-            }[];
-            counts: components["schemas"]["ContextCounts"];
-            /** Scope */
-            scope: string;
-        };
         /** LLMKey */
         LLMKey: {
             /** Createdat */
@@ -3155,49 +3031,19 @@ export interface components {
             /** Tokens */
             tokens: number;
         };
-        /**
-         * LLMModel
-         * @description :class:`ModelInfo` on the wire.
-         */
-        LLMModel: {
-            /** Bulk */
-            bulk: boolean;
-            /** Discovered */
-            discovered: boolean;
-            /** Id */
-            id: string;
-            /**
-             * Kind
-             * @enum {string}
-             */
-            kind: "text" | "embedding" | "open";
-            /** Label */
-            label: string;
-            /** Provider */
-            provider: string;
-            /** Recommended */
-            recommended: boolean;
-            /** Rpd */
-            rpd: number;
-            /** Rpm */
-            rpm: number;
-            /** Summary */
-            summary: string;
-            /** Tpm */
-            tpm: number;
-        };
         /** LLMModels */
         LLMModels: {
             defaults: components["schemas"]["ModelDefaults"];
             /** Models */
-            models: components["schemas"]["LLMModel"][];
+            models: components["schemas"]["ModelInfo"][];
             /** Note */
             note: string;
         };
-        /** LLMProvider */
+        /**
+         * LLMProvider
+         * @description :class:`Provider` on the wire.
+         */
         LLMProvider: {
-            /** Baseurl */
-            baseUrl: string;
             /** Id */
             id: string;
             /** Keyhint */
@@ -3205,11 +3051,9 @@ export interface components {
             /** Label */
             label: string;
             /** Models */
-            models: components["schemas"]["LLMModel"][];
+            models: components["schemas"]["ModelInfo"][];
             /** Onboardingurl */
             onboardingUrl: string;
-            /** Openaicompatible */
-            openaiCompatible: boolean;
             /** Paid */
             paid: boolean;
             /** Tiernote */
@@ -3219,8 +3063,6 @@ export interface components {
         LLMProviders: {
             /** Default */
             default: string;
-            /** Note */
-            note: string;
             /** Paidnote */
             paidNote: string;
             /** Providers */
@@ -3392,27 +3234,53 @@ export interface components {
             /** Universe */
             universe: string;
         };
-        /** ModelBudget */
-        ModelBudget: {
-            /** Bulk */
-            bulk: boolean;
-            /** Label */
-            label: string;
-            /** Model */
-            model: string;
-            /** Perkeyperday */
-            perKeyPerDay: number;
-            /** Provider */
-            provider: string;
-            /** Remainingtoday */
-            remainingToday: number;
-        };
         /** ModelDefaults */
         ModelDefaults: {
             /** Chat */
             chat: string;
             /** Deep */
             deep: string;
+        };
+        /**
+         * ModelInfo
+         * @description One model and its free-tier budget, as the screens show it.
+         */
+        ModelInfo: {
+            /**
+             * Bulk
+             * @default false
+             */
+            bulk: boolean;
+            /**
+             * Discovered
+             * @default false
+             */
+            discovered: boolean;
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "text" | "embedding" | "open";
+            /** Label */
+            label: string;
+            /**
+             * Provider
+             * @default google
+             */
+            provider: string;
+            /**
+             * Recommended
+             * @default false
+             */
+            recommended: boolean;
+            /** Rpd */
+            rpd: number;
+            /** Rpm */
+            rpm: number;
+            /** Tpm */
+            tpm: number;
         };
         /** OperatorsRead */
         OperatorsRead: {
@@ -3423,25 +3291,10 @@ export interface components {
         };
         /** Options */
         Options: {
-            /** Crosssectional */
-            crossSectional: string[];
             /** Decays */
             decays: number[];
-            /** Group */
-            group: string[];
-            /** Groups */
-            groups: string[];
-            /** Lookbacks */
-            lookbacks: number[];
-            /** Maxcores */
-            maxCores: number;
             /** Maxsimulations */
             maxSimulations: number;
-            operators: components["schemas"]["OperatorsRead"];
-            /** Timeseries */
-            timeSeries: string[];
-            /** Truncation */
-            truncation: number;
             /** Vector */
             vector: string[];
         };
@@ -3709,8 +3562,6 @@ export interface components {
             fields: number;
             /** Llmcalls */
             llmCalls: number;
-            /** Model */
-            model: string;
             /** Neutralizations */
             neutralizations: string[];
             /** Problems */
@@ -3800,16 +3651,10 @@ export interface components {
         };
         /** Preview */
         Preview: {
-            /** Families */
-            families: string[];
             fields: components["schemas"]["FieldCounts"];
             leftOut: components["schemas"]["LeftOut"];
-            /** Neutralizations */
-            neutralizations: string[];
             /** Problems */
             problems: string[];
-            /** Round */
-            round: number;
             /** Sample */
             sample: components["schemas"]["SampleAlpha"][];
             /** Universes */
@@ -3844,23 +3689,14 @@ export interface components {
             body: string;
             /** Characters */
             characters: number;
-            /**
-             * Context
-             * @enum {string}
-             */
-            context: "none" | "catalog_tree" | "dataset_fields";
             /** Estimatedtokens */
             estimatedTokens: number;
             /** Label */
             label: string;
-            /** Model */
-            model: string | null;
             /** Purpose */
             purpose: string;
             /** Slug */
             slug: string;
-            /** Temperature */
-            temperature: number;
         };
         /** PromptList */
         PromptList: {
@@ -3939,49 +3775,6 @@ export interface components {
             /** Submitted */
             submitted: number;
         };
-        /**
-         * QuickRequest
-         * @description The market to run in, and the datasets last chosen there; none means the pyramids.
-         */
-        QuickRequest: {
-            /** Dataset Ids */
-            dataset_ids?: string[];
-            /**
-             * Delay
-             * @default 1
-             */
-            delay: number;
-            /**
-             * Region
-             * @default USA
-             */
-            region: string;
-            /** Simulations */
-            simulations?: number | null;
-            /**
-             * Universe
-             * @default TOP3000
-             */
-            universe: string | null;
-        };
-        /** QuickRun */
-        QuickRun: {
-            /** Simulations */
-            simulations: number;
-            /** Tasks */
-            tasks: components["schemas"]["QuickTask"][];
-        };
-        /** QuickTask */
-        QuickTask: {
-            /** Datasetids */
-            datasetIds: string[];
-            /** Id */
-            id: number;
-            /** Name */
-            name: string;
-            /** Simulations */
-            simulations: number;
-        };
         /** Quitting */
         Quitting: {
             /** Stopping */
@@ -4045,6 +3838,8 @@ export interface components {
             /** Value */
             value: number;
         };
+        /** @enum {string} */
+        Reasoning: "quick" | "normal" | "careful" | "deep";
         /** ReasoningOption */
         ReasoningOption: {
             /** Description */
@@ -4056,11 +3851,7 @@ export interface components {
              * @enum {string}
              */
             level: "MINIMAL" | "LOW" | "MEDIUM" | "HIGH";
-            /**
-             * Value
-             * @enum {string}
-             */
-            value: "quick" | "normal" | "careful" | "deep";
+            value: components["schemas"]["Reasoning"];
         };
         /** RegionPlan */
         RegionPlan: {
@@ -4149,13 +3940,9 @@ export interface components {
             dataset_ids?: string[];
             /** Model */
             model?: string | null;
-            /**
-             * Reasoning
-             * @description quick | normal | careful | deep
-             * @default normal
-             */
-            reasoning: string;
-            scope: components["schemas"]["Scope"];
+            /** @default normal */
+            reasoning: components["schemas"]["Reasoning"];
+            scope: components["schemas"]["Tuple4"];
             /**
              * Text
              * @description Your idea, in your own words
@@ -4166,20 +3953,6 @@ export interface components {
              * @description Omit to start a new conversation
              */
             thread_id?: number | null;
-        };
-        /** Scope */
-        Scope: {
-            /** Delay */
-            delay: number;
-            /**
-             * Instrument Type
-             * @default EQUITY
-             */
-            instrument_type: string;
-            /** Region */
-            region: string;
-            /** Universe */
-            universe: string;
         };
         /** SearchRequest */
         SearchRequest: {
@@ -4501,18 +4274,12 @@ export interface components {
             all: boolean;
             /** Categoriessynced */
             categoriesSynced: number;
-            /** Cursordataset */
-            cursorDataset: string | null;
-            /** Cursoroffset */
-            cursorOffset: number;
             /** Datasetssynced */
             datasetsSynced: number;
             /** Delay */
             delay: number;
             /** Error */
             error: string | null;
-            /** Fieldsexpected */
-            fieldsExpected: number | null;
             /** Fieldssynced */
             fieldsSynced: number;
             /** Finishedat */
@@ -4543,8 +4310,6 @@ export interface components {
             /** Startedat */
             startedAt: string | null;
             status: components["schemas"]["SyncStatus"];
-            /** Truncateddatasets */
-            truncatedDatasets: string[];
             /** Universe */
             universe: string;
         };
@@ -4576,18 +4341,12 @@ export interface components {
             all: boolean;
             /** Categoriessynced */
             categoriesSynced: number;
-            /** Cursordataset */
-            cursorDataset: string | null;
-            /** Cursoroffset */
-            cursorOffset: number;
             /** Datasetssynced */
             datasetsSynced: number;
             /** Delay */
             delay: number;
             /** Error */
             error: string | null;
-            /** Fieldsexpected */
-            fieldsExpected: number | null;
             /** Fieldssynced */
             fieldsSynced: number;
             /** Finishedat */
@@ -4607,8 +4366,6 @@ export interface components {
             /** Startedat */
             startedAt: string | null;
             status: components["schemas"]["SyncStatus"];
-            /** Truncateddatasets */
-            truncatedDatasets: string[];
             /** Universe */
             universe: string;
         };
@@ -4737,17 +4494,9 @@ export interface components {
             decays: number[];
             /** Groupfields */
             groupFields: string[];
-            /** Maxblocks */
-            maxBlocks: number;
-            /** Maxcores */
-            maxCores: number;
             /** Maxsimulations */
             maxSimulations: number;
             operators: components["schemas"]["OperatorsRead"];
-            /** Tags */
-            tags: string[];
-            /** Truncation */
-            truncation: number;
             /** Variables */
             variables: {
                 [key: string]: (number | string)[];
@@ -4759,12 +4508,8 @@ export interface components {
         TemplateLabPreview: {
             fields: components["schemas"]["FieldCounts"];
             leftOut: components["schemas"]["LeftOut"];
-            /** Neutralizations */
-            neutralizations: string[];
             /** Problems */
             problems: string[];
-            /** Round */
-            round: number;
             /** Sample */
             sample: components["schemas"]["SampleAlpha"][];
             /** Skeleton */
@@ -4834,8 +4579,6 @@ export interface components {
              * @default 0
              */
             simulations: number;
-            /** Template Id */
-            template_id?: number | null;
             /**
              * Template Name
              * @default Template
@@ -4894,6 +4637,23 @@ export interface components {
             unspoken: number;
             /** Used */
             used: number;
+        };
+        /**
+         * Tuple4
+         * @description A catalog scope.
+         */
+        Tuple4: {
+            /** Delay */
+            delay: number;
+            /**
+             * Instrument Type
+             * @default EQUITY
+             */
+            instrument_type: string;
+            /** Region */
+            region: string;
+            /** Universe */
+            universe: string;
         };
         /** TypeFacet */
         TypeFacet: {
@@ -5446,7 +5206,6 @@ export interface operations {
     datasets_api_catalog_datasets_get: {
         parameters: {
             query: {
-                search?: string | null;
                 /** @description e.g. USA, EUR, GLB */
                 region: string;
                 delay: number;
@@ -5962,9 +5721,7 @@ export interface operations {
     };
     options_api_evolution_lab_options_get: {
         parameters: {
-            query?: {
-                refresh?: boolean;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
@@ -5978,15 +5735,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EvolutionOptions"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -6459,42 +6207,6 @@ export interface operations {
             };
         };
     };
-    context_api_llm_context_get: {
-        parameters: {
-            query: {
-                region: string;
-                delay: number;
-                universe: string;
-                instrument_type?: string;
-                /** @description Return the exact text the model receives */
-                rendered?: boolean;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LLMContextRendered"] | components["schemas"]["LLMContextTree"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_keys_api_llm_keys_get: {
         parameters: {
             query?: never;
@@ -6924,9 +6636,7 @@ export interface operations {
     };
     options_api_search_lab_options_get: {
         parameters: {
-            query?: {
-                refresh?: boolean;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
@@ -6940,15 +6650,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Options"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -6986,44 +6687,9 @@ export interface operations {
             };
         };
     };
-    quick_api_search_lab_quick_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["QuickRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["QuickRun"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     add_task_api_search_lab_tasks_post: {
         parameters: {
-            query?: {
-                run?: boolean;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;

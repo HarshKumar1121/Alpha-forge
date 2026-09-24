@@ -17,7 +17,7 @@ from sqlalchemy import func, or_, select
 
 from ..db.models import SimStatus, SimulationRecord, Study, StudyStatus, Trial, TrialState, utcnow
 from ..labs import scheduler, search
-from ..labs.objectives import OBJECTIVES, StudyNotFoundError
+from ..labs.objectives import FAILURE, OBJECTIVES, StudyNotFoundError
 from ..labs.params import (
     CORRELATION_BREAKER,
     SETTINGS_SAMPLER,
@@ -29,7 +29,8 @@ from ..labs.study import ranked
 from ..schemas import Out
 from ..tasks import Task
 from ..tools import power_pool
-from ..vault.yields import checks_of, verdict
+from ..tools.submission_planner import ESCAPE
+from ..vault.yields import checks_of, clean, is_submitted, verdict
 from .deps import State, refuse
 
 router = APIRouter(prefix="/api/lab-tasks", tags=["lab-tasks"])
@@ -151,15 +152,6 @@ class RankedAlpha(Out):
     source: bool = False
 
 
-def _is_submitted(row: dict[str, Any] | None) -> bool:
-    """Anything past ``UNSUBMITTED`` -- ACTIVE, DECOMMISSIONED -- has been submitted.
-
-    Mirrors ``vault.store.SUBMITTED``, which is the same rule in SQL.
-    """
-    status = (row or {}).get("status")
-    return bool(status) and str(status) != "UNSUBMITTED"
-
-
 class WorkflowStarted(Out):
     task_id: str
 
@@ -278,7 +270,7 @@ async def _progress(state: Any, ids: list[int]) -> dict[int, dict[str, Any]]:
             .where(
                 Trial.study_id.in_(ids),
                 Trial.state == TrialState.COMPLETE,
-                value > OBJECTIVES["sharpe"].failure_value,
+                value > FAILURE,
                 or_(Trial.generation.is_(None), Trial.generation != 0),
             )
             .group_by(Trial.study_id)
@@ -359,24 +351,20 @@ async def _queue(state: Any, ids: list[int]) -> None:
     async with contextlib.AsyncExitStack() as stack:
         for task_id in sorted(ids):
             await stack.enter_async_context(state.optimizer.lock(task_id))
-        await _mark_queued(state, ids, queued_at)
+        async with state.db.session() as session:
+            for task_id in ids:
+                row = await session.get(Study, task_id)
+                if row is not None and row.status in RUNNABLE:
+                    if row.status == StudyStatus.FAILED:
+                        row.message = None
+                        row.finished_at = None
+                    row.status = StudyStatus.QUEUED
+                    params = task_params(row)
+                    params.queued_at = queued_at
+                    row.sampler_params = params.dump()
+            await session.commit()
     await scheduler.start_waiting(state.optimizer)
     await state.optimizer.notify()
-
-
-async def _mark_queued(state: Any, ids: list[int], queued_at: str) -> None:
-    async with state.db.session() as session:
-        for task_id in ids:
-            row = await session.get(Study, task_id)
-            if row is not None and row.status in RUNNABLE:
-                if row.status == StudyStatus.FAILED:
-                    row.message = None
-                    row.finished_at = None
-                row.status = StudyStatus.QUEUED
-                params = task_params(row)
-                params.queued_at = queued_at
-                row.sampler_params = params.dump()
-        await session.commit()
 
 
 @router.post("/run-all")
@@ -405,10 +393,10 @@ async def power_pool_workflow(body: AlphaIds, state: State) -> WorkflowStarted:
 
     async def work(task: Task) -> str:
         stored = await state.alphas.by_ids(alpha_ids)
-        unsubmitted = [a for a in alpha_ids if a in stored and not _is_submitted(stored[a])]
-        clean = [a for a in unsubmitted if verdict(checks_of(stored[a].get("checks"))) in CLEAN]
+        unsubmitted = [a for a in alpha_ids if a in stored and not is_submitted(stored[a])]
+        survivors = [a for a in unsubmitted if clean(checks_of(stored[a].get("checks")))]
         # Only an Alpha BRAIN judges as Power Pool is measured, so only its PnL is fetched.
-        judged = [a for a in clean if power_pool.is_power_pool(stored[a])]
+        judged = [a for a in survivors if power_pool.is_power_pool(stored[a])]
         pool = await _pool_members(state)
         wanted = {power_pool.scope_of(stored[a]) for a in judged}
         contested = ({power_pool.scope_of(r) for r in pool.values()} & wanted) - {None}
@@ -427,7 +415,7 @@ async def power_pool_workflow(body: AlphaIds, state: State) -> WorkflowStarted:
             what="Turnover",
         )
         detail = (
-            f"{len(unsubmitted)} Unsubmitted Alphas → {len(clean)} with no Checks FAIL or "
+            f"{len(unsubmitted)} Unsubmitted Alphas → {len(survivors)} with no Checks FAIL or "
             f"ERROR → {len(passed)} Pass Power Pool Correlation"
         )
         return detail + (f". {len(failed)} could not be downloaded" if failed else "")
@@ -543,7 +531,7 @@ async def top(
     limit: Annotated[int, Query(ge=1, le=5000)] = 20,
 ) -> list[RankedAlpha]:
     """The task's best Alphas on what it searches for. Seeds are not among them."""
-    row = await _one(state, task_id)
+    await _one(state, task_id)  # 404 for an unknown task
     async with state.db.session() as session:
         best = list(
             (
@@ -572,15 +560,13 @@ async def top(
                 "longCount": (stored.get(r["alphaId"]) or {}).get("long_count"),
                 "shortCount": (stored.get(r["alphaId"]) or {}).get("short_count"),
                 "afterCostSharpe": (stored.get(r["alphaId"]) or {}).get("after_cost_t10"),
-                "submitted": _is_submitted(stored.get(r["alphaId"])),
+                "submitted": is_submitted(stored.get(r["alphaId"])),
             }
         )
-        for r in ranked(best, row.directions, current)
+        for r in ranked(best, current)
     ]
 
 
-#: What BRAIN's checks say of an Alpha none of them FAILs or ERRORs.
-CLEAN = frozenset({"submittable", "pending"})
 #: Verdicts that let an Alpha into the Power Pool on correlation.
 SATISFIED = frozenset({"clear", "beats"})
 
@@ -660,7 +646,7 @@ async def _power_pool(state: State, alpha_ids: list[str]) -> PowerPoolCorrelatio
 
     return PowerPoolCorrelation(
         ceiling=power_pool.CEILING,
-        sharpe_edge=power_pool.SHARPE_EDGE,
+        sharpe_edge=ESCAPE,
         pool_size=len(pool_meta),
         power_pool_alphas=len(candidates),
         other_alphas=len(stored) - len(candidates),
@@ -709,7 +695,7 @@ async def submittable_alphas(state: State) -> list[TaskAlpha]:
     by_trial = {t.id: t.study_id for t in trials}
     out: list[TaskAlpha] = []
     seen: set[str] = set()
-    for r in ranked(trials, None, current):
+    for r in ranked(trials, current):
         alpha_id = str(r["alphaId"])
         if not r["submittable"] or alpha_id in seen:
             continue
@@ -723,7 +709,7 @@ async def submittable_alphas(state: State) -> list[TaskAlpha]:
                     "longCount": vault.get("long_count"),
                     "shortCount": vault.get("short_count"),
                     "afterCostSharpe": vault.get("after_cost_t10"),
-                    "submitted": _is_submitted(vault),
+                    "submitted": is_submitted(vault),
                     "taskId": task.id,
                     "taskName": task.template_name or TASK_SAMPLERS.get(task.sampler, task.sampler),
                 }

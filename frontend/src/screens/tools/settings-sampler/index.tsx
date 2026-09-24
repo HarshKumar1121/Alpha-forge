@@ -8,17 +8,16 @@
  * market — EUR delay 1, say — be dropped on its own.
  */
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import { PlusIcon } from 'lucide-react'
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
-import { toast } from 'sonner'
-import { errorMessage } from '@/api/http'
 import { cn } from '@/lib/cn'
 import { DASH, fmt } from '@/lib/format'
 import { neutralizationLabel } from '@/lib/neutralization'
-import { DEFAULT_SCOPE, regionLabel, useScopeOptions } from '@/lib/scope'
+import { DEFAULT_SCOPE, marketKey, regionLabel, useScopeOptions } from '@/lib/scope'
 import { AstInspector } from '@/screens/pool/shared'
+import { useAddTask } from '@/screens/research-labs/lab-task'
 import { NeutralizationPicker } from '@/screens/research-labs/neutralization'
 import {
   Button,
@@ -59,9 +58,6 @@ const MODES: { value: Mode; label: string }[] = [
   { value: 'expression', label: 'Expression' },
   { value: 'alpha', label: 'Alpha ID' },
 ]
-const marketKey = (m: { region: string; delay: number; universe: string }) =>
-  `${m.region}|${m.delay}|${m.universe}`
-
 /** TOP200 before TOP1000: universe names are numbered, so compare them that way. */
 const byName = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true })
 
@@ -427,7 +423,6 @@ function SettingsFields({
 export function SettingsSamplerScreen() {
   const search = useSearch({ from: '/tools/settings-sampler' })
   const navigate = useNavigate()
-  const queryClient = useQueryClient()
   // The URL owns which Alpha is open, so arriving without one shows an empty screen rather
   // than the last one analysed.
   const alphaId = search.alpha ?? ''
@@ -588,26 +583,17 @@ export function SettingsSamplerScreen() {
       .map((value) => ({ value, label: neutralizationLabel(value, labels.get(value)) }))
   }, [plan, labelled])
 
-  const add = useMutation({
-    mutationFn: () =>
-      settingsSampler.addTask({
-        ...(source ?? { alphaId: '' }),
-        ...holding,
-        markets: picks,
-        marketNeutralOnly,
-        neutralizations,
-        pairs: allPairs.filter((p) => pairs.includes(pairKey(p))),
-        cores,
-      }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['lab-tasks'] })
-      toast.success('Task Added', {
-        action: { label: 'Open Tasks', onClick: () => void navigate({ to: '/tasks' }) },
-      })
-    },
-    onError: (error: unknown) =>
-      toast.error('Could not add task', { description: errorMessage(error) }),
-  })
+  const add = useAddTask(() =>
+    settingsSampler.addTask({
+      ...(source ?? { alphaId: '' }),
+      ...holding,
+      markets: picks,
+      marketNeutralOnly,
+      neutralizations,
+      pairs: allPairs.filter((p) => pairs.includes(pairKey(p))),
+      cores,
+    }),
+  )
 
   const analyse = (event: React.FormEvent) => {
     event.preventDefault()

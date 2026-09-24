@@ -10,6 +10,7 @@ if the series are kept. The stored series rebuilds the platform's own figures (s
 
 from __future__ import annotations
 
+import itertools
 import json
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
@@ -19,7 +20,7 @@ import structlog
 
 from ..db.duck import ALPHA_COLUMNS, TRAIN_COLUMNS, Catalog
 from . import metrics
-from .yields import without_quota_checks
+from .yields import SUBMITTED, without_quota_checks
 
 if TYPE_CHECKING:
     from ..brain.schemas import Alpha
@@ -138,9 +139,6 @@ ALPHA_METRICS: dict[str, str] = {
     "date_submitted": "a.date_submitted",
 }
 
-#: Anything past UNSUBMITTED (ACTIVE, DECOMMISSIONED, ...) has been submitted.
-SUBMITTED = "(a.status IS NOT NULL AND a.status <> 'UNSUBMITTED')"
-
 #: Types that can seed the Evolution Lab.
 #:
 #: An ``RA_CHILD`` is an ordinary Alpha that happens to have arrived through a
@@ -189,14 +187,14 @@ def _page_row(r: dict[str, Any]) -> dict[str, Any]:
         "shortCount": r["short_count"],
         "maxTrade": r["max_trade"],
         "maxPosition": r["max_position"],
-        "classifications": _json_list(r["classifications"]),
-        "pyramids": _json_list(r["pyramids"]),
+        "classifications": json_list(r["classifications"]),
+        "pyramids": json_list(r["pyramids"]),
         "trainSharpe": r["train_sharpe"],
         "testSharpe": r["test_sharpe"],
     }
 
 
-def _json_list(raw: Any) -> list[str]:
+def json_list(raw: Any) -> list[str]:
     return [str(v) for v in json.loads(raw)] if isinstance(raw, str) else []
 
 
@@ -216,10 +214,10 @@ class AlphaVault:
 
     # -- writing ---------------------------------------------------------
 
-    async def save_alpha(self, alpha: Alpha, *, fetched_at: datetime | None = None) -> None:
+    async def save_alpha(self, alpha: Alpha) -> None:
         from ..db.models import utcnow
 
-        await self._save([alpha], fetched_at or utcnow())
+        await self._save([alpha], utcnow())
 
     async def save_alphas(self, alphas: list[Alpha]) -> int:
         """A page of alphas in one write. Ids must be distinct within the page."""
@@ -239,8 +237,8 @@ class AlphaVault:
                 f"BRAIN returned {len(alphas)} Alpha(s) without metrics or settings, "
                 "so nothing was stored. The platform's Alpha format may have changed."
             )
-        written = await self.catalog.upsert_alphas(
-            [alpha_row(a, fetched_at) for a in alphas if a.train is None]
+        written = await self.catalog.upsert(
+            "alpha", ALPHA_COLUMNS, [alpha_row(a, fetched_at) for a in alphas if a.train is None]
         )
         return written + await self.catalog.upsert(
             "alpha",
@@ -351,8 +349,7 @@ class AlphaVault:
         rebuilt = 0
         # A slice at a time: every series at once, as Python objects, peaked at 4.4 GB on a
         # vault of 3,269 series.
-        for start in range(0, len(pending), REBUILD_CHUNK):
-            chunk = pending[start : start + REBUILD_CHUNK]
+        for chunk in itertools.batched(pending, REBUILD_CHUNK, strict=False):
             series = await self.series([str(r["alpha_id"]) for r in chunk])
             rows = [
                 (a, _after_cost_sharpe([(d, p, t) for d, (p, t) in sorted(days.items())], info))
@@ -433,19 +430,6 @@ class AlphaVault:
             "SELECT count(*) FROM alpha WHERE date_created IS NOT NULL"
         )
         return int(value or 0)
-
-    async def without_returns(self, limit: int = 5000) -> list[str]:
-        """Alphas whose daily series has not been fetched yet, or only in the old form."""
-        rows = await self.catalog.query(
-            """
-            SELECT a.alpha_id FROM alpha a
-            WHERE a.series_version IS DISTINCT FROM ?
-            ORDER BY a.sharpe DESC NULLS LAST
-            LIMIT ?
-            """,
-            [SERIES_VERSION, limit],
-        )
-        return [str(r["alpha_id"]) for r in rows]
 
     async def latest_created(self) -> datetime | None:
         """The newest alpha stored, which is where an incremental sync resumes."""

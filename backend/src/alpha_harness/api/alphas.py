@@ -151,32 +151,7 @@ class AlphaProperties(BaseModel):
 # -- cache ---------------------------------------------------------------
 
 
-async def _cached(
-    state: State,
-    key: str,
-    fetch: Callable[[], Awaitable[dict[str, Any]]],
-    *,
-    refresh: bool,
-) -> tuple[dict[str, Any], datetime]:
-    """A cached BRAIN answer, fetched and stored when missing or when ``refresh``."""
-    async with state.db.session() as session:
-        row = await session.get(BrainCache, key)
-        if row is not None and not refresh:
-            return row.body, row.fetched_at
-    body = await fetch()
-    now = utcnow()
-    async with state.db.session() as session:
-        row = await session.get(BrainCache, key)
-        if row is None:
-            session.add(BrainCache(key=key, body=body, fetched_at=now))
-        else:
-            row.body, row.fetched_at = body, now
-    return body, now
-
-
-async def _forget(state: State, *keys: str) -> None:
-    async with state.db.session() as session:
-        await session.execute(delete(BrainCache).where(BrainCache.key.in_(keys)))
+type Fetch = Callable[[], Awaitable[dict[str, Any]]]
 
 
 async def _stored(state: State, key: str) -> BrainCache | None:
@@ -184,21 +159,62 @@ async def _stored(state: State, key: str) -> BrainCache | None:
         return await session.get(BrainCache, key)
 
 
+async def _store(state: State, key: str, body: dict[str, Any]) -> datetime:
+    now = utcnow()
+    async with state.db.session() as session:
+        await session.merge(BrainCache(key=key, body=body, fetched_at=now))
+    return now
+
+
+async def _forget(state: State, *keys: str) -> None:
+    async with state.db.session() as session:
+        await session.execute(delete(BrainCache).where(BrainCache.key.in_(keys)))
+
+
+async def _cached(
+    state: State, key: str, fetch: Fetch, *, refresh: bool
+) -> tuple[dict[str, Any], datetime]:
+    """A cached BRAIN answer, fetched and stored when missing or when ``refresh``."""
+    if not refresh and (row := await _stored(state, key)) is not None:
+        return row.body, row.fetched_at
+    body = await fetch()
+    return body, await _store(state, key, body)
+
+
 def _copy(row: BrainCache) -> str:
     # Stored in UTC; unlabelled it read as local.
     return f"showing the copy from {row.fetched_at:%b %d, %H:%M} UTC."
 
 
-async def _kept(state: State, key: str) -> BrainPayload:
-    async with state.db.session() as session:
-        row = await session.get(BrainCache, key)
-    if row is None:
-        return BrainPayload({"cached": False})
-    return BrainPayload(row.body | {"cached": True, "fetchedAt": _iso(row.fetched_at)})
+async def _cached_or_stale(
+    state: State, key: str, fetch: Fetch, *, refresh: bool, what: str, problems: list[str]
+) -> dict[str, Any]:
+    """:func:`_cached`, falling back to the last copy (or ``{}``) when BRAIN fails, with the
+    reason added to ``problems``."""
+    try:
+        return (await _cached(state, key, fetch, refresh=refresh))[0]
+    except BrainError as exc:
+        stale = await _stored(state, key)
+        if stale is None:
+            problems.append(f"The {what} could not be loaded: {exc.message}")
+            return {}
+        problems.append(f"The {what} could not be refreshed ({exc.message}); {_copy(stale)}")
+        return stale.body
 
 
-def _iso(value: datetime) -> str:
-    return value.isoformat()
+async def _kept(
+    state: State, key: str, fetch: Fetch, *, refresh: bool, cached_only: bool
+) -> BrainPayload:
+    """A kept answer stamped with ``fetchedAt``, or ``{"cached": false}`` when ``cached_only``
+    finds none."""
+    if cached_only:
+        row = await _stored(state, key)
+        if row is None:
+            return BrainPayload({"cached": False})
+        body, fetched = row.body, row.fetched_at
+    else:
+        body, fetched = await _cached(state, key, fetch, refresh=refresh)
+    return BrainPayload(body | {"cached": True, "fetchedAt": fetched.isoformat()})
 
 
 # -- reading BRAIN's shapes ---------------------------------------------------
@@ -348,7 +364,7 @@ async def _lineage(state: State, alpha_id: str) -> AlphaLineage | None:
         template_name=study.template_name if study is not None else None,
         params=dict(trial.params or {}) if trial is not None else {},
         generation=trial.generation if trial is not None else None,
-        simulated_at=_iso(sent) if sent is not None else None,
+        simulated_at=sent.isoformat() if sent is not None else None,
         siblings=siblings,
     )
 
@@ -379,8 +395,7 @@ async def page(alpha_id: str, state: State, refresh: Refresh = False) -> AlphaVi
             refresh=True,
         )
     except BrainError as exc:
-        async with state.db.session() as session:
-            stale = await session.get(BrainCache, f"alpha:{alpha_id}")
+        stale = await _stored(state, f"alpha:{alpha_id}")
         if stale is None:
             raise
         body, fetched = stale.body, stale.fetched_at
@@ -392,45 +407,26 @@ async def page(alpha_id: str, state: State, refresh: Refresh = False) -> AlphaVi
     if resolved := checks_of(stored.get("checks")):
         body: dict[str, Any] = {**body, "is": {**(body.get("is") or {}), "checks": resolved}}
 
-    dates: list[str] = []
-    pnl: list[float | None] = []
-    constrained: list[float | None] = []
-    try:
-        series, _ = await _cached(
+    dates, pnl, constrained = _series(
+        await _cached_or_stale(
             state,
             f"pnl:{alpha_id}",
             lambda: state.endpoints.recordset_body(alpha_id, "pnl"),
             refresh=refresh,
+            what="PnL series",
+            problems=problems,
         )
-        dates, pnl, constrained = _series(series)
-    except BrainError as exc:
-        stale = await _stored(state, f"pnl:{alpha_id}")
-        if stale is None:
-            problems.append(f"The PnL series could not be loaded: {exc.message}")
-        else:
-            dates, pnl, constrained = _series(stale.body)
-            problems.append(
-                f"The PnL series could not be refreshed ({exc.message}); {_copy(stale)}"
-            )
-
-    yearly: list[AlphaYear] = []
-    try:
-        table, _ = await _cached(
+    )
+    yearly = _yearly(
+        await _cached_or_stale(
             state,
             f"yearly:{alpha_id}",
             lambda: state.endpoints.recordset_body(alpha_id, "yearly-stats"),
             refresh=refresh,
+            what="yearly stats",
+            problems=problems,
         )
-        yearly = _yearly(table)
-    except BrainError as exc:
-        stale = await _stored(state, f"yearly:{alpha_id}")
-        if stale is None:
-            problems.append(f"The yearly stats could not be loaded: {exc.message}")
-        else:
-            yearly = _yearly(stale.body)
-            problems.append(
-                f"The yearly stats could not be refreshed ({exc.message}); {_copy(stale)}"
-            )
+    )
 
     return AlphaView(
         alpha=_info(alpha_id, body),
@@ -440,7 +436,7 @@ async def page(alpha_id: str, state: State, refresh: Refresh = False) -> AlphaVi
         test_start=(body.get("test") or {}).get("startDate"),
         yearly=yearly,
         lineage=await _lineage(state, alpha_id),
-        fetched_at=_iso(fetched),
+        fetched_at=fetched.isoformat(),
         problems=problems,
     )
 
@@ -497,12 +493,7 @@ async def update_properties(alpha_id: str, body: AlphaProperties, state: State) 
     updated = await state.endpoints.update_alpha(alpha_id, patch)
     if not updated.get("id"):
         updated = await state.endpoints.alpha_body(alpha_id)
-    async with state.db.session() as session:
-        row = await session.get(BrainCache, f"alpha:{alpha_id}")
-        if row is None:
-            session.add(BrainCache(key=f"alpha:{alpha_id}", body=updated))
-        else:
-            row.body, row.fetched_at = updated, utcnow()
+    await _store(state, f"alpha:{alpha_id}", updated)
     return _info(alpha_id, updated)
 
 
@@ -535,16 +526,13 @@ async def correlations(
     ``refresh`` asks BRAIN again. ``cachedOnly`` answers ``{"cached": false}`` when nothing
     is kept, so a page can show old answers without asking.
     """
-    key = f"correlation:{kind}:{alpha_id}"
-    if cached_only:
-        return await _kept(state, key)
-    body, fetched = await _cached(
+    return await _kept(
         state,
-        key,
+        f"correlation:{kind}:{alpha_id}",
         lambda: state.endpoints.correlations(alpha_id, kind),
         refresh=refresh,
+        cached_only=cached_only,
     )
-    return BrainPayload(body | {"cached": True, "fetchedAt": _iso(fetched)})
 
 
 @router.get("/{alpha_id}/performance")
@@ -552,13 +540,10 @@ async def performance(
     alpha_id: str, state: State, refresh: Refresh = False, cached_only: CachedOnly = False
 ) -> BrainPayload:
     """Your pool's stats before and after this Alpha joins it, kept until refreshed."""
-    key = f"performance:{alpha_id}"
-    if cached_only:
-        return await _kept(state, key)
-    body, fetched = await _cached(
+    return await _kept(
         state,
-        key,
+        f"performance:{alpha_id}",
         lambda: state.endpoints.before_and_after(alpha_id),
         refresh=refresh,
+        cached_only=cached_only,
     )
-    return BrainPayload(body | {"cached": True, "fetchedAt": _iso(fetched)})

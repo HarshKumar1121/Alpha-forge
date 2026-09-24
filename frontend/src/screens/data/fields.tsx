@@ -499,7 +499,7 @@ function FieldFilters({ scope }: { scope: Scope }) {
             variant={filter.region_exclusive ? 'primary' : 'secondary'}
             size="sm"
             aria-pressed={Boolean(filter.region_exclusive)}
-            title={`Only Fields found in ${scope.region} and no other synced region`}
+            title={`Only Fields found in ${scope.region} and no Other Synced region`}
             onClick={() =>
               set({ region_exclusive: !filter.region_exclusive, region_agnostic: false })
             }

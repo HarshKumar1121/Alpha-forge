@@ -19,7 +19,6 @@ export type TaskAlpha = Omit<Schemas['TaskAlpha'], 'settings'> & {
 }
 
 export type PowerPoolCorrelation = Schemas['PowerPoolCorrelation']
-export type PowerPoolScope = Schemas['PowerPoolScope']
 export type PowerPoolRow = Schemas['PowerPoolRow']
 
 const B = '/api/lab-tasks'

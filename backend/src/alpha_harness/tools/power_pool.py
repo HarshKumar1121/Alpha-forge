@@ -9,8 +9,8 @@ Which Alphas this applies to is BRAIN's own call, read off its ``POWER_POOL_CORR
 check (``vault.yields.is_power_pool``). Two rules then decide eligibility, both from
 ``docs/learn/consultant-information/getting-started-power-pool-alphas``:
 
-- Power Pool Correlation must be below :data:`CEILING`.
-- Above it, the Alpha needs a Sharpe at least :data:`SHARPE_EDGE` times that of **every**
+- Power Pool Correlation must be below the planner's :data:`CEILING`.
+- Above it, the Alpha needs a Sharpe at least :data:`ESCAPE` times that of **every**
   Alpha it collides with — not merely the one it correlates with most.
 
 That second rule is stricter than the platform's own wording, which says "10% higher than the
@@ -33,16 +33,12 @@ import numpy as np
 from ..vault import metrics, yields
 from ..vault.yields import checks_of
 from . import submission_planner
+from .submission_planner import CEILING, ESCAPE
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from ..vault.store import PnlGrid
-
-#: Above this an Alpha is refused unless it clears the Sharpe rule below.
-CEILING = 0.5
-#: How much better than every Alpha it collides with the Sharpe has to be.
-SHARPE_EDGE = 1.10
 
 
 def is_power_pool(row: dict[str, Any] | None) -> bool:
@@ -139,7 +135,7 @@ def _verdict(
     # one lets an Alpha through on the strength of beating a weak neighbour while a stronger
     # Alpha it also collides with goes unanswered.
     bars = [
-        found * SHARPE_EDGE
+        found * ESCAPE
         for other, value in measured
         if value >= CEILING and (found := _sharpe(meta.get(other))) is not None
     ]

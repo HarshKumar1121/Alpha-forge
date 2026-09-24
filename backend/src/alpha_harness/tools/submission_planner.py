@@ -34,14 +34,14 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import numpy.typing as npt
 
+from ..vault.metrics import MIN_OVERLAP, YEAR
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
 type Floats = npt.NDArray[np.float64]
 type Bools = npt.NDArray[np.bool_]
 
-#: Days two Alphas must share before their correlation means anything. Matches ``labs.ga``.
-MIN_OVERLAP = 250
 #: BRAIN's Power Pool ceiling. A pair at or above this is refused.
 CEILING = 0.5
 #: Past the ceiling, BRAIN still takes an Alpha whose Sharpe beats the one it collides with by
@@ -57,9 +57,6 @@ SPLIT = 0.8
 BEAM = 60
 #: Far past any peak seen in practice, so the search always runs through it and back down.
 MAX_PICKS = 14
-
-#: BRAIN annualises over 250 days, measured (see :mod:`..vault.metrics`).
-TRADING_DAYS = 250
 
 
 def grid(
@@ -149,7 +146,7 @@ def sharpe(scaled: Floats, have: Bools, cols: Sequence[int]) -> float:
     spread = float(stream.std())
     if spread == 0 or not np.isfinite(spread):
         return 0.0
-    return float(stream.mean() / spread * np.sqrt(TRADING_DAYS))
+    return float(stream.mean() / spread * np.sqrt(YEAR))
 
 
 def search(
@@ -170,10 +167,11 @@ def search(
     that choice cannot be undone. Carrying several part-built portfolios recovers most of what
     that throws away.
 
-    What it costs is the catch: this depth and beam over 278 Alphas asks for about 200,000
-    candidate scores. So a candidate is never scored on its own -- each frontier entry scores
-    every nominee at once, off the running stream it already holds, which measured 3-12x faster
-    than one at a time for identical portfolios. ``plan`` runs two searches, in a few seconds.
+    What it costs is the catch: this depth and beam over 1,000 Alphas asks for about 600,000
+    candidate scores. So no candidate is scored on its own, and no day is added twice: each
+    frontier entry carries its stream's running sums, a nominee's Sharpe comes off those and
+    its own, and the whole frontier is scored in one pass. Both of ``plan``'s searches over
+    1,000 vault Alphas take under a second.
     """
     n = rho.shape[0]
     # The diagonal is 1.0, so an Alpha is never legal against itself and cannot be re-picked.
@@ -204,50 +202,61 @@ def search(
     # Per-Alpha moments, so a nominee's contribution to the combined stream is a lookup.
     column_sum = scaled.sum(axis=0)
     column_square = (scaled * scaled).sum(axis=0)
-    traded = have.astype(np.float64)
+    # Thousands of Alphas trade on a handful of calendars, so days are counted per calendar.
+    _, first, calendar_of = np.unique(
+        np.packbits(have, axis=0), axis=1, return_index=True, return_inverse=True
+    )
+    calendars = have[:, first].astype(np.float64)
 
-    def stream_of(cols: list[int]) -> tuple[Floats, Bools]:
-        """The combined PnL of ``cols`` and the days any of them traded."""
-        if not cols:
-            return np.zeros(scaled.shape[0]), np.zeros(scaled.shape[0], dtype=bool)
-        return scaled[:, cols].sum(axis=1), have[:, cols].any(axis=1)
-
-    frontier: list[tuple[tuple[int, ...], Floats, Bools]] = [((), *stream_of(list(locked)))]
+    # The frontier, a row per part-built portfolio: its stream's sum, sum of squares and dot
+    # product with every Alpha, the days any member traded, and who may still join it.
+    # Submissions carry the escape clause, candidates picked along the way do not.
+    start = scaled[:, list(locked)].sum(axis=1)
+    seqs: list[tuple[int, ...]] = [()]
+    sums = np.array([start.sum()])
+    squares = np.array([start @ start])
+    cross = (start @ scaled)[None, :]
+    live = have[:, list(locked)].any(axis=1)[None, :]
+    joinable = legal_against_locked[None, :]
     best: list[tuple[int, ...]] = []
     for _ in range(depth):
-        scored: dict[tuple[int, ...], tuple[float, tuple[int, ...]]] = {}
-        for seq, total, live in frontier:
-            # Submissions carry the escape clause, candidates picked along the way do not.
-            eligible = np.flatnonzero(
-                legal_against_locked & under[list(seq)].all(axis=0) if seq else legal_against_locked
-            )
+        # Every nominee's Sharpe in one pass. ``scaled`` is zero where an Alpha did not trade,
+        # so a day outside the mask adds nothing and the sums need no masking; only the day
+        # *count* does. Deliberately a one-pass variance, which trades a little precision for
+        # the speed -- it only ranks candidates here, and every figure the user is shown comes
+        # from ``sharpe`` in ``plan``.
+        days = live.sum(axis=1)[:, None] + ((~live).astype(np.float64) @ calendars)[:, calendar_of]
+        with np.errstate(invalid="ignore", divide="ignore"):
+            mean = (sums[:, None] + column_sum) / days
+            variance = (squares[:, None] + 2 * cross + column_square) / days - mean * mean
+            scores = mean / np.sqrt(np.maximum(variance, 0.0)) * np.sqrt(YEAR)
+        scores = np.where(np.isfinite(scores), scores, 0.0).ravel()
 
-            # Every nominee's Sharpe in one pass. ``scaled`` is zero where an Alpha did not
-            # trade, so a day outside the mask adds nothing and the sums below need no
-            # masking; only the day *count* does. Deliberately a one-pass variance, which
-            # trades a little precision for the speed -- it only ranks candidates here, and
-            # every figure the user is shown comes from ``sharpe`` in ``plan``.
-            days = live.sum() + (~live).astype(np.float64) @ traded
-            totals = total.sum() + column_sum
-            squares = total @ total + 2 * (total @ scaled) + column_square
-            with np.errstate(invalid="ignore", divide="ignore"):
-                mean = totals / days
-                spread = np.sqrt(np.maximum(squares / days - mean * mean, 0.0))
-                scores = mean / spread * np.sqrt(TRADING_DAYS)
-
-            for nominee in eligible.tolist():
-                key = tuple(sorted((*seq, nominee)))
-                if key in scored:
-                    continue
-                score = float(scores[nominee])
-                scored[key] = (score if np.isfinite(score) else 0.0, (*seq, nominee))
-        if not scored:
+        nominated = np.flatnonzero(joinable)
+        index = {frozenset(seq): f for f, seq in enumerate(seqs)}
+        picked: list[tuple[int, int]] = []
+        for flat in nominated[np.argsort(-scores[nominated], kind="stable")].tolist():
+            f, nominee = divmod(flat, n)
+            # A portfolio is nominated once by every frontier entry it contains, and the first
+            # nomination speaks for it.
+            whole = frozenset((*seqs[f], nominee))
+            earlier = [(index.get(whole - {member}, f), member) for member in seqs[f]]
+            if any(g < f and joinable[g, member] for g, member in earlier):
+                continue
+            picked.append((f, nominee))
+            if len(picked) == beam:
+                break
+        if not picked:
             break
-        ranked = sorted(scored.values(), key=lambda pair: -pair[0])[:beam]
-        # Rebuilt for the survivors only: holding a stream per candidate would cost a
-        # gigabyte at this beam width.
-        frontier = [(seq, *stream_of([*locked, *seq])) for _, seq in ranked]
-        best.append(ranked[0][1])
+
+        parents, nominees = np.array(picked).T
+        seqs = [(*seqs[f], nominee) for f, nominee in picked]
+        sums = sums[parents] + column_sum[nominees]
+        squares = squares[parents] + 2 * cross[parents, nominees] + column_square[nominees]
+        cross = cross[parents] + scaled[:, nominees].T @ scaled
+        live = live[parents] | have[:, nominees].T
+        joinable = joinable[parents] & under[nominees]
+        best.append(seqs[0])
     return best
 
 

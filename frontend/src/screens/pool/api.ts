@@ -88,9 +88,4 @@ export const pool = {
     http.get<{ is?: { checks?: AlphaCheck[] } }>(
       `/api/alphas/${encodeURIComponent(alphaId)}/check`,
     ),
-  /** A slow, rate-limited BRAIN job. */
-  correlations: (alphaId: string, kind: 'self' | 'prod') =>
-    http.get<BrainCorrelation & { fetchedAt: string }>(
-      `/api/alphas/${encodeURIComponent(alphaId)}/correlations/${kind}`,
-    ),
 }

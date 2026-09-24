@@ -1,8 +1,22 @@
-/** Columns the Tasks list and a task's results screen both show, so they cannot drift apart. */
+/** Columns the task tables share, so they cannot drift apart. */
 
-import { DASH } from '@/lib/format'
+import { cn } from '@/lib/cn'
+import { CORE_METRICS, CORE_ORDER, DASH, fmt } from '@/lib/format'
 import type { RankedAlpha } from '@/screens/tasks/api'
-import type { Column } from '@/ui/table'
+import { MetricBadge, signTone, TEXT_TONE } from '@/ui/kit'
+import type { Column, Sort } from '@/ui/table'
+
+export const setting = (r: RankedAlpha, key: string) => String(r.settings?.[key] ?? '')
+
+/** A Sharpe as the tables show it: a badge toned by its sign. */
+export function SharpeCell({ value }: { value: number | null | undefined }) {
+  if (value == null) return DASH
+  return (
+    <MetricBadge tone={value > 0 ? 'profit' : value < 0 ? 'loss' : 'neutral'}>
+      {fmt.ratio(value)}
+    </MetricBadge>
+  )
+}
 
 /** After-Cost Sharpe's header. The figure is scaled to ten years of data, which the name alone
  *  does not say, so the header does on hover. */
@@ -64,4 +78,106 @@ export const DELAY: Column<RankedAlpha> = {
   cell: (r) => (
     <span className="num">{r.settings?.['delay'] == null ? DASH : `D${r.settings['delay']}`}</span>
   ),
+}
+
+export interface Metric {
+  key: keyof RankedAlpha
+  label: string
+  show: (v: number | null) => string
+  signed: boolean
+  /** Which end of the range is the good one, for the across-regions "best" columns. Less
+   *  trading is better: every submittable Alpha already clears BRAIN's 1% turnover floor, so
+   *  the smallest turnover among them is the cheapest to hold, not one that barely trades. */
+  best: 'max' | 'min'
+}
+
+export const METRICS: Metric[] = [
+  ...CORE_ORDER.map(
+    (key): Metric => ({
+      key,
+      ...CORE_METRICS[key],
+      best: key === 'turnover' || key === 'drawdown' ? 'min' : 'max',
+    }),
+  ),
+  {
+    key: 'afterCostSharpe',
+    label: 'After-Cost Sharpe',
+    show: (v) => fmt.ratio(v),
+    signed: true,
+    best: 'max',
+  },
+]
+
+/** A metric's figure, in profit or loss colour where its sign means something. */
+export function Figure({ metric, value }: { metric: Metric; value: number | null }) {
+  return (
+    <span className={cn('num', metric.signed && TEXT_TONE[signTone(value)])}>
+      {metric.show(value)}
+    </span>
+  )
+}
+
+export const metricHeader = (m: Metric) =>
+  m.key === 'afterCostSharpe' ? AFTER_COST_HEADER : m.label
+
+/** Where and how an Alpha ran. */
+export const SETTING_COLUMNS: Column<RankedAlpha>[] = [
+  {
+    key: 'region',
+    header: 'Region',
+    width: 'minmax(70px,0.7fr)',
+    sortable: true,
+    cell: (r) => <span className="num">{setting(r, 'region') || DASH}</span>,
+  },
+  DELAY,
+  {
+    key: 'universe',
+    header: 'Universe',
+    width: 'minmax(84px,0.9fr)',
+    sortable: true,
+    cell: (r) => <span className="num truncate">{setting(r, 'universe') || DASH}</span>,
+  },
+  {
+    key: 'neutralization',
+    header: 'Neutralization',
+    width: 'minmax(96px,1fr)',
+    sortable: true,
+    cell: (r) => <span className="num truncate">{setting(r, 'neutralization') || DASH}</span>,
+  },
+  INVESTABILITY,
+]
+
+export const METRIC_COLUMNS: Column<RankedAlpha>[] = METRICS.map((m) => ({
+  key: String(m.key),
+  header: metricHeader(m),
+  width: 'minmax(84px,0.8fr)',
+  align: 'right',
+  sortable: true,
+  cell: (r) => <Figure metric={m} value={r[m.key] as number | null} />,
+}))
+
+/** Sorted client-side on any column above, absent values last whichever way. */
+export function compareAlphas(a: RankedAlpha, b: RankedAlpha, sort: Sort): number {
+  const pick = (r: RankedAlpha): string | number | null => {
+    switch (sort.key) {
+      case 'region':
+      case 'universe':
+      case 'neutralization':
+        return setting(r, sort.key)
+      case 'investability':
+        return investability(r)
+      case 'delay':
+        return (r.settings?.['delay'] as number | undefined) ?? null
+      case 'failed':
+        return r.failedChecks.length
+      default:
+        return (r as unknown as Record<string, string | number | null>)[sort.key] ?? null
+    }
+  }
+  const x = pick(a)
+  const y = pick(b)
+  if (x == null) return y == null ? 0 : 1
+  if (y == null) return -1
+  const order = typeof x === 'string' ? x.localeCompare(String(y)) : Number(x) - Number(y)
+  return sort.desc ? -order : order
 }

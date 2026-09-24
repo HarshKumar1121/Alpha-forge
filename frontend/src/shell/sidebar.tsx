@@ -7,11 +7,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useRouterState } from '@tanstack/react-router'
 import { ChevronsUpDownIcon, ExternalLinkIcon, LogOutIcon, PanelLeftIcon } from 'lucide-react'
 import { Fragment, useEffect } from 'react'
-import { toast } from 'sonner'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { auth } from '@/api/core'
-import { errorMessage, http } from '@/api/http'
+import { http } from '@/api/http'
 import type { Today } from '@/api/types'
 import { cn } from '@/lib/cn'
 import { useRefetchOn } from '@/lib/ws'
@@ -154,7 +153,6 @@ export function Sidebar({
       queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== 'today' })
       await queryClient.refetchQueries({ queryKey: ['today'] })
     },
-    onError: (error) => toast.error(errorMessage(error)),
   })
 
   const name = you.fullName ?? you.userId ?? 'Signed in'
@@ -195,14 +193,14 @@ export function Sidebar({
               className={cn(
                 'group flex h-8 items-center gap-3 rounded-md text-body text-ink-muted transition-colors hover:bg-surface-3 hover:text-ink data-[status=active]:bg-surface-4 data-[status=active]:font-medium data-[status=active]:text-ink',
                 collapsed ? 'justify-center' : 'px-2',
-                ONBOARDING.includes(item.area) &&
-                  !visited.includes(item.area) &&
+                ONBOARDING.includes(item.to.slice(1)) &&
+                  !visited.includes(item.to.slice(1)) &&
                   'animate-attention text-status-warning motion-reduce:bg-status-warning-tint',
               )}
             >
               <item.icon className="size-4 shrink-0" aria-hidden />
               {!collapsed && <span className="flex-1 truncate">{item.label}</span>}
-              {!collapsed && item.area === 'pool' && total > 0 && (
+              {!collapsed && item.to === '/pool' && total > 0 && (
                 <span
                   className="num rounded-pill border border-pnl-positive-edge bg-pnl-positive-tint px-1.5 py-0.5 text-caption font-medium text-pnl-positive"
                   title="Submittable Alphas"

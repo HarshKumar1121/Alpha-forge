@@ -25,8 +25,9 @@ from ..labs.launch import AddedTask, add_study
 from ..labs.params import CORRELATION_BREAKER, SETTINGS_SAMPLER, BreakerParams, SettingsParams
 from ..schemas import Out
 from ..tools import correlation_breaker, settings_sampler, submission_planner
-from ..vault.yields import is_promising, is_submittable
+from ..vault.yields import checks_of, verdict
 from .deps import State, refuse
+from .vault import AlphaSettings
 
 router = APIRouter(prefix="/api/tools", tags=["tools"])
 
@@ -206,11 +207,9 @@ async def add_task(body: SampleRequest, state: State) -> AddedTask:
         )
 
     markets = len(chosen) or sum(len(r["markets"]) for r in found["regions"])
-    row = await add_study(
+    return await add_study(
         state,
         now=utcnow(),
-        lab="Settings Sampler",
-        prefix="settings-sampler",
         sampler=SETTINGS_SAMPLER,
         params=SettingsParams(
             region=str(found["settings"]["region"] or ""),
@@ -223,7 +222,6 @@ async def add_task(body: SampleRequest, state: State) -> AddedTask:
             test_period=str(found["settings"]["testPeriod"] or ""),
             cores=body.cores,
         ),
-        objective="sharpe",
         simulations=len(requests),
         # One batch more than the cores can run, so a finished batch is replaced from the
         # queue on the engine's next 2s tick instead of waiting out the scheduler's 5s poll.
@@ -233,7 +231,6 @@ async def add_task(body: SampleRequest, state: State) -> AddedTask:
         template_name=f"Settings Sampler · {body.alpha_id or 'Expression'}",
         seeds=settings_sampler.seed_trials(requests, has_source=bool(body.alpha_id)),
     )
-    return AddedTask(id=row.id, name=row.name)
 
 
 # -- Submission Planner ---------------------------------------------------
@@ -330,10 +327,10 @@ async def _candidates(state: State, task_ids: list[int]) -> tuple[list[str], set
         seen.add(found_id)
         row = stored.get(found_id) or {}
         checks = row.get("checks") or json.dumps((result or {}).get("checks") or [])
-        mode = row.get("simulation_mode")
-        if is_submittable(checks, mode):
+        judged = verdict(checks_of(checks), row.get("simulation_mode"))
+        if judged == "submittable":
             found.append(found_id)
-        elif is_promising(checks, mode):
+        elif judged == "pending":
             pending += 1
     return found, marked, pending
 
@@ -402,17 +399,6 @@ async def mark_submitted(body: SubmittedRequest, state: State) -> None:
 # --- Correlation Breaker ----------------------------------------------------
 
 
-class BreakerSettings(Out):
-    """What every simulation runs at: the source Alpha's own, never varied."""
-
-    region: str | None
-    delay: int | None
-    universe: str | None
-    neutralization: str | None
-    decay: int | None
-    truncation: float | None
-
-
 class BreakerRecipe(Out):
     id: str
     name: str
@@ -435,7 +421,8 @@ class BreakerPlan(Out):
     expression: str
     #: The source Alpha reduced to ``alpha``, shown once above the re-shapes.
     bound: str
-    settings: BreakerSettings
+    #: What every simulation runs at: the source Alpha's own, never varied.
+    settings: AlphaSettings
     #: BRAIN's own production-correlation check, as it last reported it.
     correlation: dict[str, Any] | None
     #: BRAIN judges it as a Power Pool Alpha, so its re-shapes are held to the pool's limits.
@@ -493,11 +480,9 @@ async def breaker_task(body: BreakerRequest, state: State) -> AddedTask:
     compressed = correlation_breaker.compress(found["expression"])
     requests = correlation_breaker.requests(compressed, chosen, found["rawSettings"])
     settings = found["settings"]
-    row = await add_study(
+    return await add_study(
         state,
         now=utcnow(),
-        lab="Correlation Breaker",
-        prefix="correlation-breaker",
         sampler=CORRELATION_BREAKER,
         params=BreakerParams(
             region=str(settings["region"] or ""),
@@ -510,11 +495,9 @@ async def breaker_task(body: BreakerRequest, state: State) -> AddedTask:
             recipes=[r.id for r in chosen],
             cores=body.cores,
         ),
-        objective="sharpe",
         simulations=len(requests),
         batch_size=(body.cores + 1) * MAX_BATCH,
         template_source=found["expression"],
         template_name=f"Correlation Breaker · {body.alpha_id}",
         seeds=settings_sampler.seed_trials(requests, has_source=False),
     )
-    return AddedTask(id=row.id, name=row.name)

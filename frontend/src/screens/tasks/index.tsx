@@ -23,7 +23,7 @@ import { useRefetchOn } from '@/lib/ws'
 import { DetailSheet } from '@/screens/pool/detail'
 import { MAX_SIMULATIONS } from '@/screens/research-labs/lab-task'
 import { type LabTask, labTasks, type RankedAlpha, type TaskStatus } from '@/screens/tasks/api'
-import { AFTER_COST_HEADER, DELAY, INVESTABILITY } from '@/screens/tasks/columns'
+import { AFTER_COST_HEADER, DELAY, INVESTABILITY, SharpeCell } from '@/screens/tasks/columns'
 import { resultsMarkdown } from '@/screens/tasks/copy'
 import { SubmittableAlphas } from '@/screens/tasks/submittable'
 import {
@@ -37,7 +37,6 @@ import {
   Input,
   LINK,
   Metric,
-  MetricBadge,
   Notice,
   Page,
   PageHeader,
@@ -78,14 +77,7 @@ const TOP_COLUMNS: Column<RankedAlpha>[] = [
     header: 'Sharpe',
     width: '90px',
     align: 'right',
-    cell: (r) =>
-      r.sharpe == null ? (
-        DASH
-      ) : (
-        <MetricBadge tone={r.sharpe > 0 ? 'profit' : r.sharpe < 0 ? 'loss' : 'neutral'}>
-          {fmt.ratio(r.sharpe)}
-        </MetricBadge>
-      ),
+    cell: (r) => <SharpeCell value={r.sharpe} />,
   },
   {
     key: 'fitness',
@@ -174,14 +166,7 @@ const SAMPLER_COLUMNS: Column<RankedAlpha>[] = [
     header: 'Sharpe',
     width: '100px',
     align: 'right',
-    cell: (r) =>
-      r.sharpe == null ? (
-        DASH
-      ) : (
-        <MetricBadge tone={r.sharpe > 0 ? 'profit' : r.sharpe < 0 ? 'loss' : 'neutral'}>
-          {fmt.ratio(r.sharpe)}
-        </MetricBadge>
-      ),
+    cell: (r) => <SharpeCell value={r.sharpe} />,
   },
   AFTER_COST_SHARPE,
 ]
@@ -225,6 +210,7 @@ export function TasksScreen() {
   }, [running])
 
   const act = useMutation({
+    meta: { inline: true },
     mutationFn: async (a: Act) => {
       if (a.action === 'runAll') await labTasks.runAll()
       else await labTasks[a.action](a.task.id)
@@ -805,6 +791,7 @@ function EditTask({ task, slots, onClose }: { task: LabTask; slots: number; onCl
   const least = Math.max(1, task.simulated)
   const valid = Number.isInteger(count) && count >= least && count <= MAX_SIMULATIONS
   const change = useMutation({
+    meta: { inline: true },
     mutationFn: () => labTasks.change(task.id, { cores, simulations: count }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['lab-tasks'] })

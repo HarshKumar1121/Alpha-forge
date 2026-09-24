@@ -2,8 +2,7 @@
 
 Metadata is cheap: a hundred alphas per listing request. Daily returns are one
 ``Retry-After`` request per alpha, so a thousand alphas is the better part of an hour —
-hence a background task with visible progress, ordered by Sharpe so the alphas most
-likely to be worth mixing arrive first.
+hence background tasks with visible progress.
 
 None of this spends simulation quota. It is all reading results that already exist.
 """
@@ -19,7 +18,7 @@ import structlog
 from ..brain.filters import AlphaQuery, Filter
 from ..brain.schemas import Alpha, RecordSet
 from .store import checks_json
-from .yields import is_promising, is_submittable
+from .yields import checks_of, clean
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Coroutine
@@ -64,6 +63,9 @@ RETURNS_CONCURRENCY = 4
 #: rate-limited job *is* slow enough to be mistaken for one.
 RETURNS_PROGRESS_STEPS = 50
 
+#: Most alphas one sync lists: past any account's real count, so it is a guard, not a cap.
+IMPORT_LIMIT = 100_000
+
 
 def worth_downloading(alpha: Alpha) -> bool:
     """Whether this alpha's daily PnL is worth a request as soon as it lands.
@@ -72,9 +74,8 @@ def worth_downloading(alpha: Alpha) -> bool:
     with, so its series is a request and ~2,500 rows spent on something no screen reads --
     and a full day is 5,000 alphas, of which about one in five is worth keeping.
     """
-    checks = checks_json(alpha)
     mode = alpha.settings.simulation_mode if alpha.settings else None
-    return is_submittable(checks, mode) or is_promising(checks, mode)
+    return clean(checks_of(checks_json(alpha)), mode)
 
 
 def _warn_unreadable(alpha_id: str, pnl: RecordSet, stored: int) -> None:
@@ -97,7 +98,7 @@ class Backfill:
         endpoints: BrainEndpoints,
         tasks: TaskRegistry,
         *,
-        on_stored: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        on_stored: Callable[[dict[str, Any]], Awaitable[None]],
     ) -> None:
         self.vault = vault
         self.endpoints = endpoints
@@ -122,21 +123,14 @@ class Backfill:
     def busy(self) -> bool:
         return self._running is not None and not self._running.done()
 
-    async def start(
-        self,
-        *,
-        include_returns: bool = True,
-        limit: int = 5000,
-        since: datetime | None = None,
-    ) -> str:
-        """Begin a backfill in the background. Returns the task id.
+    async def start(self, *, since: datetime | None = None) -> str:
+        """Begin importing the listing — metrics, no daily PnL — in the background. Returns
+        the task id.
 
         ``since`` makes it incremental: only alphas created after that moment are listed.
         """
         return await self._launch(
-            "vault-backfill",
-            "Importing your Alphas",
-            lambda task: self._run(task, include_returns=include_returns, limit=limit, since=since),
+            "vault-backfill", "Importing your Alphas", lambda task: self._run(task, since=since)
         )
 
     async def start_submitted(self) -> str:
@@ -200,8 +194,6 @@ class Backfill:
             async with gate:
                 try:
                     await fetch(alpha_id)
-                except asyncio.CancelledError:
-                    raise
                 # One Alpha's series failing must not abandon the rest.
                 except Exception as exc:  # noqa: BLE001
                     log.warning("vault.returns_failed", alpha_id=alpha_id, error=str(exc)[:160])
@@ -274,19 +266,10 @@ class Backfill:
         await asyncio.gather(*tasks, return_exceptions=True)
         self._running = None
 
-    async def _run(
-        self,
-        task: Any,
-        *,
-        include_returns: bool,
-        limit: int,
-        since: datetime | None = None,
-    ) -> None:
+    async def _run(self, task: Any, *, since: datetime | None) -> None:
         imported = 0
         try:
-            imported = await self._import_alphas(task, limit, since=since)
-            if include_returns:
-                await self._import_returns(task)
+            imported = await self._import_alphas(task, since=since)
             await self.tasks.finish(task)
             self.last = {"state": "done", "imported": imported, "finishedAt": _now()}
             log.info("vault.backfill_done", alphas=imported)
@@ -304,15 +287,15 @@ class Backfill:
                 "finishedAt": _now(),
             }
 
-    async def _import_alphas(self, task: Any, limit: int, *, since: datetime | None = None) -> int:
-        """Page the pool into the vault, newest first."""
+    async def _import_alphas(self, task: Any, *, since: datetime | None) -> int:
+        """Page the pool into the vault, newest first, up to :data:`IMPORT_LIMIT` alphas."""
         await self.tasks.update(task, detail="Listing your Alphas", progress=0.0)
         offset = 0
         imported = 0
         before: datetime | None = None
         total: int | None = None
 
-        while imported < limit:
+        while imported < IMPORT_LIMIT:
             # hidden=None: an alpha you hid is still an alpha, and still has returns
             # worth correlating. Excluding them by default is a UI nicety, not a
             # property of the data.
@@ -337,7 +320,7 @@ class Backfill:
             imported += len(alphas)
             await self.tasks.update(
                 task,
-                progress=min(1.0, imported / total) * 0.2 if total else None,
+                progress=min(1.0, imported / total) if total else None,
                 detail=f"Imported {imported} of {total} Alphas",
                 alphas=imported,
             )
@@ -358,30 +341,6 @@ class Backfill:
                 before, offset = bound, 0
 
         return imported
-
-    async def _import_returns(self, task: Any) -> int:
-        """Fetch the daily series for every alpha that lacks one."""
-        pending = await self.vault.without_returns()
-        if not pending:
-            await self.tasks.update(task, progress=1.0, detail="Daily returns already complete")
-            return 0
-
-        done = 0
-        for alpha_id in pending:
-            try:
-                await self.fetch_returns(alpha_id)
-            except Exception as exc:  # noqa: BLE001
-                # One alpha's series failing must not abandon the rest; some alphas
-                # genuinely have none.
-                log.warning("vault.returns_failed", alpha_id=alpha_id, error=str(exc)[:160])
-            done += 1
-            await self.tasks.update(
-                task,
-                progress=0.2 + 0.8 * (done / len(pending)),
-                detail=f"Daily returns: {done} of {len(pending)}",
-                returns=done,
-            )
-        return done
 
     async def fetch_returns(self, alpha_id: str) -> int:
         """Fetch and store one alpha's daily PnL and turnover.
@@ -427,8 +386,6 @@ class Backfill:
         for alpha_id in alpha_ids:
             try:
                 await self.fetch_returns(alpha_id)
-            except asyncio.CancelledError:
-                raise
             # One alpha's series failing must not abandon the rest.
             except Exception as exc:  # noqa: BLE001
                 log.warning("vault.returns_failed", alpha_id=alpha_id, error=str(exc)[:160])
@@ -540,9 +497,8 @@ class Backfill:
         alpha_id = alpha.id
         # Tell open screens it is stored. The simulation's own "finished" broadcast lands
         # before this save, so a refetch on that alone would miss the new alpha.
-        if self.on_stored is not None:
-            # One failed notice must not cost the rest of its batch their capture.
-            try:
-                await self.on_stored({"alphaId": alpha_id, "stored": True})
-            except Exception:
-                log.warning("vault.capture_notify_failed", alpha_id=alpha_id, exc_info=True)
+        # One failed notice must not cost the rest of its batch their capture.
+        try:
+            await self.on_stored({"alphaId": alpha_id, "stored": True})
+        except Exception:
+            log.warning("vault.capture_notify_failed", alpha_id=alpha_id, exc_info=True)

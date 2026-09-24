@@ -6,8 +6,6 @@ import { http } from '@/api/http'
 type Schemas = components['schemas']
 
 export type SettingsPlan = Schemas['SettingsPlan']
-export type RegionPlan = Schemas['RegionPlan']
-export type MarketRow = Schemas['MarketRow']
 export type Pair = Schemas['Pair']
 
 export interface MarketPick {
@@ -48,7 +46,6 @@ export const settingsSampler = {
   addTask: (body: SampleRequest) => http.post<Schemas['AddedTask']>(`${B}/tasks`, body),
 }
 
-export const marketKey = (m: MarketPick) => `${m.region}|${m.delay}|${m.universe}`
 /** How an Alpha is held to its instruments' liquidity. BRAIN refuses both ON, so the two
  *  settings are one three-way choice; `None` matches the Investability column on the tables. */
 export const pairLabel = (p: Pair) =>

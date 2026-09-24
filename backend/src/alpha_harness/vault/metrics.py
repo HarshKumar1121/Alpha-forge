@@ -35,7 +35,10 @@ if TYPE_CHECKING:
 type Floats = npt.NDArray[np.float64]
 
 BOOK = 20_000_000.0
+#: BRAIN annualises over 250 trading days, measured.
 YEAR = 250
+#: Days two Alphas must share before their correlation means anything.
+MIN_OVERLAP = 250
 #: BRAIN's fitness floors turnover here so a near-idle alpha is not rewarded without bound.
 FITNESS_TURNOVER_FLOOR = 0.125
 #: Half the last decimal of BRAIN's four-decimal turnover.
@@ -291,7 +294,7 @@ DEFAULT_COST_BPS = 5.0
 REFERENCE_YEARS = 10
 
 
-def after_cost_sharpe(pnl: Floats, turnover: Floats, bps: float = DEFAULT_COST_BPS) -> float | None:
+def after_cost_sharpe(pnl: Floats, turnover: Floats) -> float | None:
     """The after-cost t-stat over the square root of ten: the after-cost Sharpe scaled by
     ``sqrt(years of data / 10)``.
 
@@ -303,8 +306,9 @@ def after_cost_sharpe(pnl: Floats, turnover: Floats, bps: float = DEFAULT_COST_B
     The cost is charged per day against *that day's* turnover — never an average cost off the
     gross Sharpe, which flatters an Alpha that trades unevenly. Straight through :func:`stats`,
     so it is the same arithmetic and the same idle-day trim as every other Sharpe here.
+    Charged at :data:`DEFAULT_COST_BPS`.
     """
-    found = stats(after_cost(pnl, turnover, bps), turnover)
+    found = stats(after_cost(pnl, turnover, DEFAULT_COST_BPS), turnover)
     if found is None or found.sharpe is None:
         return None
     return found.sharpe * math.sqrt(found.days / (YEAR * REFERENCE_YEARS))

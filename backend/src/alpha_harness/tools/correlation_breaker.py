@@ -66,7 +66,7 @@ class Compressed:
             lines.append(self.binding)
         lines.extend(extra)
         lines.append(tail)
-        return "\n".join(f"{line};" if i < len(lines) - 1 else line for i, line in enumerate(lines))
+        return ";\n".join(lines)
 
     @property
     def bound(self) -> str:
@@ -81,8 +81,7 @@ class Compressed:
     @staticmethod
     def transform(tail: str, extra: Sequence[str] = ()) -> str:
         """Just the re-shape, written against ``alpha``."""
-        lines = [*extra, tail]
-        return "\n".join(f"{line};" if i < len(lines) - 1 else line for i, line in enumerate(lines))
+        return ";\n".join([*extra, tail])
 
 
 def compress(expression: str) -> Compressed:
@@ -346,7 +345,7 @@ def group_recipes(
         out.append(_unbuilt("group_exclusive", exclusive_name, missing))
     else:
         about = (
-            f"found in {region} and no other synced region, so no Alpha built elsewhere can "
+            f"found in {region} and no other Synced Region, so no Alpha built elsewhere can "
             f"have been neutralized on it ({_users(exclusive)})"
         )
         out.extend(_grouped("group_exclusive", str(exclusive["field_id"]), about))

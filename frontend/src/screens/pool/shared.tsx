@@ -5,7 +5,6 @@ import { useNavigate } from '@tanstack/react-router'
 import { CheckIcon, CopyIcon, EllipsisIcon, ExternalLinkIcon, RefreshCwIcon } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { errorMessage } from '@/api/http'
 import { cn } from '@/lib/cn'
 import { fmt } from '@/lib/format'
 import { pool } from '@/screens/pool/api'
@@ -47,7 +46,6 @@ export function RecheckButton({ alphaId }: { alphaId: string }) {
       // Not under the prefix above: the sidebar badge and Dashboard count.
       void queryClient.invalidateQueries({ queryKey: ['pool', 'submittable-count'] })
     },
-    onError: (e) => toast.error(errorMessage(e)),
   })
   return (
     <Button size="sm" loading={mutation.isPending} onClick={() => mutation.mutate()}>

@@ -17,128 +17,24 @@ import { AstInspector } from '@/screens/pool/shared'
 import { AlphaPane } from '@/screens/tasks/alpha-pane'
 import { labTasks, type RankedAlpha } from '@/screens/tasks/api'
 import {
-  AFTER_COST_HEADER,
-  DELAY,
+  compareAlphas,
   FAILED_CHECKS,
-  INVESTABILITY,
-  investability,
+  Figure,
+  METRIC_COLUMNS,
+  METRICS,
+  metricHeader,
+  SETTING_COLUMNS,
+  setting,
 } from '@/screens/tasks/columns'
-import {
-  Button,
-  Empty,
-  ErrorNotice,
-  KV,
-  Metric,
-  Page,
-  PageHeader,
-  Panel,
-  Skeleton,
-  signTone,
-  TEXT_TONE,
-} from '@/ui/kit'
+import { Button, Empty, ErrorNotice, KV, Metric, Page, PageHeader, Panel, Skeleton } from '@/ui/kit'
 import { type Column, DataTable, type Sort } from '@/ui/table'
 
 /** The sweep's whole result set, not a page of it: the comparison needs every row. */
 const LIMIT = 2000
 
-const setting = (r: RankedAlpha, key: string) => String(r.settings?.[key] ?? '')
 const market = (r: RankedAlpha) => setting(r, 'region') || DASH
 
-/** Sorted client-side: the rows are already here, and a sweep is thousands at most. */
-function compare(a: RankedAlpha, b: RankedAlpha, sort: Sort): number {
-  const pick = (r: RankedAlpha): string | number | null => {
-    switch (sort.key) {
-      case 'region':
-        return market(r)
-      case 'universe':
-        return setting(r, 'universe')
-      case 'neutralization':
-        return setting(r, 'neutralization')
-      case 'failed':
-        return r.failedChecks.length
-      case 'investability':
-        return investability(r)
-      case 'delay':
-        return (r.settings?.['delay'] as number | undefined) ?? null
-      default:
-        return (r as unknown as Record<string, number | null>)[sort.key] ?? null
-    }
-  }
-  const x = pick(a)
-  const y = pick(b)
-  if (x == null) return y == null ? 0 : 1
-  if (y == null) return -1
-  const order = typeof x === 'string' ? String(x).localeCompare(String(y)) : Number(x) - Number(y)
-  return sort.desc ? -order : order
-}
-
-interface MetricColumn {
-  key: keyof RankedAlpha
-  label: string
-  show: (v: number | null) => string
-  /** Which end of the range is the good one, for the across-regions "best" columns. */
-  best: 'max' | 'min'
-}
-
-const METRICS: MetricColumn[] = [
-  { key: 'sharpe', label: 'Sharpe', show: (v) => fmt.ratio(v), best: 'max' },
-  // Less trading is better: every submittable Alpha already clears BRAIN's 1% floor, so the
-  // smallest turnover among them is the cheapest to hold, not an Alpha that barely trades.
-  { key: 'turnover', label: 'Turnover', show: (v) => fmt.pct(v, 2), best: 'min' },
-  { key: 'fitness', label: 'Fitness', show: (v) => fmt.ratio(v), best: 'max' },
-  { key: 'returns', label: 'Returns', show: (v) => fmt.pct(v, 2), best: 'max' },
-  { key: 'drawdown', label: 'Drawdown', show: (v) => fmt.pct(v, 2), best: 'min' },
-  { key: 'margin', label: 'Margin', show: (v) => fmt.bps(v, 2), best: 'max' },
-  { key: 'afterCostSharpe', label: 'After-Cost Sharpe', show: (v) => fmt.ratio(v), best: 'max' },
-]
-
-const SIGNED = new Set(['sharpe', 'fitness', 'returns', 'margin', 'afterCostSharpe'])
-
-function columns(): Column<RankedAlpha>[] {
-  return [
-    {
-      key: 'region',
-      header: 'Region',
-      width: 'minmax(70px,0.7fr)',
-      sortable: true,
-      cell: (r) => <span className="num">{market(r)}</span>,
-    },
-    DELAY,
-    {
-      key: 'universe',
-      header: 'Universe',
-      width: 'minmax(84px,0.9fr)',
-      sortable: true,
-      cell: (r) => <span className="num truncate">{setting(r, 'universe') || DASH}</span>,
-    },
-    {
-      key: 'neutralization',
-      header: 'Neutralization',
-      width: 'minmax(96px,1fr)',
-      sortable: true,
-      cell: (r) => <span className="num truncate">{setting(r, 'neutralization') || DASH}</span>,
-    },
-    INVESTABILITY,
-    FAILED_CHECKS,
-    ...METRICS.map(
-      (m): Column<RankedAlpha> => ({
-        key: String(m.key),
-        header: m.key === 'afterCostSharpe' ? AFTER_COST_HEADER : m.label,
-        width: 'minmax(84px,0.8fr)',
-        align: 'right',
-        sortable: true,
-        cell: (r) => {
-          const value = r[m.key] as number | null
-          return (
-            <span className={cn('num', SIGNED.has(String(m.key)) && TEXT_TONE[signTone(value)])}>
-              {m.show(value)}
-            </span>
-          )
-        },
-      }),
-    ),
-  ]
-}
+const columns = (): Column<RankedAlpha>[] => [...SETTING_COLUMNS, FAILED_CHECKS, ...METRIC_COLUMNS]
 
 /**
  * What a reader can narrow the table by. Three independent questions, each answerable on its
@@ -436,22 +332,10 @@ export function TaskResultsScreen() {
               ...METRICS.map(
                 (m): Column<RegionRow> => ({
                   key: String(m.key),
-                  header: m.key === 'afterCostSharpe' ? AFTER_COST_HEADER : m.label,
+                  header: metricHeader(m),
                   width: 'minmax(78px,0.8fr)',
                   align: 'right',
-                  cell: (r) => {
-                    const value = r.best[m.key] ?? null
-                    return (
-                      <span
-                        className={cn(
-                          'num',
-                          SIGNED.has(String(m.key)) && TEXT_TONE[signTone(value)],
-                        )}
-                      >
-                        {m.show(value)}
-                      </span>
-                    )
-                  },
+                  cell: (r) => <Figure metric={m} value={r.best[m.key] ?? null} />,
                 }),
               ),
             ]}
@@ -465,7 +349,7 @@ export function TaskResultsScreen() {
         title="Every Alpha"
         rows={rows}
         columns={columns}
-        compare={compare}
+        compare={compareAlphas}
         poolColumnAfter="investability"
         sort={sort}
         onSort={setSort}
