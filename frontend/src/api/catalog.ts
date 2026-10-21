@@ -5,7 +5,7 @@
  */
 
 import type { components } from './generated'
-import { http } from './http'
+import { http, qs } from './http'
 import { type Scope, scopeQs } from './types'
 
 type Schemas = components['schemas']
@@ -66,6 +66,12 @@ export const catalog = {
     http.post<FieldPage>(`${B}/fields${scopeQs(s)}`, filter),
   field: (s: Scope, id: string) =>
     http.get<DataFieldDetail>(`${B}/fields/${encodeURIComponent(id)}${scopeQs(s)}`),
+  /** What a field is, from whichever market covers it best: for what is not market-bound. */
+  fieldAnywhere: (id: string) =>
+    http.get<DataFieldDetail>(`${B}/fields/${encodeURIComponent(id)}/anywhere`),
+  /** Fields named or described by ``search`` in any market, each once, the most used first. */
+  searchAnywhere: (search: string, limit = 40) =>
+    http.get<DataFieldRow[]>(`${B}/field-search${qs({ search, limit })}`),
   availability: (id: string) =>
     http.get<FieldAvailabilityRow[]>(`${B}/fields/${encodeURIComponent(id)}/availability`),
   datasets: (s: Scope) => http.get<DatasetRow[]>(`${B}/datasets${scopeQs(s)}`),

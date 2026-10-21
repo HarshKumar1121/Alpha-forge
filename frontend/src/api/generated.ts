@@ -337,6 +337,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/catalog/field-search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Field Search
+         * @description Fields named or described by ``search`` in any market, each once, the most used first.
+         */
+        get: operations["field_search_api_catalog_field_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/catalog/fields": {
         parameters: {
             query?: never;
@@ -389,6 +409,26 @@ export interface paths {
         };
         /** Field Detail */
         get: operations["field_detail_api_catalog_fields__field_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/catalog/fields/{field_id}/anywhere": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Field Anywhere
+         * @description A field as any market describes it, for whatever only needs to know what it is.
+         */
+        get: operations["field_anywhere_api_catalog_fields__field_id__anywhere_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6117,6 +6157,38 @@ export interface operations {
             };
         };
     };
+    field_search_api_catalog_field_search_get: {
+        parameters: {
+            query: {
+                search: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DataFieldRow"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     fields_api_catalog_fields_post: {
         parameters: {
             query: {
@@ -6207,6 +6279,37 @@ export interface operations {
                 universe: string;
                 instrumentType?: string;
             };
+            header?: never;
+            path: {
+                field_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DataFieldDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    field_anywhere_api_catalog_fields__field_id__anywhere_get: {
+        parameters: {
+            query?: never;
             header?: never;
             path: {
                 field_id: string;

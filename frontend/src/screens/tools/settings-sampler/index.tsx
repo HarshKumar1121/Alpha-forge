@@ -34,7 +34,6 @@ import {
 import { templateLab } from '@/screens/research-labs/template/api'
 import { TemplateEditor } from '@/screens/research-labs/template/editor'
 import { Facts } from '@/screens/research-labs/template/gallery'
-import { useMarketScope } from '@/screens/research-labs/template/index'
 import {
   Button,
   Empty,
@@ -432,8 +431,6 @@ export function SettingsSamplerScreen() {
     staleTime: 5 * 60_000,
   })
   const reference = useMemo(() => operators.data?.reference ?? [], [operators.data])
-  // USA D1 holds the most fields, so its catalog answers field completions and hovers.
-  const scope = useMarketScope('USA', 1) ?? null
   // Counted as it is typed, so Power Pool's limits and the dataset count are never a guess.
   const sizing = useDebounced(expression.trim(), 300)
   const sized = useQuery({
@@ -725,7 +722,6 @@ export function SettingsSamplerScreen() {
                 variables={NO_VARIABLES}
                 infos={NO_INFOS}
                 problems={NO_PROBLEMS}
-                scope={scope}
               />
             </Fieldset>
             <div className="flex flex-wrap items-center gap-x-6 gap-y-3">

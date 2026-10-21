@@ -383,6 +383,27 @@ async def field_detail(field_id: str, scope: Scope, state: State) -> DataFieldDe
     return DataFieldDetail.model_validate(row)
 
 
+@router.get("/fields/{field_id}/anywhere")
+async def field_anywhere(field_id: str, state: State) -> DataFieldDetail:
+    """A field as any market describes it, for whatever only needs to know what it is."""
+    row = await state.queries.field_anywhere(field_id)
+    if row is None:
+        raise HTTPException(404, f"{field_id} is not in the catalog")
+    return DataFieldDetail.model_validate(row)
+
+
+@router.get("/field-search")
+async def field_search(
+    state: State,
+    search: Annotated[str, Query(min_length=1, max_length=200)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 40,
+) -> list[DataFieldRow]:
+    """Fields named or described by ``search`` in any market, each once, the most used first."""
+    return [
+        DataFieldRow.model_validate(r) for r in await state.queries.fields_anywhere(search, limit)
+    ]
+
+
 @router.get("/fields/{field_id}/availability")
 async def field_availability(field_id: str, state: State) -> list[FieldAvailabilityRow]:
     """Every scope this field exists in.

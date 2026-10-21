@@ -513,7 +513,6 @@ export function TemplateLabScreen() {
               variables={defs}
               infos={infos}
               problems={placed}
-              scope={scope}
             />
           )}
           {draft.text.trim() && <Facts stats={plan?.stats} />}

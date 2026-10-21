@@ -54,14 +54,6 @@ const NO_INFOS = new Map()
 const NO_PROBLEMS: string[] = []
 const IGNORE = () => {}
 
-/** The Alpha's own market, so its fields are coloured by their type there. */
-const scopeOf = (settings: Record<string, unknown>) => ({
-  instrumentType: String(settings['instrumentType'] ?? 'EQUITY'),
-  region: String(settings['region'] ?? ''),
-  delay: Number(settings['delay'] ?? 1),
-  universe: String(settings['universe'] ?? ''),
-})
-
 /** Two rows of five: Instrument Type, Language and Unit Handling left out. */
 const HELD = SETTINGS.filter(
   ([key]) => !['instrumentType', 'language', 'unitHandling'].includes(key),
@@ -225,7 +217,6 @@ export function FieldsSamplerScreen() {
               variables={NO_VARIABLES}
               infos={NO_INFOS}
               problems={NO_PROBLEMS}
-              scope={scopeOf(plan.rawSettings)}
             />
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
               {HELD.map(([key, title]) => (

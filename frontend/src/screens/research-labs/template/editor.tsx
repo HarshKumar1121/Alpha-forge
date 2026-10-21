@@ -46,7 +46,6 @@ import {
 import { tags as t } from '@lezer/highlight'
 import { useEffect, useRef } from 'react'
 import { catalog, type DataFieldDetail } from '@/api/catalog'
-import type { Scope } from '@/api/types'
 import { fmt } from '@/lib/format'
 import type { VariableDef, VariableInfo } from './api'
 import {
@@ -73,7 +72,6 @@ interface Live {
   variables: Record<string, VariableDef | null>
   infos: Map<string, VariableInfo>
   problems: string[]
-  scope: Scope | null
   onChange: (text: string) => void
 }
 
@@ -177,14 +175,14 @@ const theme = EditorView.theme(
 
 // --- reading the document -------------------------------------------------------------
 
-/** Redraws the names once a field's type arrives or the market changes. */
+/** Redraws the names once a field's type arrives. */
 const recolour = StateEffect.define<null>()
 
 /**
  * Colours a local's uses like its definition, and a field by its catalog type, which the text
  * alone cannot tell: a VECTOR or GROUP field reads differently from a MATRIX one.
  */
-function nameColours(live: { current: Live }) {
+function nameColours() {
   return ViewPlugin.fromClass(
     class {
       decorations: DecorationSet
@@ -207,28 +205,26 @@ function nameColours(live: { current: Live }) {
       marked(): DecorationSet {
         const blank = code(this.view.state.doc.toString())
         const names = locals(blank)
-        const scope = live.current.scope
         const builder = new RangeSetBuilder<Decoration>()
         for (const m of blank.matchAll(NAMES)) {
           const name = m[0]
           let mark: Decoration | undefined
           if (names.has(name)) mark = MARK.local
-          else if (scope && !GROUPS.has(name) && !WORDS.includes(name.toLowerCase()))
-            mark = this.fieldMark(scope, name)
+          else if (!GROUPS.has(name) && !WORDS.includes(name.toLowerCase()))
+            mark = this.fieldMark(name)
           if (mark) builder.add(m.index, m.index + name.length, mark)
         }
         return builder.finish()
       }
-      fieldMark(scope: Scope, name: string): Decoration | undefined {
-        const key = `${scope.region}|${scope.delay}|${scope.universe}|${name}`
-        if (!typed.has(key)) {
-          typed.set(key, null)
-          void lookUp(scope, name).then((field) => {
-            typed.set(key, field?.field_type ?? null)
+      fieldMark(name: string): Decoration | undefined {
+        if (!typed.has(name)) {
+          typed.set(name, null)
+          void lookUp(name).then((field) => {
+            typed.set(name, field?.field_type ?? null)
             if (field && !this.gone) this.view.dispatch({ effects: recolour.of(null) })
           })
         }
-        const type = typed.get(key)
+        const type = typed.get(name)
         return type === 'VECTOR' ? MARK.vector : type === 'GROUP' ? MARK.group : undefined
       }
     },
@@ -242,7 +238,7 @@ const MARK = {
   group: Decoration.mark({ class: 'cm-fx-group' }),
 }
 
-/** A field's type by market and name, once its lookup has answered. */
+/** A field's type by name, once its lookup has answered. */
 const typed = new Map<string, string | null>()
 
 /** The word under `pos`, `$` included. */
@@ -295,19 +291,20 @@ function describe(name: string, live: Live): string {
   return `Fields from ${from || 'no dataset yet'}${count}`
 }
 
-/** Fields looked up by hovering, per market: each name is asked about once. */
+/** Fields looked up by hovering, by name: each is asked about once. A field is the same
+ *  field in every market, so the editor needs none. */
 const looked = new Map<string, Promise<DataFieldDetail | null>>()
 
-function lookUp(scope: Scope, name: string): Promise<DataFieldDetail | null> {
-  const key = `${scope.region}|${scope.delay}|${scope.universe}|${name}`
-  let found = looked.get(key)
+function lookUp(name: string): Promise<DataFieldDetail | null> {
+  let found = looked.get(name)
   if (!found) {
-    found = catalog.field(scope, name).catch(() => {
-      // A failure is not remembered, so a name that was briefly unreachable is asked again.
-      looked.delete(key)
+    found = catalog.fieldAnywhere(name).catch(() => {
+      // A miss is not remembered, so a name that was briefly unreachable, or that a sync has
+      // since brought, is asked again.
+      looked.delete(name)
       return null
     })
-    looked.set(key, found)
+    looked.set(name, found)
   }
   return found
 }
@@ -360,8 +357,8 @@ async function hover(view: EditorView, pos: number, live: Live): Promise<Tooltip
       doc([element('code', word.text), element('p', 'Defined by a line of this template.')]),
     )
   }
-  if (WORDS.includes(word.text.toLowerCase()) || !live.scope) return null
-  const field = await lookUp(live.scope, word.text)
+  if (WORDS.includes(word.text.toLowerCase())) return null
+  const field = await lookUp(word.text)
   if (!field) return null
   return tip(
     doc([
@@ -418,17 +415,11 @@ async function complete(context: CompletionContext, live: Live): Promise<Complet
     ...WORDS.map((name) => ({ label: name, type: 'keyword' })),
   ]
   // Data fields from the catalog, once there is enough typed to search on.
-  if (live.scope && typed.length >= 2) {
+  if (typed.length >= 2) {
     try {
-      const page = await catalog.fields(live.scope, {
-        search: typed,
-        search_mode: 'text',
-        sort_by: 'alpha_count',
-        sort_desc: true,
-        limit: 40,
-      })
+      const fields = await catalog.searchAnywhere(typed)
       if (context.aborted) return null
-      for (const field of page.results)
+      for (const field of fields)
         options.push({
           label: field.field_id,
           type: 'property',
@@ -564,7 +555,7 @@ function extensions(live: { current: Live }, label: string, readOnly: boolean) {
     rectangularSelection(),
     highlightActiveLine(),
     highlightSelectionMatches(),
-    nameColours(live),
+    nameColours(),
     hoverTooltip((view, pos) => hover(view, pos, live.current), { hoverTime: 300 }),
     linter((view) => diagnose(view, live.current), {
       delay: 250,
@@ -640,12 +631,6 @@ export function TemplateEditor({
     editor.dispatch({ effects: relint.of(null) })
     forceLinting(editor)
   }, [problems, reference])
-
-  const market = rest.scope && `${rest.scope.region}|${rest.scope.delay}|${rest.scope.universe}`
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the colours read the scope through `live`
-  useEffect(() => {
-    view.current?.dispatch({ effects: recolour.of(null) })
-  }, [market])
 
   return <div ref={host} className="overflow-hidden rounded-md border border-hairline-strong" />
 }

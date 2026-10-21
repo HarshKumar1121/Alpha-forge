@@ -77,6 +77,17 @@ class Tuple4(BaseModel):
         return scope_label(self.instrument_type, self.region, self.delay, self.universe)
 
 
+#: A field whose id or description holds the ``containing`` pattern, given twice.
+NAMED_OR_DESCRIBED = r"(lower(field_id) LIKE ? ESCAPE '\' OR lower(description) LIKE ? ESCAPE '\')"
+
+
+def containing(text: str) -> str:
+    """A LIKE pattern for ``text`` anywhere, case-insensitive. `_` and `%` are LIKE wildcards,
+    and field ids are full of underscores: unescaped, searching `_eps_` matches "steps" too."""
+    escaped = text.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 class FieldFilter(BaseModel):
     """Everything the Data Explorer can narrow on.
 
@@ -153,15 +164,8 @@ class FieldFilter(BaseModel):
         if not search:
             pass
         elif self.search:
-            # `_` and `%` are LIKE wildcards, and field ids are full of underscores: without
-            # escaping, searching `_eps_` matches "steps" and "reps" too.
-            escaped = (
-                self.search.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            )
-            needle = f"%{escaped}%"
-            clauses.append(
-                r"(lower(field_id) LIKE ? ESCAPE '\' OR lower(description) LIKE ? ESCAPE '\')"
-            )
+            needle = containing(self.search)
+            clauses.append(NAMED_OR_DESCRIBED)
             params.extend([needle, needle])
 
         for column, values in (
@@ -337,6 +341,29 @@ class CatalogQueries:
         if found == 0 and " " in terms:
             return await self._page(scope, filters, terms, conjunctive=False, counted=counted)
         return page
+
+    async def field_anywhere(self, field_id: str) -> dict[str, Any] | None:
+        """One field from whichever market covers it best. What a field is, its type, dataset
+        and description, is the same in every market it is read in."""
+        rows = await self.catalog.query(
+            "SELECT * FROM data_field WHERE field_id = ? ORDER BY coverage DESC NULLS LAST LIMIT 1",
+            [field_id],
+        )
+        return rows[0] if rows else None
+
+    async def fields_anywhere(self, search: str, limit: int) -> list[dict[str, Any]]:
+        """Fields named or described by ``search`` in any market, each once, from the market
+        that covers it best; the most used first."""
+        needle = containing(search)
+        return await self.catalog.query(
+            f"""
+            SELECT * FROM data_field WHERE {NAMED_OR_DESCRIBED}
+            QUALIFY row_number() OVER (PARTITION BY field_id ORDER BY coverage DESC NULLS LAST) = 1
+            ORDER BY alpha_count DESC NULLS LAST, field_id
+            LIMIT ?
+            """,  # noqa: S608 - a constant clause and placeholders only
+            [needle, needle, limit],
+        )
 
     async def field(self, scope: Tuple4, field_id: str) -> dict[str, Any] | None:
         rows = await self.catalog.query(
