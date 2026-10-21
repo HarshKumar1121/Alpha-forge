@@ -156,10 +156,11 @@ jobs:
             bundle: app,dmg
             built: dmg/*.dmg
             asset: AlphaHarness-macOS-x86_64.dmg
-          # The oldest Ubuntu runner, so the .deb asks for no newer glibc or WebKitGTK than
-          # Ubuntu 22.04 has. A .deb rather than an AppImage: a browser drops a download's
-          # executable bit, while a .deb opens straight in the software installer.
-          - os: ubuntu-22.04
+          # Built against 24.04's glibc 2.39, which is what the .deb then needs (see
+          # tauri.conf.json); 22.04's runner is deprecated. A .deb rather than an AppImage: a
+          # browser drops a download's executable bit, while a .deb opens straight in the
+          # software installer.
+          - os: ubuntu-24.04
             bundle: deb
             built: deb/*.deb
             asset: AlphaHarness-linux-amd64.deb
@@ -326,7 +327,7 @@ jobs:
 
             - **Windows:** `AlphaHarness-windows-x64-setup.exe`. Windows warns that it does not recognise the app — it is unsigned. Choose **More info**, then **Run anyway**.
             - **Mac:** `AlphaHarness-macOS-arm64.dmg` for Apple Silicon (M1 or later), or `AlphaHarness-macOS-x86_64.dmg` for Intel. Open it and drag **AlphaHarness** into Applications (if it asks, replace the old one). The first time, macOS will not open it because it is unsigned: open **System Settings › Privacy & Security**, scroll down, and choose **Open Anyway**.
-            - **Linux:** `AlphaHarness-linux-amd64.deb`, for Ubuntu 22.04 or later. Open it to install, or run `sudo apt install ./AlphaHarness-linux-amd64.deb`.
+            - **Linux:** `AlphaHarness-linux-amd64.deb`, for Ubuntu 24.04 or later. Open it to install, or run `sudo apt install ./AlphaHarness-linux-amd64.deb`.
 
             Closing the window keeps Alpha Harness in the tray (the menu bar on a Mac), so your tasks keep simulating. To stop it, choose **Quit Alpha Harness** there.
 
