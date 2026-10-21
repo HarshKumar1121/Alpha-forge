@@ -1,5 +1,6 @@
 /** Correlation of the selected Alphas' daily PnL, as a heatmap small enough to take in at once. */
 
+import { memo } from 'react'
 import { fmt } from '@/lib/format'
 import type { PortfolioResult } from './api'
 
@@ -28,7 +29,7 @@ function fill(value: number, { low, high }: Range) {
 function Legend({ range }: { range: Range }) {
   return (
     <div className="flex items-center justify-center gap-2 text-body-compact text-ink-muted">
-      <span className="num">{fmt.ratio(range.low)}</span>
+      <span className="num">{fmt.ratio(range.low, 4)}</span>
       <span
         className="h-2 w-48 rounded-pill"
         style={{
@@ -36,7 +37,7 @@ function Legend({ range }: { range: Range }) {
         }}
         aria-hidden
       />
-      <span className="num">{fmt.ratio(range.high)}</span>
+      <span className="num">{fmt.ratio(range.high, 4)}</span>
     </div>
   )
 }
@@ -75,7 +76,7 @@ function TopPairs({ result }: { result: PortfolioResult }) {
                 {p.a} · {p.b}
               </span>
             </span>
-            <span className="num text-ink">{fmt.ratio(p.correlation)}</span>
+            <span className="num text-ink">{fmt.ratio(p.correlation, 4)}</span>
           </div>
         ))}
       </div>
@@ -84,7 +85,7 @@ function TopPairs({ result }: { result: PortfolioResult }) {
   )
 }
 
-export function CorrelationMatrix({ result }: { result: PortfolioResult }) {
+function Grid({ result }: { result: PortfolioResult }) {
   const { ids, correlation } = result
   // The backend decides: a grid it can send, or only the top pairs when it cannot.
   if (!correlation.length) return <TopPairs result={result} />
@@ -111,7 +112,7 @@ export function CorrelationMatrix({ result }: { result: PortfolioResult }) {
                   ? row
                   : value === null
                     ? `${row} · ${column}: under 250 shared days`
-                    : `${row} · ${column}: ${fmt.ratio(value)}`
+                    : `${row} · ${column}: ${fmt.ratio(value, 4)}`
               return (
                 <div
                   key={`${row}-${column}`}
@@ -128,3 +129,6 @@ export function CorrelationMatrix({ result }: { result: PortfolioResult }) {
     </div>
   )
 }
+
+/** Memoised: up to 22,000 cells, drawn again only when the result itself changes. */
+export const CorrelationMatrix = memo(Grid)

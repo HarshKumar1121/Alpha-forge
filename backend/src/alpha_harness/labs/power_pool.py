@@ -15,7 +15,13 @@ from typing import TYPE_CHECKING, Any
 import structlog
 from sqlalchemy import func, or_, select
 
-from ..brain.schemas import REGION_AGNOSTIC_REGION, SimulationSettings
+from ..brain.platform import (
+    GROUPING_FIELDS,
+    POWER_POOL_MAX_FIELDS,
+    POWER_POOL_MAX_OPERATORS,
+    REGION_AGNOSTIC_REGION,
+)
+from ..brain.schemas import SimulationSettings
 from ..catalog.queries import CatalogQueries, FieldFilter, Tuple4
 from ..db.models import Study, StudyStatus, Trial, TrialState, utcnow
 from ..llm.keys import BudgetExhaustedError, LLMError
@@ -24,9 +30,6 @@ from ..llm.text import FENCE
 from ..tasks import spawn
 from . import scheduler, search
 from .fastexpr import (
-    GROUPING,
-    MAX_FIELDS,
-    MAX_OPERATORS,
     ParseError,
     node_at,
     operator_count,
@@ -112,7 +115,7 @@ async def context_for(
     narrow: FieldFilter | None = None,
 ) -> Context | None:
     marks = ", ".join("?" for _ in universes)
-    extra = (*DATA_FIELDS, *GROUPING)
+    extra = (*DATA_FIELDS, *GROUPING_FIELDS)
     rows = await catalog.query(
         f"""
         SELECT field_id, dataset_id, field_type, universe, coverage, description,
@@ -164,7 +167,9 @@ async def context_for(
             r["region_coverage"],
         )
 
-    fields = sorted((field(f) for f in own if f not in GROUPING), key=lambda x: -(x.coverage or 0))
+    fields = sorted(
+        (field(f) for f in own if f not in GROUPING_FIELDS), key=lambda x: -(x.coverage or 0)
+    )
     m = meta[0] if meta else {}
     return Context(
         id=dataset,
@@ -175,7 +180,7 @@ async def context_for(
         description=str(m.get("description") or "")[:800],
         fields=tuple(fields),
         basics=tuple(field(f) for f in DATA_FIELDS if f in info and f not in own),
-        groups=tuple(g for g in GROUPING if g in info),
+        groups=tuple(g for g in GROUPING_FIELDS if g in info),
         types={f: str(r["field_type"]) for f, r in info.items()},
         own=frozenset(own),
         names=frozenset(info),
@@ -191,13 +196,13 @@ def check(text: str, ctx: Context, table: dict[str, Any]) -> tuple[str, frozense
         raise Rejected(f"Could not be read: {exc}") from exc
     if problems := validate(tree, table, set(ctx.names)):
         raise Rejected(problems[0])
-    if (count := operator_count(tree)) > MAX_OPERATORS:
-        raise Rejected(f"{count} operators; Power Pool allows 8.")
+    if (count := operator_count(tree)) > POWER_POOL_MAX_OPERATORS:
+        raise Rejected(f"{count} operators; Power Pool allows {POWER_POOL_MAX_OPERATORS}.")
     used = frozenset(n.value for _, n in walk(tree) if n.kind == "name" and n.value in ctx.names)
-    data = sorted(used - set(GROUPING))
-    if len(data) > MAX_FIELDS:
+    data = sorted(used - set(GROUPING_FIELDS))
+    if len(data) > POWER_POOL_MAX_FIELDS:
         raise Rejected(f"{len(data)} data fields ({', '.join(data)}); Power Pool allows 3.")
-    if not used & (ctx.own - set(GROUPING)):
+    if not used & (ctx.own - set(GROUPING_FIELDS)):
         raise Rejected(f"Uses no field of {ctx.id}.")
     for path, node in walk(tree):
         if node.kind == "name" and ctx.types.get(node.value) == "VECTOR":
@@ -340,7 +345,7 @@ def user_prompt(
         [
             "PRICE AND VOLUME FIELDS · count as data fields\n"
             + "\n".join(_line(f) for f in ctx.basics),
-            "GROUPING FIELDS · not counted\n" + ", ".join(ctx.groups),
+            "GROUPING_FIELDS FIELDS · not counted\n" + ", ".join(ctx.groups),
             f"YOUR EARLIER ALPHAS ON {ctx.id}\n{memory}",
             f"Write {PER_CALL} new Power Pool Alphas that use {ctx.id}.",
         ]
@@ -466,6 +471,7 @@ async def _write(optimizer: Optimizer, study_id: int) -> None:
         }
         items: list[dict[str, Any]] = []
         answered = False
+        failing: str | None = None
         try:
             answer = await optimizer.llm.generate(
                 system=POWER_POOL_LAB,
@@ -489,8 +495,9 @@ async def _write(optimizer: Optimizer, study_id: int) -> None:
             entry["error"] = str(exc)[:300]
             llm["failed"] = int(llm.get("failed") or 0) + 1
             if llm["failed"] >= 3:
-                await _pause(optimizer, study_id, f"The LLM failed 3 times in a row: {exc}")
-                return None
+                # Saved as none, so a resumed task counts its failures afresh.
+                llm["failed"] = 0
+                failing = f"The LLM failed 3 times in a row: {exc}"
 
         table = operator_table(operators)
         rng = random.Random()
@@ -498,11 +505,19 @@ async def _write(optimizer: Optimizer, study_id: int) -> None:
             stored = await session.get(Study, study_id)
             if stored is None:
                 return None
-            existing = list(
-                (await session.scalars(select(Trial).where(Trial.study_id == study_id))).all()
+            # The two columns alone: whole rows carry each trial's JSON, and a long task has
+            # thousands of them.
+            seen = set(
+                (
+                    await session.scalars(
+                        select(Trial.expression).where(Trial.study_id == study_id)
+                    )
+                ).all()
             )
-            seen = {t.expression for t in existing}
-            number = max((t.number for t in existing), default=-1)
+            last = await session.scalar(
+                select(func.max(Trial.number)).where(Trial.study_id == study_id)
+            )
+            number = -1 if last is None else last
             valid = rejected = 0
             for item in items:
                 text = str(item.get("expression") or "").strip()
@@ -563,6 +578,8 @@ async def _write(optimizer: Optimizer, study_id: int) -> None:
             if valid and stored.message and stored.message.startswith("Waiting for LLM budget"):
                 stored.message = None
         await optimizer.notify()
+        if failing:
+            await _pause(optimizer, study_id, failing)
     except Exception:
         log.exception("power_pool.write_failed", study_id=study_id)
         _retry[study_id] = time.monotonic() + 60.0

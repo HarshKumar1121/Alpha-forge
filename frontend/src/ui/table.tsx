@@ -5,7 +5,7 @@
 
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ArrowDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon } from 'lucide-react'
-import { type ReactNode, useRef } from 'react'
+import { Children, cloneElement, isValidElement, type ReactNode, useRef } from 'react'
 import { cn } from '@/lib/cn'
 import { DASH, fmt } from '@/lib/format'
 import { Button, Empty, ErrorNotice, Skeleton } from './kit'
@@ -41,6 +41,7 @@ export function DataTable<T>({
   maxHeight = '70vh',
   rowHeight = 34,
   label,
+  corner,
 }: {
   rows: T[]
   columns: Column<T>[]
@@ -62,6 +63,8 @@ export function DataTable<T>({
   maxHeight?: string | undefined
   rowHeight?: number
   label: string
+  /** Shown in the header's first column, above any checkboxes, e.g. the table's column settings. */
+  corner?: ReactNode
 }) {
   const scroller = useRef<HTMLDivElement>(null)
   const virtual = useVirtualizer({
@@ -71,10 +74,9 @@ export function DataTable<T>({
     overscan: 12,
   })
   const selectable = selected !== undefined && onSelect !== undefined
-  const template = [
-    selectable ? '36px' : null,
-    ...columns.map((c) => c.width ?? 'minmax(96px,1fr)'),
-  ]
+  // The corner needs a column of its own, with or without checkboxes under it.
+  const lead = selectable || corner !== undefined
+  const template = [lead ? '36px' : null, ...columns.map((c) => c.width ?? 'minmax(96px,1fr)')]
     .filter(Boolean)
     .join(' ')
 
@@ -86,7 +88,11 @@ export function DataTable<T>({
         className="grid border-b border-hairline-strong bg-surface-1 select-none"
         style={{ gridTemplateColumns: template }}
       >
-        {selectable && <div role="columnheader" aria-label="Select" />}
+        {lead && (
+          <div role="columnheader" aria-label="Select" className="flex items-center justify-center">
+            {corner}
+          </div>
+        )}
         {columns.map((column) => {
           const active = sort?.key === column.key
           const Arrow = sort?.desc ? ArrowDownIcon : ArrowUpIcon
@@ -96,8 +102,14 @@ export function DataTable<T>({
             // sits *inside* the text, so it wraps with the last word instead of being a rigid
             // sibling that collides with it in a narrow column.
             <span className={cn('min-w-0 text-balance', column.align === 'right' && 'text-right')}>
-              {column.header}
-              {active && <Arrow className="ml-1 inline size-3 align-text-bottom text-primary" />}
+              {wholeWords(column.header)}
+              {active && (
+                <>
+                  {/* A word joiner keeps the arrow on the line of the last word. */}
+                  {'\u2060'}
+                  <Arrow className="ml-1 inline size-3 align-text-bottom text-primary" />
+                </>
+              )}
             </span>
           )
           return (
@@ -196,6 +208,7 @@ export function DataTable<T>({
                     transform: `translateY(${item.start}px)`,
                   }}
                 >
+                  {!selectable && lead && <div role="cell" />}
                   {selectable && (
                     <div
                       role="cell"
@@ -286,4 +299,13 @@ export function Pager({
       </div>
     </div>
   )
+}
+
+/** A header with its hyphens made non-breaking, so ``Self-Correlation`` wraps at spaces only
+ *  and never as ``Self-`` over ``Correlation``. */
+function wholeWords(node: ReactNode): ReactNode {
+  if (typeof node === 'string') return node.replaceAll('-', '\u2011')
+  if (isValidElement<{ children?: ReactNode }>(node) && node.props.children !== undefined)
+    return cloneElement(node, undefined, Children.map(node.props.children, wholeWords))
+  return node
 }

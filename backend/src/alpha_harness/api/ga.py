@@ -12,7 +12,7 @@ import structlog
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from ..brain.schemas import TEST_PERIOD
+from ..brain.platform import INSTRUMENT_TYPE, TEST_PERIOD
 from ..db.models import Trial, TrialState, utcnow
 from ..labs import ga, scheduler, search
 from ..labs.launch import (
@@ -145,7 +145,11 @@ async def _market(
         problems.append(OPERATORS_UNREAD)
     neutralizations = await neutralizations_for(state, region, delay, chosen)
     if not neutralizations:
-        problems.append("BRAIN's settings list is not loaded. Sign in again.")
+        problems.append(
+            f"BRAIN offers none of the chosen neutralizations in {region} delay {delay}."
+            if chosen and await state.metadata.cached_settings_schema()
+            else "BRAIN's settings list is not loaded. Sign in again."
+        )
     market = await ga.market_for(state.catalog, operators, region, delay, universe, neutralizations)
     if market is None and operators:
         problems.append(
@@ -337,7 +341,7 @@ async def add_task(body: EvolutionRequest, state: State) -> AddedTask:
         trials: list[Trial] = []
         for number, seed in enumerate(seeds):
             settings = {
-                "instrumentType": "EQUITY",
+                "instrumentType": INSTRUMENT_TYPE,
                 "region": body.region,
                 "delay": body.delay,
                 "universe": body.universe,

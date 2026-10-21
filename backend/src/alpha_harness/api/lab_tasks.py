@@ -18,6 +18,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select, update
 
 from ..brain.errors import BrainError, BrainRateLimited
+from ..brain.platform import (
+    POWER_POOL_CORRELATION_CEILING,
+    POWER_POOL_ESCAPE,
+    REGION_AGNOSTIC_REGION,
+    SIMULATION_SLOTS,
+    SUPER_ALPHA_SLOTS,
+)
 from ..db.models import (
     BrainCache,
     SimStatus,
@@ -33,7 +40,9 @@ from ..labs import scheduler, search
 from ..labs.objectives import FAILURE, OBJECTIVES, StudyNotFoundError
 from ..labs.params import (
     CORRELATION_BREAKER,
+    FIELDS_SAMPLER,
     SETTINGS_SAMPLER,
+    SUPER_LAB,
     TASK_SAMPLERS,
     TEMPLATE_SAMPLER,
     task_params,
@@ -42,7 +51,6 @@ from ..labs.study import ranked
 from ..schemas import Out
 from ..tasks import Task
 from ..tools import power_pool
-from ..tools.submission_planner import ESCAPE
 from ..vault.yields import checks_of, clean, is_submitted, verdict
 from .deps import State, refuse
 
@@ -52,7 +60,7 @@ router = APIRouter(prefix="/api/lab-tasks", tags=["lab-tasks"])
 
 #: Labs that vary settings around one fixed expression, so ``template_source`` is that
 #: expression rather than a skeleton to search.
-ONE_EXPRESSION = frozenset({SETTINGS_SAMPLER, CORRELATION_BREAKER})
+ONE_EXPRESSION = frozenset({SETTINGS_SAMPLER, CORRELATION_BREAKER, FIELDS_SAMPLER})
 
 #: Where a task can be run from: never started, paused, or failed. A failed task may have
 #: sent simulations that finished after it stopped; running it again scores them.
@@ -61,9 +69,9 @@ FINISHED = (StudyStatus.COMPLETE, StudyStatus.FAILED)
 
 
 class TaskChange(BaseModel):
-    #: Up to the engine's slots, checked in the route: a lab starts at ``search.MAX_CORES``
-    #: at most, but an edit may hand it the whole engine.
-    cores: int | None = Field(default=None, ge=1)
+    #: Up to the engine's slots, or BRAIN's SuperAlpha limit for a Super Lab task (checked in
+    #: the route, which knows the task).
+    cores: int | None = Field(default=None, ge=1, le=SIMULATION_SLOTS)
     simulations: int | None = Field(default=None, ge=1, le=search.MAX_SIMULATIONS)
 
 
@@ -172,9 +180,8 @@ class RankedAlpha(Out):
     #: From the vault, which holds every simulated Alpha; a trial's own stats may lack them.
     long_count: int | None = None
     short_count: int | None = None
-    #: The after-cost t-stat over sqrt(10): the Sharpe once 5 bps is charged against each
-    #: day's own turnover, scaled by sqrt(years of data / 10) so fewer years prove less. Null
-    #: until the daily PnL *and* turnover are stored.
+    #: The Sharpe once 5 bps is charged against each day's own turnover. Null until the daily
+    #: PnL *and* turnover are stored.
     after_cost_sharpe: float | None = None
     #: The held-out test years, from the vault: where an Alpha that only fits its train years
     #: shows it. Shown, never searched on, so they stay out of sample. Null without a test period.
@@ -183,7 +190,6 @@ class RankedAlpha(Out):
     #: The highest correlation with any consultant Alpha in production, which BRAIN wants
     #: below 0.7. Null until BRAIN has been asked: it limits these checks per hour.
     prod_correlation: float | None = None
-    feasible: bool | None
     failed_checks: list[str]
     #: Of ``failed_checks``, those that gate submission. A check BRAIN fails for a reason
     #: that is nothing to do with the Alpha is left out, so an empty list means submittable.
@@ -194,8 +200,7 @@ class RankedAlpha(Out):
     submitted: bool = False
     #: Nothing BRAIN has reported refuses it: no FAIL and no ERROR.
     submittable: bool
-    #: Submittable only because a check has not answered yet. The Submission Planner waits for
-    #: these rather than planning a permanent submission on them.
+    #: Submittable only because a check has not answered yet: not a promise to submit on.
     pending: bool = False
     #: Simulated in Quick mode: the figures stand, but BRAIN submits it only once it is
     #: simulated again in Full. The task does that for every one that passes, and the Full
@@ -632,18 +637,10 @@ async def run(task_id: int, state: State) -> LabTask:
 
 @router.post("/{task_id}/pause")
 async def pause(task_id: int, state: State) -> LabTask:
-    """Queue nothing more for now. Simulations already sent finish; the rest come off."""
-    # Read under the lock: checked outside it, a task that finished its last trial in the
-    # meantime was written back to PAUSED, and a finished task holds no cores.
-    async with state.optimizer.lock(task_id):
-        row = await _one(state, task_id)
-        stopping = task_params(row).stopping
-        if row.status not in (StudyStatus.RUNNING, StudyStatus.QUEUED) or stopping:
-            raise refuse(409, "not_running", "Only a running or waiting task can pause.")
-        await state.optimizer.set_status(task_id, StudyStatus.PAUSED)
-        await state.engine.drop_queued(row.task)
-        await scheduler.prune_unsent(state.optimizer, task_id)
-    await scheduler.start_waiting(state.optimizer)
+    """Queue nothing more for now. Simulations already sent finish; the rest wait for Run."""
+    await _one(state, task_id)  # 404 for an unknown task
+    if await scheduler.pause(state.optimizer, task_id) is None:
+        raise refuse(409, "not_running", "Only a running or waiting task can pause.")
     return await _payload(state, task_id)
 
 
@@ -669,11 +666,12 @@ async def change(task_id: int, body: TaskChange, state: State) -> LabTask:
     row = await _one(state, task_id)
     if row.status in FINISHED:
         raise refuse(409, "finished", "A finished task can't change.")
-    if body.cores and body.cores > state.engine.slots:
+    if body.cores and row.sampler == SUPER_LAB and body.cores > SUPER_ALPHA_SLOTS:
         raise refuse(
             422,
             "too_many_cores",
-            f"The engine has {state.engine.slots} slots, so a task cannot hold {body.cores}.",
+            f"BRAIN runs {SUPER_ALPHA_SLOTS} SuperAlpha simulations at once, so a Super Lab "
+            f"task cannot hold {body.cores} cores.",
         )
     cores = body.cores or scheduler.cores_of(row)
     free = await scheduler.resize_task(state.optimizer, row, cores, body.simulations)
@@ -747,26 +745,33 @@ async def top(
         )
     stored = await state.alphas.by_ids([t.alpha_id for t in best if t.alpha_id])
     current = {a: checks_of(r.get("checks")) for a, r in stored.items() if r.get("checks")}
+    # A region-agnostic parent is judged on its children, as BRAIN judges it.
+    current |= await state.alphas.family_checks(stored)
     prod = await _prod_correlations(state, list(stored), current)
     # No download is started from here. Reading a page is not asking for one, and these are
-    # three BRAIN requests per Alpha: enough of them earns a 429, which pauses *every* caller
-    # of the shared client -- the simulation engine's dispatch and polling included. Calculate
-    # After-Cost Sharpe is the way to ask, and it says how many it will fetch before it does.
+    # three BRAIN requests per Alpha: enough of them earns a 429, which holds up every read of
+    # an Alpha, captures included. Calculate After-Cost Sharpe is the way to ask, and it says
+    # how many it will fetch before it does.
     return [
-        RankedAlpha.model_validate(
-            r
-            | {
-                "longCount": (stored.get(r["alphaId"]) or {}).get("long_count"),
-                "shortCount": (stored.get(r["alphaId"]) or {}).get("short_count"),
-                "afterCostSharpe": (stored.get(r["alphaId"]) or {}).get("after_cost_t10"),
-                "testSharpe": (stored.get(r["alphaId"]) or {}).get("test_sharpe"),
-                "testFitness": (stored.get(r["alphaId"]) or {}).get("test_fitness"),
-                "prodCorrelation": prod.get(r["alphaId"]),
-                "submitted": is_submitted(stored.get(r["alphaId"])),
-            }
-        )
+        RankedAlpha.model_validate(r | _from_vault(r["alphaId"], stored, prod))
         for r in ranked(best, current)
     ]
+
+
+def _from_vault(
+    alpha_id: str, stored: dict[str, dict[str, Any]], prod: dict[str, float]
+) -> dict[str, Any]:
+    """What a ranked row adds from the vault and from BRAIN's correlation check."""
+    vault = stored.get(alpha_id) or {}
+    return {
+        "longCount": vault.get("long_count"),
+        "shortCount": vault.get("short_count"),
+        "afterCostSharpe": vault.get("after_cost_5bps"),
+        "testSharpe": vault.get("test_sharpe"),
+        "testFitness": vault.get("test_fitness"),
+        "prodCorrelation": prod.get(alpha_id),
+        "submitted": is_submitted(vault),
+    }
 
 
 #: Verdicts that let an Alpha into the Power Pool on correlation.
@@ -847,8 +852,8 @@ async def _power_pool(state: State, alpha_ids: list[str]) -> PowerPoolCorrelatio
         )
 
     return PowerPoolCorrelation(
-        ceiling=power_pool.CEILING,
-        sharpe_edge=ESCAPE,
+        ceiling=POWER_POOL_CORRELATION_CEILING,
+        sharpe_edge=POWER_POOL_ESCAPE,
         pool_size=len(pool_meta),
         power_pool_alphas=len(candidates),
         other_alphas=len(stored) - len(candidates),
@@ -877,19 +882,26 @@ _REFUSED: dict[tuple[int, str | None], bool] = {}
 async def _not_refused(session: Any, ids: list[tuple[int, str | None]]) -> list[int]:
     """The trials of ``ids`` BRAIN did not refuse when they ran, judged once per trial."""
     unknown = [i for i, alpha_id in ids if (i, alpha_id) not in _REFUSED]
-    raw: list[tuple[int, str | None, str | None]] = []
+    raw: list[tuple[int, str | None, str | None, str | None]] = []
     for chunk in itertools.batched(unknown, TRIAL_CHUNK, strict=False):
         raw += (
             await session.execute(
-                select(Trial.id, Trial.alpha_id, func.json_extract(Trial.result, "$.checks")).where(
-                    Trial.id.in_(chunk)
-                )
+                select(
+                    Trial.id,
+                    Trial.alpha_id,
+                    func.json_extract(Trial.result, "$.checks"),
+                    func.json_extract(Trial.settings, "$.region"),
+                ).where(Trial.id.in_(chunk))
             )
         ).tuples()
 
     def judge() -> None:
-        for trial_id, alpha_id, checks in raw:
-            refused = verdict(json.loads(checks) if checks else []) == "refused"
+        for trial_id, alpha_id, checks, region in raw:
+            # A region-agnostic trial ran with one child's checks standing in; the family is
+            # judged on all its children once read, so it is never dropped here.
+            refused = region != REGION_AGNOSTIC_REGION and (
+                verdict(json.loads(checks) if checks else []) == "refused"
+            )
             _REFUSED[trial_id, alpha_id] = refused
 
     # Off the event loop: the first refresh after a start judges every finished trial.
@@ -930,6 +942,8 @@ async def submittable_alphas(state: State) -> list[TaskAlpha]:
     trials.sort(key=lambda t: (t.study_id, t.number))
     stored = await state.alphas.by_ids(list({str(t.alpha_id) for t in trials}))
     current = {a: checks_of(r.get("checks")) for a, r in stored.items() if r.get("checks")}
+    # A region-agnostic parent is judged on its children, as BRAIN judges it.
+    current |= await state.alphas.family_checks(stored)
     prod = await _prod_correlations(state, list(stored), current)
     by_trial = {t.id: t.study_id for t in trials}
     out: list[TaskAlpha] = []
@@ -940,18 +954,11 @@ async def submittable_alphas(state: State) -> list[TaskAlpha]:
             continue
         seen.add(alpha_id)
         task = tasks[by_trial[r["trialId"]]]
-        vault = stored.get(alpha_id) or {}
         out.append(
             TaskAlpha.model_validate(
                 r
+                | _from_vault(alpha_id, stored, prod)
                 | {
-                    "longCount": vault.get("long_count"),
-                    "shortCount": vault.get("short_count"),
-                    "afterCostSharpe": vault.get("after_cost_t10"),
-                    "testSharpe": vault.get("test_sharpe"),
-                    "testFitness": vault.get("test_fitness"),
-                    "prodCorrelation": prod.get(alpha_id),
-                    "submitted": is_submitted(vault),
                     "taskId": task.id,
                     "taskName": task.label
                     or task.template_name

@@ -10,7 +10,8 @@
 # answers the only question a screenshot raises — how old is this build.
 #
 # To publish without offering it to anyone, tag a pre-release: `v2026.9.21rc1`. GitHub keeps
-# it out of /releases/latest, which is the only thing the in-app updater reads.
+# it out of /releases/latest, and only that release is copied to the latest.json the in-app
+# updater reads.
 #
 # The wheel carries the app and its built UI; `constraints.txt` pins every transitive
 # dependency to `uv.lock`, so an install a year from now resolves to what was tested today.
@@ -31,8 +32,11 @@ on:
         description: Version to build, without the leading v
         required: true
 
+# Read only, but for the one job that publishes: every installed copy auto-installs what lands
+# on /releases/latest, so a token that can publish is kept away from the build steps. Actions
+# are pinned to commits for the same reason; a tag can be moved.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   wheel:
@@ -41,18 +45,20 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: true
       # The pnpm version comes from `packageManager` in the frontend's package.json. Said
       # here because the action looks in the repository root by default, and this repository
       # keeps no package.json there — naming a version inline instead would be a second
       # place to keep in step with the lockfile.
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with:
           package_json_file: frontend/package.json
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version-file: frontend/.node-version
           cache: pnpm
@@ -117,7 +123,7 @@ jobs:
       # in it (`--no-emit-project`) and stays unhashed, so this covers the PyPI leg only.
       - run: cd backend && uv export --frozen --no-dev --no-emit-project -o dist/constraints.txt
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: wheel
           path: backend/dist/*
@@ -157,12 +163,14 @@ jobs:
       # froze ran on macOS 26 or 15 only. uv's own needs 11.0 (Apple Silicon) or 10.15 (Intel).
       UV_PYTHON_PREFERENCE: only-managed
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       # Pinned, not `latest`: this binary ships inside the exe, so an upstream release must
       # never change what a re-run of an old tag produces. The action checks its checksum,
       # and the same uv runs the Python that freezes the launcher below.
       - id: uv
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.12.18"
           python-version: "3.14"
@@ -300,7 +308,7 @@ jobs:
           chmod 755 dist/AlphaHarness
           tar -czf "dist/$ASSET" -C dist AlphaHarness
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: launcher-${{ matrix.asset }}
           path: dist/${{ matrix.asset }}
@@ -308,14 +316,17 @@ jobs:
   publish:
     needs: [wheel, launcher]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: release
           merge-multiple: true
-      - uses: softprops/action-gh-release@v3
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
-          tag_name: ${{ inputs.version && format('v{0}', inputs.version) || github.ref_name }}
+          # The checked version, never the raw input, which may already start with `v`.
+          tag_name: v${{ needs.wheel.outputs.version }}
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
           # Keeps a candidate out of /releases/latest, which is the only thing the in-app
@@ -332,3 +343,37 @@ jobs:
             To close it: the tray icon on Windows, or **Quit Alpha Harness** in the account menu at the bottom of the sidebar.
 
             **Already have it?** Do nothing. Alpha Harness offers this version in the app.
+
+  # The file every installed copy reads to learn of a release: what /releases/latest names now,
+  # on GitHub Pages. Never the API itself, which allows sixty anonymous calls an hour per
+  # address; a college hostel puts hundreds of people behind one. Once per repository: Settings
+  # > Pages > Source: GitHub Actions, and allow `v*` tags to deploy to the github-pages
+  # environment, which otherwise takes only the default branch.
+  pages:
+    needs: [wheel, publish]
+    # A candidate is never offered, so the file goes on naming the last real release.
+    if: needs.wheel.outputs.prerelease != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      # Cut to what the app reads, under the API's own field names.
+      - name: Write latest.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir site
+          gh api "repos/$GITHUB_REPOSITORY/releases/latest" \
+            | jq '{tag_name, body, html_url, published_at, draft, prerelease,
+                   assets: [.assets[] | {name, browser_download_url}]}' > site/latest.json
+          jq -e '.tag_name' site/latest.json
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

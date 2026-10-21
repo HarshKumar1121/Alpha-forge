@@ -8,9 +8,11 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
 from ..brain.filters import AlphaQuery
+from ..brain.platform import INSTRUMENT_TYPE, PLATFORM_ALPHA_URL
 from ..schemas import Out
+from ..tools import portfolio
 from ..vault import yields
-from ..vault.yields import PLATFORM_ALPHA_URL, checks_of
+from ..vault.yields import checks_of
 from .deps import State, refuse
 
 router = APIRouter(prefix="/api/vault", tags=["vault"])
@@ -189,7 +191,7 @@ async def submittable(
     region: str | None = None,
     delay: int | None = None,
     universe: str | None = None,
-    instrument_type: str = "EQUITY",
+    instrument_type: str = INSTRUMENT_TYPE,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> SubmittableResponse:
     """Alphas that passed every submission check, ready to submit on BRAIN.
@@ -234,6 +236,35 @@ class AlphaPageRequest(BaseModel):
 async def query_alphas(body: AlphaPageRequest, state: State) -> AlphaPage:
     """The Simulations table: stored alphas, sorted and filtered locally."""
     return AlphaPage.model_validate(await state.alphas.page(**body.model_dump()))
+
+
+class AfterCostRequest(BaseModel):
+    alpha_ids: list[str] = Field(max_length=10_000)
+    cost_bps: float = Field(gt=0, le=100)
+
+
+class NetFigures(Out):
+    sharpe: float | None
+    fitness: float | None
+    returns: float | None
+    drawdown: float | None
+    margin: float | None
+    train_sharpe: float | None
+    test_sharpe: float | None
+    k_ratio: float | None
+
+
+class AfterCost(Out):
+    #: By Alpha, only those whose daily PnL and turnover are stored here; nothing is downloaded.
+    figures: dict[str, NetFigures]
+
+
+@router.post("/alphas/after-cost")
+async def after_cost(body: AfterCostRequest, state: State) -> AfterCost:
+    """Each Alpha's figures worked out again on its daily PnL net of ``cost_bps``, charged on
+    each day's own turnover, as the Portfolio page works them out."""
+    net = await portfolio.net_figures_of(state.alphas, body.alpha_ids, body.cost_bps)
+    return AfterCost(figures={a: NetFigures.model_validate(f) for a, f in net.items()})
 
 
 @router.post("/sync")

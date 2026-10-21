@@ -3,6 +3,8 @@
  * precision is fixed per measure. A genuinely absent value is an em dash, never 0.
  */
 
+import { PLATFORM_TIMEZONE } from '@/api/platform'
+
 export const DASH = '—'
 
 export const isNum = (value: unknown): value is number =>
@@ -17,6 +19,8 @@ const DATE = new Intl.DateTimeFormat('en-US', DAY)
 // A bare YYYY-MM-DD is a calendar day, parsed as UTC midnight: read it in UTC, or west of
 // UTC it shows the day before.
 const DATE_UTC = new Intl.DateTimeFormat('en-US', { ...DAY, timeZone: 'UTC' })
+// en-CA writes YYYY-MM-DD.
+const PLATFORM_DAY = new Intl.DateTimeFormat('en-CA', { timeZone: PLATFORM_TIMEZONE })
 const MONTH_UTC = new Intl.DateTimeFormat('en-US', {
   month: 'short',
   year: 'numeric',
@@ -72,6 +76,11 @@ export const fmt = {
     const at = moment(iso)
     if (!at) return DASH
     return ((iso?.length ?? 0) <= 10 ? DATE_UTC : DATE).format(at)
+  },
+  /** 2026-10-08: the day on BRAIN's clock, which counts days in New York, not UTC. */
+  platformDay: (iso: string | null | undefined) => {
+    const at = moment(iso)
+    return at ? PLATFORM_DAY.format(at) : DASH
   },
   /** Sep 2026: for a date known only to the month, such as a Data Field's Date Added. */
   month: (iso: string | null | undefined) => {

@@ -3,13 +3,13 @@
 BRAIN answers this one Alpha at a time, slowly and under a rate limit, so a sweep of a
 thousand results cannot be judged by asking it. The same number can be worked out here: the
 correlation is Pearson over daily PnL on the days both Alphas traded, over BRAIN's own
-window, which :mod:`tools.submission_planner` already reproduces to four decimals.
+window, which :func:`vault.metrics.window_start` reproduces to four decimals.
 
 Which Alphas this applies to is BRAIN's own call, read off its ``POWER_POOL_CORRELATION``
 check (``vault.yields.is_power_pool``). Two rules then decide eligibility, both BRAIN's:
 
-- Power Pool Correlation must be below the planner's :data:`CEILING`.
-- Above it, the Alpha needs a Sharpe at least :data:`ESCAPE` times that of **every**
+- Power Pool Correlation must be below the planner's :data:`POWER_POOL_CORRELATION_CEILING`.
+- Above it, the Alpha needs a Sharpe at least :data:`POWER_POOL_ESCAPE` times that of **every**
   Alpha it collides with — not merely the one it correlates with most.
 
 That second rule is stricter than the platform's own wording, which says "10% higher than the
@@ -27,13 +27,19 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from ..brain.platform import (
+    POWER_POOL_CLASS,
+    POWER_POOL_CORRELATION_CEILING,
+    POWER_POOL_ESCAPE,
+    REGULAR_CLASS,
+)
 from ..vault import metrics, yields
+from ..vault.store import json_list
 from ..vault.yields import checks_of
-from . import submission_planner
-from .submission_planner import CEILING, ESCAPE
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from datetime import date
 
     from ..vault.store import PnlGrid
 
@@ -60,13 +66,14 @@ def correlate(
     meta: dict[str, dict[str, Any]],
     candidates: Sequence[str],
     pool: Sequence[str],
+    ceiling: float = POWER_POOL_CORRELATION_CEILING,
 ) -> list[dict[str, Any]]:
     """Each candidate against every pool member, with the verdict BRAIN would reach.
 
     Both lists are one scope's, ``grid`` their stored PnL (:meth:`AlphaVault.pnl_grid`). A
     candidate that is itself in the pool is never measured against itself. A member with no
-    PnL stored still counts in ``against``: a pool that has not been synced reads
-    ``unmeasured``, never ``clear``.
+    PnL stored still counts in ``against``, and while any has none the answer is
+    ``unmeasured`` unless a collision already refuses it: the missing one could hide another.
     """
     ids, dates, pnl = grid
     at = {a: i for i, a in enumerate(ids)}
@@ -79,14 +86,21 @@ def correlate(
         stored_last = [dates[i] for i in len(dates) - 1 - traded[::-1].argmax(axis=0)]
         # Closing days move where BRAIN's window ends, as ``portfolio.frame`` counts them, but
         # are never correlated: that is what makes these match BRAIN's own figures.
-        last = max(
+        ends = [
             metrics.with_closing([(day, 0.0, 0.0)], meta.get(a, {}))[-1][0]
             for a, day in zip((*left, *right), stored_last, strict=True)
-        )
-        window = pnl[bisect_left(dates, submission_planner.window_start(last)) :]
-        rho = submission_planner.correlations(
-            window[:, cols[: len(left)]], window[:, cols[len(left) :]]
-        )
+        ]
+        pool_end = max(ends[len(left) :])
+        # Each candidate's own window, ending with its series or the pool's, whichever is later:
+        # one end for the whole batch made a figure depend on what else was asked with it.
+        by_start: dict[date, list[int]] = {}
+        for k, end in enumerate(ends[: len(left)]):
+            by_start.setdefault(metrics.window_start(max(end, pool_end)), []).append(k)
+        pooled = pnl[:, cols[len(left) :]]
+        for start, picked in by_start.items():
+            since = bisect_left(dates, start)
+            measured = pnl[since:, [cols[k] for k in picked]]
+            rho[picked] = metrics.correlations(measured, pooled[since:])
 
     row_of = {a: i for i, a in enumerate(left)}
     col_of = {p: j for j, p in enumerate(right)}
@@ -101,8 +115,73 @@ def correlate(
             if alpha_id in row_of and p in col_of
         ]
         usable = [(p, v) for p, v in values if not np.isnan(v)]
-        rows.append(_verdict(alpha_id, meta, usable, len(against)))
+        found = _verdict(alpha_id, meta, usable, len(against), ceiling)
+        if found["verdict"] != "blocked" and any(p not in col_of for p in against):
+            found["verdict"] = "unmeasured"
+        rows.append(found)
     return rows
+
+
+def self_pools(members: Sequence[dict[str, Any]]) -> dict[str, list[str]]:
+    """By region, the submitted Alphas BRAIN's SELF_CORRELATION compares an Alpha with: all but
+    those classed Power Pool alone, whether or not the Alpha compared is a Power Pool one.
+
+    Measured: BRAIN's own answers list Regular Alphas against Power Pool candidates, and never
+    one classed Power Pool alone against anything.
+    """
+    pools: dict[str, list[str]] = {}
+    for row in members:
+        classes = json_list(row.get("classifications"))
+        if row.get("region") and (POWER_POOL_CLASS not in classes or REGULAR_CLASS in classes):
+            pools.setdefault(str(row["region"]), []).append(str(row["alpha_id"]))
+    return pools
+
+
+def self_correlations(
+    grid: PnlGrid, meta: dict[str, dict[str, Any]], members: Sequence[dict[str, Any]]
+) -> dict[str, float | None]:
+    """Each submitted Alpha's Self-Correlation as BRAIN's own Alpha page shows it today.
+
+    Its highest correlation with every other submitted Alpha of its :func:`self_pools`.
+    Measured against BRAIN on 20 Alphas across seven regions: identical to four decimals,
+    ``None`` exactly where BRAIN has nothing to compare against.
+    """
+    return _by_region(grid, meta, members, self_pools(members))
+
+
+def power_pool_correlations(
+    grid: PnlGrid, meta: dict[str, dict[str, Any]], members: Sequence[dict[str, Any]]
+) -> dict[str, float | None]:
+    """Each submitted Alpha's Power Pool Correlation as BRAIN's own Alpha page shows it today.
+
+    Its highest correlation with the other submitted Alphas of its region that BRAIN judges as
+    Power Pool. Measured against BRAIN on 18 Alphas across eight regions, Power Pool or not:
+    identical to four decimals, ``None`` exactly where BRAIN has nothing to compare against.
+    """
+    pools: dict[str, list[str]] = {}
+    for row in members:
+        alpha_id = str(row["alpha_id"])
+        if is_power_pool(meta.get(alpha_id)):
+            pools.setdefault(str(row.get("region")), []).append(alpha_id)
+    return _by_region(grid, meta, members, pools)
+
+
+def _by_region(
+    grid: PnlGrid,
+    meta: dict[str, dict[str, Any]],
+    members: Sequence[dict[str, Any]],
+    pools: dict[str, list[str]],
+) -> dict[str, float | None]:
+    """Each member's highest correlation with its region's pool: one measurement a region,
+    since a member per call cost the square of the account's submissions."""
+    by_region: dict[str, list[str]] = {}
+    for row in members:
+        by_region.setdefault(str(row.get("region")), []).append(str(row["alpha_id"]))
+    return {
+        found["alphaId"]: found["correlation"]
+        for region, alpha_ids in by_region.items()
+        for found in correlate(grid, meta, alpha_ids, pools.get(region, []))
+    }
 
 
 def _verdict(
@@ -110,6 +189,7 @@ def _verdict(
     meta: dict[str, dict[str, Any]],
     measured: list[tuple[str, float]],
     against: int,
+    ceiling: float = POWER_POOL_CORRELATION_CEILING,
 ) -> dict[str, Any]:
     """One candidate's answer: its highest correlation, and whether that refuses it."""
     sharpe = _sharpe(meta.get(alpha_id))
@@ -132,15 +212,15 @@ def _verdict(
     # one lets an Alpha through on the strength of beating a weak neighbour while a stronger
     # Alpha it also collides with goes unanswered.
     bars = [
-        found * ESCAPE
+        found * POWER_POOL_ESCAPE
         for other, value in measured
-        if value >= CEILING and (found := _sharpe(meta.get(other))) is not None
+        if value >= ceiling and (found := _sharpe(meta.get(other))) is not None
     ]
     # Rounded before comparing: Sharpes are two-decimal figures, so a true bar has three at
     # most, and 1.10 x 1.50 lands on 1.6500000000000001 -- short of an Alpha at exactly 1.65,
     # which BRAIN's "better by 10.0% or more" admits.
     needed = round(max(bars), 4) if bars else None
-    if highest < CEILING:
+    if highest < ceiling:
         verdict = "clear"
     elif needed is not None and sharpe is not None and sharpe >= needed:
         verdict = "beats"
@@ -152,7 +232,7 @@ def _verdict(
         "closest": closest,
         "closestSharpe": closest_sharpe,
         # Only meaningful once the ceiling is crossed; null below it keeps the column honest.
-        "needed": needed if highest >= CEILING else None,
+        "needed": needed if highest >= ceiling else None,
         "verdict": verdict,
     }
 

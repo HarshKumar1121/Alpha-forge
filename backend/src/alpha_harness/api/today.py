@@ -16,6 +16,7 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Query
 
 from ..brain.filters import PLATFORM_TZ
+from ..brain.platform import DAILY_SIMULATIONS, INSTRUMENT_TYPE
 from ..catalog.queries import scope_label
 from ..db.models import SyncStatus
 from ..llm.budget import seconds_until_reset
@@ -24,10 +25,6 @@ from .deps import State
 from .llm import LLMBudget
 
 router = APIRouter(prefix="/api/today", tags=["today"])
-
-#: A consultant's daily simulation allowance, shown until the day's first simulation POST
-#: returns its x-ratelimit-* headers.
-DAILY_ALLOWANCE = 5000
 
 
 class Feature(Out):
@@ -155,7 +152,7 @@ async def today(
     universe: str = "TOP3000",
     # Aliased like the catalog's scope: one spelling on the wire, so the frontend has one
     # scope-to-query-string helper rather than one per route.
-    instrument_type: Annotated[str, Query(alias="instrumentType")] = "EQUITY",
+    instrument_type: Annotated[str, Query(alias="instrumentType")] = INSTRUMENT_TYPE,
 ) -> Today:
     """Everything the first screen needs, in one call."""
     session = state.auth.session
@@ -276,7 +273,7 @@ async def _you(state: State, session: Any, stored_email: str | None) -> dict[str
 
 
 async def simulations_today(state: State) -> dict[str, Any]:
-    allowance = DAILY_ALLOWANCE
+    allowance = DAILY_SIMULATIONS
     used = await state.tracker.used_today()
     snapshot = await state.tracker.latest_quota()
 

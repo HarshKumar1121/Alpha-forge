@@ -1,6 +1,7 @@
 /** The Datasets and Settings panels of a lab task, and the task settings every lab asks for. */
 
 import { DatabaseIcon, FilterIcon } from 'lucide-react'
+import { SIMULATION_SLOTS } from '@/api/platform'
 import type { Scope } from '@/api/types'
 import { DASH, fmt } from '@/lib/format'
 import { useCores } from '@/lib/preferences'
@@ -14,6 +15,7 @@ import {
   Disclosure,
   Empty,
   ErrorNotice,
+  Field,
   Fieldset,
   Input,
   Metric,
@@ -25,8 +27,8 @@ import type { LabDraft } from './lab-task'
 
 const DECAYS = [0, 3, 5, 7, 10]
 
-/** Matches `labs.search.MAX_CORES`: a task may hold every slot the engine has. */
-const CORES = [1, 2, 3, 4, 5, 6, 7, 8].map((v) => ({ value: v, label: v }))
+/** A task may hold every slot BRAIN allows. */
+const CORES = Array.from({ length: SIMULATION_SLOTS }, (_, i) => ({ value: i + 1, label: i + 1 }))
 
 export function CoresSetting({
   value,
@@ -54,15 +56,20 @@ export function SimulationsSetting({
   placeholder?: string
   onChange: (simulations: number | null) => void
 }) {
+  // Said here, beside the box, so every lab's Run greys out with its reason in view.
+  const over = value !== null && value > max
   return (
-    <Fieldset legend="Simulations">
+    <Field
+      label="Simulations"
+      error={over ? `A task takes at most ${fmt.int(max)} simulations.` : undefined}
+    >
       <Input
         type="number"
         min={1}
         max={max}
         step={1}
         placeholder={placeholder}
-        aria-label="Simulations"
+        aria-invalid={over || undefined}
         className="w-32"
         value={value ?? ''}
         onChange={(e) => {
@@ -70,7 +77,7 @@ export function SimulationsSetting({
           onChange(e.target.value === '' || !Number.isFinite(n) ? null : Math.max(0, Math.floor(n)))
         }}
       />
-    </Fieldset>
+    </Field>
   )
 }
 
@@ -220,12 +227,6 @@ export function SettingsPanel({
             allowance. The alphas it makes can be submitted where two or more of those regions hold
             up.
           </Notice>
-        )}
-        {simulations !== null && simulations > maxSimulations && (
-          <Notice
-            tone="error"
-            title={`A task takes at most ${fmt.int(maxSimulations)} simulations.`}
-          />
         )}
         {error ? <ErrorNotice error={error} title="Could not plan the task" /> : null}
         {plan?.problems.map((m) => (

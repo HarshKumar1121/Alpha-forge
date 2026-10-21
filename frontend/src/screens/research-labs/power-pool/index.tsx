@@ -4,14 +4,17 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { DEFAULT_TRUNCATION } from '@/api/platform'
 import { fmt } from '@/lib/format'
 import { useCores } from '@/lib/preferences'
 import { DEFAULT_SCOPE, useScopeOptions } from '@/lib/scope'
+import { followOtherTabs } from '@/lib/tabs'
 import { useProviderLabel } from '@/screens/ai/shared'
 import type { FieldFilterState } from '@/screens/data/state'
 import { AddTaskButtons, useAddTask } from '@/screens/research-labs/add-task'
 import {
   MAX_SIMULATIONS,
+  offeredOnly,
   simulationsValid,
   useLabMarket,
   useLabPreview,
@@ -80,6 +83,7 @@ const useDraft = create<PowerPoolDraft>()(
     },
   ),
 )
+followOtherTabs(useDraft)
 
 const PRE =
   'num max-h-80 overflow-auto rounded-md border border-hairline bg-canvas p-3 text-body-compact whitespace-pre-wrap text-ink-muted'
@@ -108,6 +112,7 @@ export function PowerPoolLabScreen() {
   })
 
   const cores = useCores(draft.cores)
+  const universes = offeredOnly(draft.universes, scopeOptions.universes)
   const body: PowerPoolRequest = {
     region: draft.region,
     delay: draft.delay,
@@ -115,8 +120,8 @@ export function PowerPoolLabScreen() {
     dataset_ids: draft.datasetIds,
     field_filter: draft.fieldFilter ?? null,
     model,
-    neutralizations: draft.neutralizations,
-    universes: draft.universes,
+    neutralizations: offeredOnly(draft.neutralizations, scopeOptions.neutralizations),
+    universes,
     cores,
     simulations: draft.simulations ?? 0,
   }
@@ -182,9 +187,7 @@ export function PowerPoolLabScreen() {
             />
           </div>
           {scopeOptions.universes.length > 0 && (
-            <Fieldset
-              legend={draft.universes.length === 0 ? 'Universes · all downloaded' : 'Universes'}
-            >
+            <Fieldset legend={universes.length === 0 ? 'Universes · all downloaded' : 'Universes'}>
               <Chips
                 label="Universes"
                 items={scopeOptions.universes}
@@ -212,7 +215,8 @@ export function PowerPoolLabScreen() {
             />
           </div>
           <p className="text-body-compact text-pretty text-ink-subtle">
-            Each Alpha gets a random Universe, Neutralization and Decay; Truncation 0.08.
+            Each Alpha gets a random Universe, Neutralization and Decay; Truncation{' '}
+            {DEFAULT_TRUNCATION}.
           </p>
           {preview.isError && <ErrorNotice error={preview.error} title="Could not plan the task" />}
           {plan?.problems.map((m) => (

@@ -10,11 +10,14 @@ import { toast } from 'sonner'
 import { create } from 'zustand'
 import { update } from '@/api/core'
 import { errorMessage } from '@/api/http'
+import { telemetry } from '@/lib/ws'
 import { Button, ErrorNotice } from '@/ui/kit'
 import { Dialog } from '@/ui/overlay'
 
 /** Reads the backend's last answer; GitHub itself is asked only as often as Settings allow. */
 const POLL_MS = 15 * 60 * 1000
+/** Until the backend has looked once: it waits up to half a minute after starting first. */
+const FIRST_LOOK_MS = 40_000
 /** How often the overlay knocks while the backend is down being replaced. */
 const RECONNECT_MS = 1500
 /** Past this the install is stuck, and saying so beats a spinner that never resolves. */
@@ -68,6 +71,24 @@ function Installing({ version }: { version: string }) {
   )
 }
 
+/** The version that served this page's code: the first one the backend names. */
+let servedBy: string | null = null
+
+// An install while this page is open (auto-install needs nobody there) restarts the backend
+// under code built for the version before. Each time the socket connects, a different version
+// answering means reload.
+telemetry.onStatus((connected) => {
+  if (!connected) return
+  fetch('/api/health', { cache: 'no-store' })
+    .then((response) => (response.ok ? response.json() : null))
+    .then((body: { version?: string } | null) => {
+      if (!body?.version) return
+      servedBy ??= body.version
+      if (body.version !== servedBy) window.location.reload()
+    })
+    .catch(() => {})
+})
+
 /** The version being installed, once Update was pressed anywhere, for the one overlay. */
 const useInstalling = create<{ version: string | null; closed: boolean }>(() => ({
   version: null,
@@ -120,7 +141,7 @@ export function useUpdateStatus() {
     queryKey: ['update'],
     queryFn: () => update.status(),
     staleTime: POLL_MS,
-    refetchInterval: POLL_MS,
+    refetchInterval: (query) => (query.state.data?.checkedAt ? POLL_MS : FIRST_LOOK_MS),
     // A check that fails is not worth a retry storm: the next poll is the retry.
     retry: false,
   })

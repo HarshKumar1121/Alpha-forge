@@ -8,6 +8,7 @@ import { Link, useNavigate } from '@tanstack/react-router'
 import { PlusIcon, Trash2Icon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { catalog } from '@/api/catalog'
 import { errorMessage } from '@/api/http'
 import { type Scope, scopeLabel, toScopeBody } from '@/api/types'
 import { cn } from '@/lib/cn'
@@ -37,7 +38,7 @@ import {
 import { Confirm, Select } from '@/ui/overlay'
 import { SplitPane } from '@/ui/panels'
 import { ScopePicker } from '@/ui/scope-picker'
-import { useKeys, useProviderLabel } from './shared'
+import { useKeys, useProviderLabel, useRunnableModels } from './shared'
 
 export function Assistant({ threadId }: { threadId: number | null }) {
   const queryClient = useQueryClient()
@@ -58,10 +59,8 @@ export function Assistant({ threadId }: { threadId: number | null }) {
     queryFn: () => chat.thread(threadId as number),
     enabled: threadId !== null,
   })
-  const scopes = useQuery({
-    queryKey: ['ai', 'downloaded-scopes'],
-    queryFn: chat.downloadedScopes,
-  })
+  // The catalog's own key, which a finished download refreshes.
+  const scopes = useQuery({ queryKey: ['catalog', 'scopes'], queryFn: catalog.scopes })
   const [scope, setScope] = useScope('ai-chat')
   const [text, setText] = useState('')
   const [model, setModel] = useState<string | null>(null)
@@ -76,13 +75,11 @@ export function Assistant({ threadId }: { threadId: number | null }) {
     if (threadScope) setScope(threadScope)
   }, [threadScope, setScope])
 
-  const enabledProviders = new Set(keys.data?.keys.filter((k) => k.enabled).map((k) => k.provider))
-  // Most requests left today first, so the default is never a model already spent.
-  const left = new Map(keys.data?.budget.map((b) => [b.ref, b.remainingToday]))
-  const modelItems = (options.data?.models.models ?? [])
-    .filter((m) => enabledProviders.has(m.provider))
-    .sort((a, b) => (left.get(b.ref) ?? 0) - (left.get(a.ref) ?? 0))
-    .map((m) => ({ value: m.ref, label: `${m.id} · ${providerLabel(m.provider)}` }))
+  const runnable = useRunnableModels()
+  const modelItems = runnable.runnable.map((m) => ({
+    value: m.ref,
+    label: `${m.id} · ${providerLabel(m.provider)}`,
+  }))
   const modelValue =
     (model && modelItems.some((m) => m.value === model) ? model : null) ??
     modelItems[0]?.value ??
@@ -164,7 +161,7 @@ export function Assistant({ threadId }: { threadId: number | null }) {
       </Panel>
     )
   }
-  if (options.isSuccess && modelItems.length === 0) {
+  if (runnable.ready && modelItems.length === 0) {
     return (
       <Panel>
         <Empty title="The assistant needs a model">

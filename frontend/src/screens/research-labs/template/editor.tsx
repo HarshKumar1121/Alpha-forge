@@ -544,8 +544,10 @@ const outside = Annotation.define<boolean>()
  */
 const relint = StateEffect.define<null>()
 
-function extensions(live: { current: Live }, label: string) {
+function extensions(live: { current: Live }, label: string, readOnly: boolean) {
   return [
+    // Shown, not edited: the colours and hovers stay, the cursor and typing go.
+    ...(readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : []),
     lineNumbers(),
     highlightActiveLineGutter(),
     highlightSpecialChars(),
@@ -591,14 +593,16 @@ function extensions(live: { current: Live }, label: string) {
 export function TemplateEditor({
   value,
   label = 'Template',
+  readOnly = false,
   ...rest
-}: Live & { value: string; label?: string }) {
+}: Live & { value: string; label?: string; readOnly?: boolean }) {
   const host = useRef<HTMLDivElement>(null)
   const view = useRef<EditorView | null>(null)
   const live = useRef<Live>(rest)
   live.current = rest
   const first = useRef(value)
   const name = useRef(label)
+  const locked = useRef(readOnly)
 
   useEffect(() => {
     if (!host.current) return
@@ -606,7 +610,7 @@ export function TemplateEditor({
       parent: host.current,
       state: EditorState.create({
         doc: first.current,
-        extensions: extensions(live, name.current),
+        extensions: extensions(live, name.current, locked.current),
       }),
     })
     view.current = editor

@@ -110,8 +110,20 @@ export function vectorOperatorsOf(draft: LabDraft, available: string[] | undefin
   return draft.vectorOperators ?? (available?.includes('vec_avg') ? ['vec_avg'] : [])
 }
 
+/**
+ * The chosen values this market offers. One ticked in another market is not shown here, so it
+ * must not be sent either; until the market's list loads, the choice is kept as it is.
+ */
+export const offeredOnly = (chosen: string[], available: readonly { value: string }[]) =>
+  available.length ? chosen.filter((v) => available.some((a) => a.value === v)) : chosen
+
 /** The market and settings both labs send to preview a task. */
-export function labBody(draft: LabDraft, vectorOperators: string[], cores: number) {
+export function labBody(
+  draft: LabDraft,
+  vectorOperators: string[],
+  cores: number,
+  neutralizations: readonly { value: string }[],
+) {
   return {
     region: draft.region,
     delay: draft.delay,
@@ -119,7 +131,7 @@ export function labBody(draft: LabDraft, vectorOperators: string[], cores: numbe
     dataset_ids: draft.datasetIds,
     field_filter: draft.fieldFilter ?? null,
     vector_operators: vectorOperators,
-    neutralizations: draft.neutralizations,
+    neutralizations: offeredOnly(draft.neutralizations, neutralizations),
     decay: draft.decay,
     cores,
   }

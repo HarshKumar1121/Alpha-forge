@@ -3,7 +3,7 @@
  * Collapses to icons below `lg`.
  */
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useRouterState } from '@tanstack/react-router'
 import {
   ChevronsUpDownIcon,
@@ -17,10 +17,9 @@ import { Fragment, useEffect, useState } from 'react'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { auth } from '@/api/core'
+import { PLATFORM_URL } from '@/api/platform'
 import type { Today } from '@/api/types'
 import { cn } from '@/lib/cn'
-import { useRefetchOn } from '@/lib/ws'
-import { pool } from '@/screens/pool/api'
 import { Button, Kbd } from '@/ui/kit'
 import { Confirm, Menu, Tooltip } from '@/ui/overlay'
 import { NAV } from './nav'
@@ -144,10 +143,6 @@ export function Sidebar({
   useEffect(() => {
     if (ONBOARDING.includes(area)) visit(area)
   }, [area, visit])
-  const submittable = useQuery(pool.everywhere)
-  useRefetchOn('simulations', pool.everywhere.queryKey, 5000)
-  const total = submittable.data?.total ?? 0
-
   const [quitting, setQuitting] = useState(false)
   const quit = useQuitApp()
   const launched = useUpdateStatus().data?.launcher != null
@@ -209,14 +204,6 @@ export function Sidebar({
             >
               <item.icon className="size-4 shrink-0" aria-hidden />
               {!collapsed && <span className="flex-1 truncate">{item.label}</span>}
-              {!collapsed && item.to === '/pool' && total > 0 && (
-                <span
-                  className="num rounded-pill border border-pnl-positive-edge bg-pnl-positive-tint px-1.5 py-0.5 text-caption font-medium text-pnl-positive-text"
-                  title="Submittable Alphas"
-                >
-                  {total}
-                </span>
-              )}
             </Link>
           </Fragment>
         ))}
@@ -270,12 +257,7 @@ export function Sidebar({
             {
               label: 'Open the BRAIN Platform',
               icon: <ExternalLinkIcon />,
-              onClick: () =>
-                window.open(
-                  'https://platform.worldquantbrain.com',
-                  '_blank',
-                  'noopener,noreferrer',
-                ),
+              onClick: () => window.open(PLATFORM_URL, '_blank', 'noopener,noreferrer'),
             },
             {
               label: 'Sign Out',

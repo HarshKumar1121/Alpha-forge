@@ -421,7 +421,7 @@ export function Segmented<V extends string | number>({
   onChange,
   label,
 }: {
-  items: { value: V; label: ReactNode }[]
+  items: { value: V; label: ReactNode; disabled?: boolean }[]
   value: V
   onChange: (value: V) => void
   label: string
@@ -441,7 +441,8 @@ export function Segmented<V extends string | number>({
         <Radio.Root
           key={String(item.value)}
           value={String(item.value)}
-          className="inline-flex h-7 items-center justify-center rounded-xs border border-transparent px-3 text-body-compact leading-none font-medium text-ink-subtle transition-colors hover:text-ink data-[checked]:border-hairline-strong data-[checked]:bg-surface-3 data-[checked]:text-ink"
+          disabled={item.disabled}
+          className="inline-flex h-7 items-center justify-center rounded-xs border border-transparent px-3 text-body-compact leading-none font-medium text-ink-subtle transition-colors hover:text-ink data-[checked]:border-hairline-strong data-[checked]:bg-surface-3 data-[checked]:text-ink data-[disabled]:text-ink-disabled data-[disabled]:hover:text-ink-disabled"
         >
           {item.label}
         </Radio.Root>

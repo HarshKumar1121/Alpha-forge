@@ -3,9 +3,10 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { CopyIcon } from 'lucide-react'
 import { toast } from 'sonner'
+import { MAX_TURNOVER, MIN_FITNESS, MIN_SHARPE, MIN_TURNOVER } from '@/api/platform'
 import { type AlphaCheck, type Scope, scopeLabel } from '@/api/types'
 import { cn } from '@/lib/cn'
-import { fmt, isNum } from '@/lib/format'
+import { CORE_METRICS, fmt, isNum } from '@/lib/format'
 import { marketKey, useScope } from '@/lib/scope'
 import { useRefetchOn } from '@/lib/ws'
 import {
@@ -72,8 +73,9 @@ export function Submittable({ onOpen }: { onOpen: (alphaId: string) => void }) {
           />
           <Metric
             boxed
-            label="Not Submittable"
+            label="Near Misses"
             value={fmt.int(data.nearMisses)}
+            hint="Refused by only one or two fixable checks, such as Turnover or Fitness"
             tone={data.nearMisses > 0 ? 'warn' : 'neutral'}
           />
         </div>
@@ -176,8 +178,8 @@ function Card({
   onOpen: (alphaId: string) => void
 }) {
   const d0 = a.settings.delay === 0
-  const sharpeBar = limitOf(a.checks, 'LOW_SHARPE') ?? (d0 ? 2.69 : 1.58)
-  const fitnessBar = limitOf(a.checks, 'LOW_FITNESS') ?? (d0 ? 1.5 : 1.0)
+  const sharpeBar = limitOf(a.checks, 'LOW_SHARPE') ?? MIN_SHARPE[d0 ? 0 : 1]
+  const fitnessBar = limitOf(a.checks, 'LOW_FITNESS') ?? MIN_FITNESS[d0 ? 0 : 1]
   const passed = a.checks.filter((c) => c.result === 'PASS')
 
   const copy = () =>
@@ -221,19 +223,21 @@ function Card({
           boxed
           size="sm"
           label="Turnover"
-          hint="1%–70%"
-          value={fmt.pct(a.turnover)}
-          tone={pass(isNum(a.turnover) ? a.turnover >= 0.01 && a.turnover <= 0.7 : null)}
+          hint={`${fmt.pct(MIN_TURNOVER, 0)}–${fmt.pct(MAX_TURNOVER, 0)}`}
+          value={CORE_METRICS.turnover.show(a.turnover)}
+          tone={pass(
+            isNum(a.turnover) ? a.turnover >= MIN_TURNOVER && a.turnover <= MAX_TURNOVER : null,
+          )}
         />
         <Metric
           boxed
           size="sm"
           label="Returns"
-          value={fmt.pct(a.returns)}
+          value={CORE_METRICS.returns.show(a.returns)}
           tone={isNum(a.returns) && a.returns !== 0 ? pass(a.returns > 0) : 'neutral'}
         />
-        <Metric boxed size="sm" label="Drawdown" value={fmt.pct(a.drawdown)} />
-        <Metric boxed size="sm" label="Margin" value={fmt.bps(a.margin)} />
+        <Metric boxed size="sm" label="Drawdown" value={CORE_METRICS.drawdown.show(a.drawdown)} />
+        <Metric boxed size="sm" label="Margin" value={CORE_METRICS.margin.show(a.margin)} />
       </div>
       {isNum(a.testSharpe) && (
         <div className="grid grid-cols-3 gap-2">

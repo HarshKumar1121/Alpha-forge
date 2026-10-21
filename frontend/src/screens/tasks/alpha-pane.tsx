@@ -18,11 +18,20 @@ import { errorMessage } from '@/api/http'
 import { cn } from '@/lib/cn'
 import { DASH, fmt } from '@/lib/format'
 import { useLive } from '@/lib/live'
+import {
+  AlphaTable,
+  type AlphaTableRow,
+  fromRanked,
+  type Option,
+  option,
+  sortAlphas,
+} from '@/screens/alpha-table'
+import { Correlation } from '@/screens/alpha-table/columns'
 import { BRAIN_ALPHA_URL } from '@/screens/pool/api'
 import { labTasks, type RankedAlpha } from '@/screens/tasks/api'
 import { type PowerPoolRow, powerPoolTone, usePowerPool } from '@/screens/tasks/power-pool'
 import { Button, ErrorNotice, LINK, Notice, Panel, Progress } from '@/ui/kit'
-import { type Column, DataTable, type Sort } from '@/ui/table'
+import type { Sort } from '@/ui/table'
 
 const WORKFLOW = 'power-pool-workflow'
 const PROD_JOB = 'prod-correlation'
@@ -39,37 +48,18 @@ const passesPool = (row: PowerPoolRow | undefined) => {
   return tone === 'clear' || tone === 'beats'
 }
 
-/** `compare`, plus the one column that lives in the Power Pool map rather than on the row. */
-function comparePool(
-  a: RankedAlpha,
-  b: RankedAlpha,
-  sort: Sort,
-  by: ReadonlyMap<string, PowerPoolRow>,
-  compare: (a: RankedAlpha, b: RankedAlpha, sort: Sort) => number,
-): number {
-  if (sort.key !== 'poolCorrelation') return compare(a, b, sort)
-  const pick = (r: RankedAlpha) => (r.alphaId ? by.get(r.alphaId)?.correlation : null) ?? null
-  const x = pick(a)
-  const y = pick(b)
-  // Unmeasured last either way: an Alpha with no correlation is not the least correlated.
-  if (x == null) return y == null ? 0 : 1
-  if (y == null) return -1
-  return sort.desc ? y - x : x - y
-}
-
-function poolColumn(by: ReadonlyMap<string, PowerPoolRow>): Column<RankedAlpha> {
-  return {
-    key: 'poolCorrelation',
-    header: 'Power Pool Correlation',
+/** The pane's own Power Pool Correlation: measured here, and toned by whether the Alpha's
+ *  Sharpe beats the ones it exceeds. */
+function poolOption(by: ReadonlyMap<string, PowerPoolRow>): Option {
+  const found = (r: AlphaTableRow) => (r.alphaId ? by.get(r.alphaId) : undefined)
+  return option('Correlation', 'powerPoolCorrelation', 'Power Pool Correlation', {
     width: 'minmax(120px,1.1fr)',
     align: 'right',
-    sortable: true,
+    value: (r) => found(r)?.correlation ?? null,
     cell: (r) => {
-      const found = r.alphaId ? by.get(r.alphaId) : undefined
-      if (!found || found.correlation == null) {
-        return <span className="text-ink-subtle">{DASH}</span>
-      }
-      const tone = powerPoolTone(found)
+      const row = found(r)
+      if (!row || row.correlation == null) return DASH
+      const tone = powerPoolTone(row)
       return (
         <span
           className={cn(
@@ -78,14 +68,21 @@ function poolColumn(by: ReadonlyMap<string, PowerPoolRow>): Column<RankedAlpha> 
               ? 'text-pnl-positive-text'
               : tone === 'beats'
                 ? 'text-status-warning'
-                : 'text-pnl-negative-text',
+                : tone === 'unmeasured'
+                  ? 'text-ink-subtle'
+                  : 'text-pnl-negative-text',
           )}
+          title={
+            tone === 'unmeasured'
+              ? 'Not against every Power Pool Alpha of its region: some have no PnL stored'
+              : undefined
+          }
         >
-          {fmt.ratio(found.correlation, 4)}
+          <Correlation value={row.correlation} />
         </span>
       )
     },
-  }
+  })
 }
 
 /** The latest job of `kind`, running or just finished, from the shared background task list. */
@@ -109,7 +106,7 @@ function useJob(kind: string) {
  */
 const openRow =
   (onOpen: ((alphaId: string) => void) | undefined) =>
-  (r: RankedAlpha, event: React.MouseEvent | React.KeyboardEvent) => {
+  (r: AlphaTableRow, event: React.MouseEvent | React.KeyboardEvent) => {
     if (!r.alphaId) return
     if (event.ctrlKey || event.metaKey) {
       event.preventDefault()
@@ -119,24 +116,23 @@ const openRow =
 
 export function AlphaPane({
   title,
+  view,
   rows,
-  columns,
-  compare,
+  offer,
+  defaults,
   sort,
   onSort,
   loading,
   error,
-  poolColumnAfter,
   onRefresh,
   onOpenAlpha,
 }: {
   title: string
+  /** Where the table's choice of columns is kept. */
+  view: string
   rows: RankedAlpha[]
-  /** Everything but the Power Pool column, which the pane owns and inserts itself. */
-  columns: () => Column<RankedAlpha>[]
-  /** Where the Power Pool column goes. Defaults to the end. */
-  poolColumnAfter?: string
-  compare: (a: RankedAlpha, b: RankedAlpha, sort: Sort) => number
+  offer: string[]
+  defaults: string[]
   sort: Sort
   onSort: (sort: Sort) => void
   loading?: boolean
@@ -156,11 +152,11 @@ export function AlphaPane({
     () => clean.filter((r) => passesPool(pool.by.get(r.alphaId))),
     [clean, pool.by],
   )
-  const shown = showAll ? rows : survivors
-  const sorted = useMemo(
-    () => [...shown].sort((a, b) => comparePool(a, b, sort, pool.by, compare)),
-    [shown, sort, pool.by, compare],
+  const shown = useMemo(
+    () => (showAll ? rows : survivors).map(fromRanked),
+    [showAll, rows, survivors],
   )
+  const overrides = useMemo(() => [poolOption(pool.by)], [pool.by])
 
   const refresh = () => Promise.all([onRefresh?.(), cleanIds.length ? pool.refresh() : null])
 
@@ -197,8 +193,8 @@ export function AlphaPane({
     void onRefresh?.()
   })
   // The rows on show, top first: BRAIN's hourly limit means the ones read first come back first.
-  const unchecked = sorted.flatMap((r) =>
-    isUnsubmitted(r) && r.prodCorrelation == null ? [r.alphaId] : [],
+  const unchecked = sortAlphas(shown, sort, overrides).flatMap((r) =>
+    r.alphaId && !r.submitted && r.prodCorrelation == null ? [r.alphaId] : [],
   )
   const checkProd = useMutation({
     mutationFn: () => labTasks.prodCorrelation(unchecked),
@@ -224,13 +220,6 @@ export function AlphaPane({
     (pool.found?.rows.filter((r) => r.verdict === 'unmeasured').length ?? 0)
   const unsynced = pool.found?.scopes.flatMap((s) => s.poolWithoutPnl).length ?? 0
   const uncosted = survivors.filter((r) => r.afterCostSharpe == null).length
-  const columnsShown = () => {
-    const own = columns()
-    if (!pool.found) return own
-    const at = own.findIndex((c) => c.key === poolColumnAfter)
-    const cut = at === -1 ? own.length : at + 1
-    return [...own.slice(0, cut), poolColumn(pool.by), ...own.slice(cut)]
-  }
 
   return (
     <Panel
@@ -307,7 +296,7 @@ export function AlphaPane({
               Run Power Pool Workflow
             </Button>
           )}
-          <span className="num text-ink-subtle">{fmt.int(sorted.length)}</span>
+          <span className="num text-ink-subtle">{fmt.int(shown.length)}</span>
         </div>
       }
     >
@@ -336,11 +325,13 @@ export function AlphaPane({
       {pool.error != null && (
         <ErrorNotice error={pool.error} title="Could not measure Power Pool correlation" />
       )}
-      <DataTable
+      <AlphaTable
+        view={view}
         label={title}
-        rows={sorted}
-        columns={columnsShown()}
-        rowKey={(r) => String(r.trialId)}
+        rows={shown}
+        offer={offer}
+        defaults={defaults}
+        overrides={overrides}
         onRowClick={openRow(onOpenAlpha)}
         sort={sort}
         onSort={onSort}

@@ -9,6 +9,8 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { today } from '@/api/core'
 import { useCores } from '@/lib/preferences'
+import { useScopeOptions } from '@/lib/scope'
+import { followOtherTabs } from '@/lib/tabs'
 import { AddTaskButtons, useAddTask } from '@/screens/research-labs/add-task'
 import {
   LAB_DEFAULTS,
@@ -33,6 +35,7 @@ const useSearchLab = create<LabDraft>()(
     migrate: (stored) => ({ ...(stored as LabDraft), cores: null }),
   }),
 )
+followOtherTabs(useSearchLab)
 
 export function SearchLabScreen() {
   const stored = useSearchLab()
@@ -54,7 +57,13 @@ export function SearchLabScreen() {
   }
   const vectorOperators = vectorOperatorsOf(draft, options.data?.vector)
   const cores = useCores(draft.cores)
-  const body: SearchLabRequest = labBody(draft, vectorOperators, cores)
+  const { neutralizations } = useScopeOptions({
+    instrumentType: 'EQUITY',
+    region: draft.region,
+    delay: draft.delay,
+    universe: draft.universe,
+  })
+  const body: SearchLabRequest = labBody(draft, vectorOperators, cores, neutralizations)
   const { preview, current } = useLabPreview('search-lab', body, searchLab.preview, {
     enabled: chosen && options.isSuccess,
   })

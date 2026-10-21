@@ -109,7 +109,7 @@ function HeaderCores() {
                 ? 'Running'
                 : state === 'warning'
                   ? 'Warning'
-                  : 'Queued'
+                  : 'Pending'
 
           const tooltipContent = (
             <div className="flex flex-col gap-1 text-caption">
@@ -135,7 +135,10 @@ function HeaderCores() {
           )
 
           return (
-            <Tooltip key={block.start} content={tooltipContent}>
+            <Tooltip
+              key={holder ? `sim-${holder.id}` : `idle-${block.start}`}
+              content={tooltipContent}
+            >
               {/* A hair between a block's own cores and the full gap between blocks, so two
                   cores held by one simulation read as one wide mark rather than two. */}
               <span className="flex gap-px">

@@ -18,7 +18,7 @@ import structlog
 
 from ..db.duck import ALPHA_COLUMNS, TRAIN_COLUMNS, Catalog
 from . import metrics
-from .yields import SUBMITTED, without_quota_checks
+from .yields import SUBMITTED, children_check, without_quota_checks
 
 if TYPE_CHECKING:
     from ..brain.schemas import Alpha
@@ -62,8 +62,7 @@ def _after_cost_sharpe(days: list[tuple[date, float, float]], info: dict[str, An
     """This Alpha's After-Cost Sharpe as the tables show it (:func:`metrics.after_cost_sharpe`).
 
     The final days BRAIN counts but exports in no recordset are added first, so this reads the
-    same series the Alpha page's after-cost chart draws. That chart's figure is the plain
-    Sharpe, not normalized to ten years, so the two differ unless the Alpha has ten years.
+    same series the Alpha page's after-cost chart draws, and agrees with its figure.
     """
     if not days:
         return None
@@ -121,6 +120,9 @@ def alpha_row(alpha: Alpha, fetched_at: datetime) -> tuple[Any, ...]:
         settings.simulation_mode if settings else None,
         stats.prod_correlation if stats else None,
         stats.self_correlation if stats else None,
+        settings.language if settings else None,
+        settings.pasteurization if settings else None,
+        settings.nan_handling if settings else None,
     )
 
 
@@ -169,6 +171,19 @@ def family_of(parent: str, child: str = "c") -> str:
         AND {c}.neutralization IS NOT DISTINCT FROM {parent}.neutralization
         AND {c}.decay IS NOT DISTINCT FROM {parent}.decay
         AND {c}.truncation IS NOT DISTINCT FROM {parent}.truncation
+    """
+
+
+def same_family(x: str, y: str) -> str:
+    """SQL: rows ``x`` and ``y`` are one region-agnostic family, parent or child, as
+    :func:`family_of` tells them apart."""
+    return f"""
+        {x}.sim_type IN ('RA_PARENT', 'RA_CHILD') AND {y}.sim_type IN ('RA_PARENT', 'RA_CHILD')
+        AND {x}.expression = {y}.expression AND {x}.date_created = {y}.date_created
+        AND {x}.delay = {y}.delay
+        AND {x}.neutralization IS NOT DISTINCT FROM {y}.neutralization
+        AND {x}.decay IS NOT DISTINCT FROM {y}.decay
+        AND {x}.truncation IS NOT DISTINCT FROM {y}.truncation
     """
 
 
@@ -315,6 +330,16 @@ def _page_row(r: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _by_alpha[T](ids: list[str], days: list[date], values: list[T]) -> dict[str, dict[date, T]]:
+    """Rows sorted by Alpha, each Alpha's days made a dict in one go rather than row by row."""
+    starts = [i for i in range(len(ids)) if i == 0 or ids[i] != ids[i - 1]]
+    ends = [*starts[1:], len(ids)]
+    return {
+        ids[s]: dict(zip(days[s:e], values[s:e], strict=True))
+        for s, e in zip(starts, ends, strict=True)
+    }
+
+
 def json_list(raw: Any) -> list[str]:
     return [str(v) for v in json.loads(raw)] if isinstance(raw, str) else []
 
@@ -358,8 +383,13 @@ class AlphaVault:
                 f"BRAIN returned {len(alphas)} Alpha(s) without metrics or settings, "
                 "so nothing was stored. The platform's Alpha format may have changed."
             )
+        # An Alpha's own body keeps the checks it was simulated with; once stored, its checks
+        # change only through ``/check`` (:meth:`save_checks`), which a resave must not undo.
         written = await self.catalog.upsert(
-            "alpha", ALPHA_COLUMNS, [alpha_row(a, fetched_at) for a in alphas if a.train is None]
+            "alpha",
+            ALPHA_COLUMNS,
+            [alpha_row(a, fetched_at) for a in alphas if a.train is None],
+            keep=("checks",),
         )
         return written + await self.catalog.upsert(
             "alpha",
@@ -377,6 +407,7 @@ class AlphaVault:
                 for a in alphas
                 if a.train
             ],
+            keep=("checks",),
         )
 
     async def save_pnl(
@@ -422,7 +453,7 @@ class AlphaVault:
             # thousand Alphas' series to fill a column would cost more than the sweep did.
             await self.catalog.upsert(
                 "alpha",
-                ("alpha_id", "series_version", "pnl_version", "after_cost_t10"),
+                ("alpha_id", "series_version", "pnl_version", "after_cost_5bps"),
                 [
                     (
                         alpha_id,
@@ -444,7 +475,7 @@ class AlphaVault:
         if written:
             await self.catalog.upsert(
                 "alpha",
-                ("alpha_id", "series_version", "pnl_version", "after_cost_t10"),
+                ("alpha_id", "series_version", "pnl_version", "after_cost_5bps"),
                 [(alpha_id, None, SERIES_VERSION, None)],
             )
         return written
@@ -460,7 +491,7 @@ class AlphaVault:
             """
             SELECT a.alpha_id, a.end_date, a.is_pnl, a.test_start, a.test_turnover
             FROM alpha a
-            WHERE a.after_cost_t10 IS NULL
+            WHERE a.after_cost_5bps IS NULL
               AND EXISTS (
                   SELECT 1 FROM alpha_pnl p
                   WHERE p.alpha_id = a.alpha_id AND p.turnover IS NOT NULL
@@ -477,7 +508,7 @@ class AlphaVault:
                 for a, info in ((str(r["alpha_id"]), r) for r in chunk)
                 if (days := series.get(a))
             ]
-            rebuilt += await self.catalog.upsert("alpha", ("alpha_id", "after_cost_t10"), rows)
+            rebuilt += await self.catalog.upsert("alpha", ("alpha_id", "after_cost_5bps"), rows)
         log.info("vault.after_cost_sharpe_rebuilt", alphas=rebuilt)
         return rebuilt
 
@@ -616,20 +647,25 @@ class AlphaVault:
         source = STANDING_VIEW if evolvable else "alpha"
         standing = "a.standing_region" if evolvable else "NULL AS standing_region"
         total = await self.catalog.scalar(f"SELECT count(*) FROM {source} a WHERE {where}", params)  # noqa: S608
+        # has_pnl outside the LIMIT: inside, it probed the PnL table for every Alpha, not 100.
         rows = await self.catalog.query(
             f"""
-            SELECT a.alpha_id, a.name, a.sim_type, a.status, a.region, a.universe, a.delay,
-                   a.neutralization, a.decay, a.truncation, a.expression, a.sharpe,
-                   a.fitness, a.turnover, a.returns, a.drawdown, a.margin,
-                   a.operator_count, {ALPHA_METRICS["calmar"]} AS calmar,
-                   a.date_created, a.date_submitted, a.long_count, a.short_count,
-                   a.max_trade, a.max_position, a.classifications, a.pyramids,
-                   a.train_sharpe, a.test_sharpe, {standing},
-                   EXISTS (SELECT 1 FROM alpha_pnl p WHERE p.alpha_id = a.alpha_id) AS has_pnl
-            FROM {source} a
-            WHERE {where}
-            ORDER BY {order} {direction} NULLS LAST, a.alpha_id
-            LIMIT ? OFFSET ?
+            SELECT q.*,
+                   EXISTS (SELECT 1 FROM alpha_pnl p WHERE p.alpha_id = q.alpha_id) AS has_pnl
+            FROM (
+                SELECT a.alpha_id, a.name, a.sim_type, a.status, a.region, a.universe, a.delay,
+                       a.neutralization, a.decay, a.truncation, a.expression, a.sharpe,
+                       a.fitness, a.turnover, a.returns, a.drawdown, a.margin,
+                       a.operator_count, {ALPHA_METRICS["calmar"]} AS calmar,
+                       a.date_created, a.date_submitted, a.long_count, a.short_count,
+                       a.max_trade, a.max_position, a.classifications, a.pyramids,
+                       a.train_sharpe, a.test_sharpe, {standing}, {order} AS sort_key
+                FROM {source} a
+                WHERE {where}
+                ORDER BY sort_key {direction} NULLS LAST, a.alpha_id
+                LIMIT ? OFFSET ?
+            ) q
+            ORDER BY q.sort_key {direction} NULLS LAST, q.alpha_id
             """,  # noqa: S608
             [*params, limit, offset],
         )
@@ -652,18 +688,20 @@ class AlphaVault:
         if not alpha_ids:
             return {}
         placeholders = ", ".join("?" for _ in alpha_ids)
-        rows = await self.catalog.query(
+        table = await self.catalog.arrow(
             f"""
-            SELECT alpha_id, date, pnl FROM alpha_pnl
+            SELECT alpha_id, date, coalesce(pnl, 0) AS pnl FROM alpha_pnl
             WHERE alpha_id IN ({placeholders})
             ORDER BY alpha_id, date
             """,  # noqa: S608
             list(alpha_ids),
         )
-        grouped: dict[str, dict[date, float]] = {}
-        for row in rows:
-            grouped.setdefault(str(row["alpha_id"]), {})[row["date"]] = float(row["pnl"] or 0.0)
-        return grouped
+        # Through numpy: Arrow's own to_pylist builds dates twenty times slower.
+        return _by_alpha(
+            table.column("alpha_id").to_pylist(),
+            table.column("date").to_numpy().tolist(),
+            table.column("pnl").to_numpy().tolist(),
+        )
 
     async def series(self, alpha_ids: list[str]) -> dict[str, dict[date, tuple[float, float]]]:
         """Each Alpha's daily ``(pnl, turnover)`` by date. Alphas still on the old series,
@@ -671,21 +709,20 @@ class AlphaVault:
         if not alpha_ids:
             return {}
         placeholders = ", ".join("?" for _ in alpha_ids)
-        rows = await self.catalog.query(
+        table = await self.catalog.arrow(
             f"""
-            SELECT alpha_id, date, pnl, turnover FROM alpha_pnl
+            SELECT alpha_id, date, coalesce(pnl, 0) AS pnl, turnover FROM alpha_pnl
             WHERE alpha_id IN ({placeholders}) AND turnover IS NOT NULL
             ORDER BY alpha_id, date
             """,  # noqa: S608
             list(alpha_ids),
         )
-        grouped: dict[str, dict[date, tuple[float, float]]] = {}
-        for row in rows:
-            grouped.setdefault(str(row["alpha_id"]), {})[row["date"]] = (
-                float(row["pnl"] or 0.0),
-                float(row["turnover"]),
-            )
-        return grouped
+        pnl, traded = table.column("pnl").to_numpy(), table.column("turnover").to_numpy()
+        return _by_alpha(
+            table.column("alpha_id").to_pylist(),
+            table.column("date").to_numpy().tolist(),
+            list(zip(pnl.tolist(), traded.tolist(), strict=True)),
+        )
 
     async def pnl_grid(self, alpha_ids: list[str]) -> PnlGrid:
         """Of these Alphas, the ones holding a current daily PnL (turnover or not); every date
@@ -726,7 +763,9 @@ class AlphaVault:
             SELECT a.alpha_id, a.name, a.region, a.delay, a.universe, a.max_trade,
                    a.max_position, a.tags, a.classifications, a.pyramids, a.date_submitted,
                    a.sharpe, a.turnover, a.fitness, a.returns, a.drawdown, a.margin,
-                   a.long_count, a.short_count, a.prod_correlation,
+                   a.long_count, a.short_count, a.prod_correlation, a.self_correlation,
+                   a.neutralization, a.decay, a.truncation, a.expression, a.operator_count,
+                   a.train_sharpe, a.test_sharpe,
                    (
                        SELECT p.alpha_id FROM alpha p
                        WHERE p.sim_type = 'RA_PARENT' AND {family_of("p", "a")}
@@ -813,6 +852,51 @@ class AlphaVault:
             alpha_id: family
             for alpha_id, parent in parents.items()
             if (family := family_row(parent, children.get(alpha_id, [])))
+        }
+
+    async def ra_families(
+        self, parent_ids: list[str] | None = None, limit: int = 200
+    ) -> list[tuple[dict[str, Any], list[dict[str, Any]]]]:
+        """Region-agnostic parents with every child row: these ids, or the newest ``limit``."""
+        if parent_ids is not None and not parent_ids:
+            return []
+        params: list[Any] = []
+        where = "p.sim_type = 'RA_PARENT'"
+        if parent_ids is not None:
+            where += f" AND p.alpha_id IN ({', '.join('?' for _ in parent_ids)})"
+            params = list(parent_ids)
+        parents = await self.catalog.query(
+            f"""
+            SELECT * FROM alpha p WHERE {where}
+            ORDER BY p.date_created DESC NULLS LAST, p.alpha_id LIMIT {int(limit)}
+            """,  # noqa: S608
+            params,
+        )
+        if not parents:
+            return []
+        ids = [str(r["alpha_id"]) for r in parents]
+        found = await self.catalog.query(
+            f"""
+            SELECT p.alpha_id AS parent_of, c.* FROM alpha p JOIN alpha c ON {family_of("p")}
+            WHERE p.alpha_id IN ({", ".join("?" for _ in ids)})
+            ORDER BY c.region
+            """,  # noqa: S608
+            ids,
+        )
+        children: dict[str, list[dict[str, Any]]] = {}
+        for row in found:
+            children.setdefault(str(row.pop("parent_of")), []).append(row)
+        return [(p, children.get(str(p["alpha_id"]), [])) for p in parents]
+
+    async def family_checks(
+        self, rows: dict[str, dict[str, Any]]
+    ) -> dict[str, list[dict[str, Any]]]:
+        """For each region-agnostic parent among ``rows``, the one check that decides it,
+        worked out from its children (:func:`yields.children_check`)."""
+        parents = [a for a, r in rows.items() if r.get("sim_type") == "RA_PARENT"]
+        return {
+            str(parent["alpha_id"]): [children_check(children)]
+            for parent, children in await self.ra_families(parents, limit=max(1, len(parents)))
         }
 
     async def with_families(self, rows: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:

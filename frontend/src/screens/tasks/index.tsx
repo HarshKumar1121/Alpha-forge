@@ -1,7 +1,7 @@
 /** Tasks: everything the labs added. Only here does a task run, wait for cores, pause or stop. */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, useNavigate } from '@tanstack/react-router'
+import { Link } from '@tanstack/react-router'
 import {
   CopyIcon,
   EllipsisIcon,
@@ -13,26 +13,20 @@ import {
   Trash2Icon,
   TriangleAlertIcon,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { errorMessage } from '@/api/http'
+import { SUPER_ALPHA_SLOTS } from '@/api/platform'
 import { cn } from '@/lib/cn'
 import { DASH, fmt } from '@/lib/format'
 import { useNow } from '@/lib/now'
 import { useRefetchOn } from '@/lib/ws'
+import { AlphaTable, type AlphaTableRow, fromRanked, option } from '@/screens/alpha-table'
 import { DatasetChips, useDatasetTree } from '@/screens/data/dataset-chips'
 import { DetailSheet } from '@/screens/pool/detail'
 import { MAX_SIMULATIONS } from '@/screens/research-labs/lab-task'
-import { type LabTask, labTasks, type RankedAlpha } from '@/screens/tasks/api'
-import {
-  AFTER_COST_HEADER,
-  DELAY,
-  INVESTABILITY,
-  QuickBadge,
-  SharpeCell,
-  TRUNCATION,
-  taskStatus,
-} from '@/screens/tasks/columns'
+import { type LabTask, labTasks, type RankedAlpha, TOP_LIMIT } from '@/screens/tasks/api'
+import { TASK_OFFER, taskStatus } from '@/screens/tasks/columns'
 import { resultsMarkdown } from '@/screens/tasks/copy'
 import { SubmittableAlphas } from '@/screens/tasks/submittable'
 import {
@@ -61,148 +55,40 @@ import { type Column, DataTable } from '@/ui/table'
 /** Matches `labs.params.SETTINGS_SAMPLER`. */
 const SETTINGS_SAMPLER = 'settings-sampler'
 
-const TOP_COLUMNS: Column<RankedAlpha>[] = [
-  {
-    key: 'expression',
-    header: 'Expression',
-    width: 'minmax(280px,3fr)',
+/** What a task searches for, where that is not Sharpe, named as the task names it. */
+const objective = (task: LabTask) =>
+  option('Summary', 'value', task.objectiveLabel, {
+    width: '112px',
+    align: 'right',
+    value: (r) => r.value,
     cell: (r) => (
-      <span className="flex min-w-0 items-center gap-1.5">
-        <QuickBadge alpha={r} />
-        <span className="num block truncate text-ink" title={r.expression ?? undefined}>
-          {r.expression ?? DASH}
-        </span>
-      </span>
+      <span className={cn('num', TEXT_TONE[signTone(r.value)])}>{fmt.ratio(r.value)}</span>
     ),
-  },
-  {
-    key: 'sharpe',
-    header: 'Sharpe',
-    width: '90px',
-    align: 'right',
-    cell: (r) => <SharpeCell value={r.sharpe} />,
-  },
-  {
-    // The held-out years, where an Alpha that only fits its train years shows its decay.
-    key: 'testSharpe',
-    header: 'Test Sharpe',
-    width: '100px',
-    align: 'right',
-    cell: (r) => (
-      <span className={TEXT_TONE[signTone(r.testSharpe)]}>{fmt.ratio(r.testSharpe)}</span>
-    ),
-  },
-  {
-    key: 'fitness',
-    header: 'Fitness',
-    width: '80px',
-    align: 'right',
-    cell: (r) => fmt.ratio(r.fitness),
-  },
-  {
-    key: 'turnover',
-    header: 'Turnover',
-    width: '88px',
-    align: 'right',
-    cell: (r) => fmt.pct(r.turnover),
-  },
-  {
-    key: 'universe',
-    header: 'Universe',
-    width: '96px',
-    cell: (r) => r.settings?.universe ?? DASH,
-  },
-  {
-    key: 'neutralization',
-    header: 'Neutralization',
-    width: '120px',
-    cell: (r) => r.settings?.neutralization ?? DASH,
-  },
+  })
+
+/** A Settings Sampler row is only ever the same expression, so the settings lead instead. */
+const samplerDefaults = (task: LabTask) => [
+  'trial',
+  'region',
+  'delay',
+  'universe',
+  'neutralization',
+  'investability',
+  ...(task.truncationAgent ? ['truncation'] : []),
+  'sharpe',
+  'afterCostSharpe',
 ]
 
-/**
- * The Alpha's Sharpe once 5 bps is charged against each day's own turnover, normalized to ten
- * years of data. It sits beside the gross Sharpe rather than replacing it.
- *
- * Empty until the daily PnL and turnover are downloaded, which is a request per Alpha.
- */
-const AFTER_COST_SHARPE: Column<RankedAlpha> = {
-  key: 'afterCostSharpe',
-  header: AFTER_COST_HEADER,
-  width: '132px',
-  align: 'right',
-  cell: (r) =>
-    r.afterCostSharpe == null ? (
-      <span className="text-ink-subtle" title="Daily PnL not downloaded yet">
-        {DASH}
-      </span>
-    ) : (
-      <span className={cn('num', TEXT_TONE[signTone(r.afterCostSharpe)])}>
-        {fmt.ratio(r.afterCostSharpe)}
-      </span>
-    ),
-}
-
-const setting = (key: string, header: string, width: string): Column<RankedAlpha> => ({
-  key,
-  header,
-  width,
-  cell: (r) => <span className="num">{(r.settings?.[key] as string | undefined) ?? DASH}</span>,
-})
-
-/**
- * A Settings Sampler row is only ever the same expression, so the settings lead instead and
- * Sharpe closes.
- */
-const SAMPLER_COLUMNS: Column<RankedAlpha>[] = [
-  {
-    key: 'number',
-    header: 'Trial',
-    width: '120px',
-    cell: (r) => (
-      <span className="num flex items-center gap-1.5 text-ink-subtle">
-        {r.number}
-        <QuickBadge alpha={r} />
-      </span>
-    ),
-  },
-  // Region, Delay, Universe, Neutralization, Max Trade, Max Position — the order a market is
-  // named in everywhere, so a reader's eye lands in the same place on every screen.
-  setting('region', 'Region', '96px'),
-  DELAY,
-  setting('universe', 'Universe', '116px'),
-  // Takes the slack, so the table fills its pane and Sharpe closes at the right edge.
-  setting('neutralization', 'Neutralization', 'minmax(180px,1fr)'),
-  INVESTABILITY,
-  {
-    key: 'sharpe',
-    header: 'Sharpe',
-    width: '100px',
-    align: 'right',
-    cell: (r) => <SharpeCell value={r.sharpe} />,
-  },
-  AFTER_COST_SHARPE,
+const TOP_DEFAULTS = [
+  'expression',
+  'value',
+  'universe',
+  'neutralization',
+  'sharpe',
+  'fitness',
+  'turnover',
+  'testSharpe',
 ]
-
-/** What a task searches for leads the table when it is not Sharpe, which the table shows anyway. */
-const topColumns = (task: LabTask): Column<RankedAlpha>[] =>
-  task.lab === SETTINGS_SAMPLER
-    ? task.truncationAgent
-      ? [...SAMPLER_COLUMNS.slice(0, 5), TRUNCATION, ...SAMPLER_COLUMNS.slice(5)]
-      : SAMPLER_COLUMNS
-    : task.objectiveLabel === 'Sharpe'
-      ? TOP_COLUMNS
-      : [
-          ...TOP_COLUMNS.slice(0, 1),
-          {
-            key: 'value',
-            header: task.objectiveLabel,
-            width: '112px',
-            align: 'right',
-            cell: (r) => <span className={TEXT_TONE[signTone(r.value)]}>{fmt.ratio(r.value)}</span>,
-          },
-          ...TOP_COLUMNS.slice(1),
-        ]
 
 type Act = { action: 'runAll' } | { action: 'run' | 'pause' | 'stop' | 'remove'; task: LabTask }
 
@@ -619,7 +505,6 @@ function Actions({
 
 /** Task actions that are not one-click enough to earn a button of their own. */
 function TaskActionsMenu({ task, onRename }: { task: LabTask; onRename: () => void }) {
-  const navigate = useNavigate()
   return (
     <Menu
       trigger={
@@ -627,15 +512,7 @@ function TaskActionsMenu({ task, onRename }: { task: LabTask; onRename: () => vo
           <EllipsisIcon />
         </Button>
       }
-      items={[
-        { label: 'Rename', onClick: onRename },
-        {
-          label: 'Submission Planner',
-          disabled: !task.simulated,
-          onClick: () =>
-            void navigate({ to: '/tools/submission-planner', search: { task: task.id } }),
-        },
-      ]}
+      items={[{ label: 'Rename', onClick: onRename }]}
     />
   )
 }
@@ -651,8 +528,9 @@ function TaskDetail({
     // Its own key, refreshed at most every 10s: the whole sweep is a megabyte or more on a
     // big task, too much to redo on each of the task list's two-second updates.
     queryKey: ['lab-task-top', task.id],
-    // The whole sweep is worth scrolling; the table virtualises, so the rows are cheap.
-    queryFn: () => labTasks.top(task.id, Math.min(Math.max(task.target, 50), 5000)),
+    // The whole sweep is worth scrolling; the table virtualises, so the rows are cheap. Not
+    // the target: cached Alphas and Full re-runs come back on top of it.
+    queryFn: () => labTasks.top(task.id, TOP_LIMIT),
   })
   useRefetchOn('studies', ['lab-task-top', task.id], 10_000)
   // Arrives sorted on the objective already.
@@ -661,14 +539,14 @@ function TaskDetail({
   // passing one: nothing has said no, which is the question this pane answers. Whether it is
   // submittable *yet* is the Submittable count's job, and that one does hold pending back.
   // A Quick Alpha nothing refused is neither: its Full run decides, and replaces it once back.
-  const awaitingFull = (r: RankedAlpha) => r.quick && r.refusedBy.length === 0
-  const verdict = (r: RankedAlpha) =>
+  const awaitingFull = (r: RankedAlpha | AlphaTableRow) => r.quick && r.refusedBy?.length === 0
+  const verdict = (r: AlphaTableRow) =>
     r.submittable || r.pending
       ? 'bg-pnl-positive-tint'
       : awaitingFull(r)
         ? ''
         : 'bg-pnl-negative-tint'
-  const rowClass = verdict
+  const rows = useMemo(() => found.map(fromRanked), [found])
 
   const done = task.status === 'COMPLETE' || task.status === 'FAILED'
   // Three outcomes and nothing else. Submittable: nothing has refused it, pending checks
@@ -754,6 +632,7 @@ function TaskDetail({
             tone={red > 0 ? 'loss' : 'neutral'}
             label="Unsubmittable"
             value={fmt.int(red)}
+            hint={found.length >= TOP_LIMIT ? `Of the best ${fmt.int(TOP_LIMIT)}` : ''}
           />
           {errors > 0 && (
             <Metric
@@ -803,13 +682,15 @@ function TaskDetail({
             Open Full Results
           </Button>
         </div>
-        <DataTable
-          label={task.lab === SETTINGS_SAMPLER ? 'Results' : 'Top Alphas'}
-          rows={found}
-          columns={topColumns(task)}
-          rowKey={(r) => String(r.trialId)}
+        <AlphaTable
+          {...(task.lab === SETTINGS_SAMPLER
+            ? { view: 'task-sampler', label: 'Results', defaults: samplerDefaults(task) }
+            : { view: 'task', label: 'Top Alphas', defaults: TOP_DEFAULTS })}
+          rows={rows}
+          offer={task.objectiveLabel === 'Sharpe' ? TASK_OFFER : ['value', ...TASK_OFFER]}
+          overrides={[objective(task)]}
           onRowClick={(r) => r.alphaId && onOpenAlpha(r.alphaId)}
-          rowClass={rowClass}
+          rowClass={() => verdict}
           loading={top.isPending}
           error={top.error}
           empty={
@@ -963,7 +844,11 @@ function EditTask({ task, slots, onClose }: { task: LabTask; slots: number; onCl
         <Fieldset legend="Cores">
           <Segmented
             label="Cores"
-            items={Array.from({ length: slots }, (_, i) => ({ value: i + 1, label: i + 1 }))}
+            items={Array.from(
+              // BRAIN runs only three SuperAlpha simulations at once.
+              { length: task.lab === 'super-alpha' ? SUPER_ALPHA_SLOTS : slots },
+              (_, i) => ({ value: i + 1, label: i + 1 }),
+            )}
             value={cores}
             onChange={setCores}
           />

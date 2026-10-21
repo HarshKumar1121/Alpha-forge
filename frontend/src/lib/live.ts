@@ -50,9 +50,10 @@ export const useLive = create<Live>(() => ({
   verificationUrl: null,
 }))
 
-// A snapshot from before a disconnect may be long stale; dropping it re-arms the REST fallbacks.
+// A snapshot from before a disconnect may be long stale, and a restarted backend has no tasks
+// message to replay for jobs that died with it; dropping both re-arms the REST fallbacks.
 telemetry.onStatus((connected) =>
-  useLive.setState(connected ? { connected } : { connected, simulations: null }),
+  useLive.setState(connected ? { connected } : { connected, simulations: null, tasks: null }),
 )
 telemetry.subscribe('simulations', (payload) => {
   // The topic also carries `{alphaId, stored}` from backfill; only arrays are snapshots.

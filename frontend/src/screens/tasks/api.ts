@@ -23,6 +23,9 @@ export type PowerPoolRow = Schemas['PowerPoolRow']
 
 const B = '/api/lab-tasks'
 
+/** The most Alphas one task's results come back with: the backend's own ceiling. */
+export const TOP_LIMIT = 5000
+
 export const labTasks = {
   list: () => http.get<LabTasks>(B),
   /** Spends simulation quota. */

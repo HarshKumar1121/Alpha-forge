@@ -10,6 +10,7 @@ import { CopyPlusIcon, EllipsisIcon, RotateCcwIcon, SaveIcon } from 'lucide-reac
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { catalog } from '@/api/catalog'
+import { DEFAULT_TRUNCATION, MAX_DECAY } from '@/api/platform'
 import type { Scope } from '@/api/types'
 import { DASH, fmt } from '@/lib/format'
 import { useCores } from '@/lib/preferences'
@@ -23,6 +24,7 @@ import {
   clamp,
   SimulationSettingsFields,
   testPeriodOf,
+  truncationOf,
 } from '@/screens/research-labs/simulation-settings'
 import { CoresSetting, SimulationsSetting } from '@/screens/research-labs/task-settings'
 import {
@@ -221,7 +223,8 @@ export function TemplateLabScreen() {
   }
 
   const cores = useCores(draft.cores)
-  const truncation = Number(draft.truncation)
+  // Said on the Truncation box itself; the preview runs on the default meanwhile.
+  const truncation = truncationOf(draft.truncation)
   const body: TemplateLabRequest = {
     region: draft.region,
     delay: draft.delay,
@@ -230,8 +233,8 @@ export function TemplateLabScreen() {
     universes: draft.universes,
     neutralizations: draft.neutralizations,
     investability: draft.investability,
-    decay: clamp(draft.decay, 512),
-    truncation: Number.isFinite(truncation) ? Math.min(1, Math.max(0, truncation)) : 0.08,
+    decay: clamp(draft.decay, MAX_DECAY),
+    truncation: truncation ?? DEFAULT_TRUNCATION,
     pasteurization: draft.pasteurization,
     nan_handling: draft.nanHandling,
     test_period: testPeriodOf(draft.testYears, draft.testMonths),
@@ -267,6 +270,7 @@ export function TemplateLabScreen() {
     plan !== undefined &&
     planned &&
     plan.problems.length === 0 &&
+    truncation !== null &&
     simulationsValid(draft.simulations, maxSimulations)
   const toSave = () => ({
     text: draft.text,
@@ -633,12 +637,6 @@ export function TemplateLabScreen() {
             />
             <Metric boxed label="Variables" value={fmt.int(names.length)} />
           </div>
-          {draft.simulations !== null && draft.simulations > maxSimulations && (
-            <Notice
-              tone="error"
-              title={`A task takes at most ${fmt.int(maxSimulations)} simulations.`}
-            />
-          )}
           {preview.isError && <ErrorNotice error={preview.error} title="Could not plan the task" />}
           {plan?.warnings.map((m) => (
             <Notice key={m} tone="warn" title={m} />

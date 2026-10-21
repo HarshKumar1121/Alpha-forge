@@ -6,7 +6,7 @@ from typing import Annotated, Any, Self
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, model_validator
 
-from ..brain.schemas import REGION_AGNOSTIC_REGION
+from ..brain.platform import INSTRUMENT_TYPE, REGION_AGNOSTIC_REGION
 from ..brain.settings_schema import valid_values
 from ..catalog.pyramids import pyramid_grid
 from ..catalog.queries import FieldFilter, Tuple4
@@ -21,7 +21,7 @@ def scope(
     region: Annotated[str, Query(description="e.g. USA, EUR, GLB")],
     delay: Annotated[int, Query(ge=0, le=1)],
     universe: Annotated[str, Query(description="e.g. TOP3000")],
-    instrument_type: Annotated[str, Query(alias="instrumentType")] = "EQUITY",
+    instrument_type: Annotated[str, Query(alias="instrumentType")] = INSTRUMENT_TYPE,
 ) -> Tuple4:
     """The (instrumentType, region, delay, universe) scope every query needs."""
     return Tuple4(instrument_type=instrument_type, region=region, delay=delay, universe=universe)
@@ -249,9 +249,11 @@ async def _markets(state: State) -> list[SyncTarget]:
         await state.metadata.cached_settings_schema() or await state.metadata.refresh_metadata()
     )
     # EQUITY only, the one instrument type the Data Explorer offers.
-    base: dict[str, Any] = {"instrumentType": "EQUITY"}
+    base: dict[str, Any] = {"instrumentType": INSTRUMENT_TYPE}
     return [
-        SyncTarget(instrument_type="EQUITY", region=region, delay=int(delay), universe=universe)
+        SyncTarget(
+            instrument_type=INSTRUMENT_TYPE, region=region, delay=int(delay), universe=universe
+        )
         for region in valid_values(schema, "region", base)
         for delay in valid_values(schema, "delay", {**base, "region": region})
         for universe in valid_values(schema, "universe", {**base, "region": region, "delay": delay})

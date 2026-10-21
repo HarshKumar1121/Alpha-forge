@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import BaseModel, Field
 
-from ..brain.schemas import REGION_AGNOSTIC_REGION
+from ..brain.platform import INSTRUMENT_TYPE, REGION_AGNOSTIC_REGION
 from .search import MATCH, TABLE, query_terms
 from .search import ready as search_ready
 
@@ -63,7 +63,7 @@ class Tuple4(BaseModel):
     #: Reused predicate; ``params`` supplies its four placeholders in order.
     WHERE: ClassVar[str] = "instrument_type = ? AND region = ? AND delay = ? AND universe = ?"
 
-    instrument_type: str = "EQUITY"
+    instrument_type: str = INSTRUMENT_TYPE
     region: str
     delay: int
     universe: str
@@ -128,7 +128,12 @@ class FieldFilter(BaseModel):
         if self.sort_by == RELEVANCE:
             # Falls back to the default column when there is no score to order by, so a
             # stale relevance sort cannot empty the ordering.
-            return "ORDER BY score DESC, field_id ASC" if scored else "ORDER BY alpha_count DESC"
+            return (
+                "ORDER BY score DESC, field_id ASC"
+                if scored
+                # Most fields tie on a count of zero, and pages of ties overlap without the id.
+                else "ORDER BY alpha_count DESC NULLS LAST, field_id ASC"
+            )
         column = self.sort_by if self.sort_by in SORTABLE else "alpha_count"
         direction = "DESC" if self.sort_desc else "ASC"
         # NULLS LAST keeps unpopulated metrics from crowding the top of a descending sort.
@@ -349,6 +354,38 @@ class CatalogQueries:
             """,  # noqa: S608
             [*scope.params, *field_ids],
         )
+
+    async def described(self, field_ids: list[str], region: str) -> dict[str, dict[str, Any]]:
+        """Each field's type, description, dataset, category and subcategory, read where
+        ``region`` holds it, else wherever the catalog does: they rarely differ from one market
+        to the next."""
+        if not field_ids:
+            return {}
+        rows = await self.catalog.query(
+            f"""
+            SELECT DISTINCT ON (field_id) field_id, field_type, description, dataset_id,
+                   category_name, subcategory_name
+            FROM data_field
+            WHERE field_id IN ({", ".join("?" for _ in field_ids)})
+            ORDER BY field_id, region = ? DESC
+            """,  # noqa: S608 - placeholders only
+            [*field_ids, region],
+        )
+        return {str(r["field_id"]): r for r in rows}
+
+    async def datasets_described(self, dataset_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Each dataset's name and description, from whichever market describes it."""
+        if not dataset_ids:
+            return {}
+        rows = await self.catalog.query(
+            f"""
+            SELECT DISTINCT ON (dataset_id) dataset_id, name, description FROM data_set
+            WHERE dataset_id IN ({", ".join("?" for _ in dataset_ids)})
+            ORDER BY dataset_id, description IS NULL
+            """,  # noqa: S608 - placeholders only
+            dataset_ids,
+        )
+        return {str(r["dataset_id"]): r for r in rows}
 
     async def sole_datasets(self, field_ids: list[str]) -> dict[str, str]:
         """Each field's dataset where every market agrees on it. ``revenue`` is fundamental6 in

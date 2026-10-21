@@ -30,19 +30,19 @@ import numpy as np
 import structlog
 from sqlalchemy import String, func, select, type_coerce
 
-from ..brain.schemas import (
+from ..brain.platform import (
+    IGNORED_CHECKS,
     REGION_AGNOSTIC_REGION,
     TEST_PERIOD,
-    SimulationRequest,
-    SimulationSettings,
+    UNCOUNTED_OPERATORS,
 )
+from ..brain.schemas import SimulationRequest, SimulationSettings
 from ..db.models import Study, Trial, TrialState
 from ..vault.metrics import MIN_OVERLAP
 from ..vault.store import EVOLVABLE_TYPES, SEEDABLE
-from ..vault.yields import IGNORED_CHECKS, SUBMITTED, checks_of, is_submitted
+from ..vault.yields import SUBMITTED, checks_of, is_submitted
 from . import search
 from .fastexpr import (
-    UNCOUNTED,
     Node,
     OperatorInfo,
     ParseError,
@@ -126,11 +126,17 @@ UTILITY: dict[str, tuple[float, Callable[[float, float, float], float], float, f
 TEST_YEAR_CHECKS = frozenset({"LOW_2Y_SHARPE", "IS_LADDER_SHARPE"})
 
 
+def train_figure(row: dict[str, Any], key: str) -> Any:
+    """``key`` over the train years where the Alpha has it, so the held-out years pick nothing."""
+    train = row.get(f"train_{key}")
+    return row.get(key) if train is None else train
+
+
 def utility(row: dict[str, Any]) -> float:
     """The weighted utility of an Alpha's stored metrics. A missing metric leaves the weights."""
     total = weight = 0.0
     for key, (share, curve, low, high) in UTILITY.items():
-        value = row.get(key)
+        value = train_figure(row, key)
         if value is not None:
             total += share * curve(float(value), low, high)
             weight += share
@@ -205,7 +211,7 @@ class Market:
     def peers(self, node: Node) -> list[str]:
         """Operators that can stand in for this call: same category, the same inputs."""
         info = self.table.get(node.value)
-        if info is None or node.kwargs or node.value in UNCOUNTED:
+        if info is None or node.kwargs or node.value in UNCOUNTED_OPERATORS:
             return []
         count = len(node.args)
         inputs = _inputs(info, count)
@@ -228,7 +234,7 @@ class Market:
                 if self.peers(node):
                     found.append((path, "op"))
                 info = self.table.get(node.value)
-                if info is None or node.value in UNCOUNTED:
+                if info is None or node.value in UNCOUNTED_OPERATORS:
                     continue
                 names = _inputs(info, len(node.args))
                 for index, (arg, name) in enumerate(zip(node.args, names, strict=False)):
@@ -261,7 +267,7 @@ def build_market(
     swappable: dict[str, list[OperatorInfo]] = defaultdict(list)
     for info in table.values():
         if (
-            info.name in UNCOUNTED
+            info.name in UNCOUNTED_OPERATORS
             or info.name in search.EXCLUDED
             or info.name in NOT_SWAPPED
             or info.category in NOT_SWAPPED_CATEGORIES
@@ -704,7 +710,7 @@ def seed_row(row: dict[str, Any]) -> dict[str, Any]:
 async def _download(state: Any, alpha_id: str) -> None:
     """One Alpha's daily PnL, a failure logged rather than raised: it only costs a seed."""
     try:
-        await state.backfill.fetch_returns(alpha_id)
+        await state.backfill.fetch_pnl(alpha_id)
     except Exception:
         log.warning("ga.seed_pnl_failed", alpha_id=alpha_id, exc_info=True)
 
@@ -732,13 +738,17 @@ async def auto_seeds(
     # Region-agnostic parents stand as their families, which is where their Sharpe is.
     stood = await state.alphas.with_families({str(r["alpha_id"]): r for r in found})
     rows = [
-        r for r in stood.values() if (r.get("sharpe") or 0) > 0 and r.get("fitness") is not None
+        r
+        for r in stood.values()
+        if (train_figure(r, "sharpe") or 0) > 0 and train_figure(r, "fitness") is not None
     ]
     kept: list[dict[str, Any]] = []
     kept_series: dict[str, Profile] = {}
     reasons: list[dict[str, str]] = []
     examined = 0
-    for row in sorted(rows, key=seed_score, reverse=True):
+    # Off the event loop: a market holds tens of thousands, and each score parses its checks.
+    ranked = await asyncio.to_thread(lambda: sorted(rows, key=seed_score, reverse=True))
+    for row in ranked:
         if len(kept) >= want or examined >= MAX_EXAMINED:
             break
         examined += 1

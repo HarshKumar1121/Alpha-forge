@@ -4,31 +4,30 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
+import { CORE_ORDER } from '@/lib/format'
 import { useRefetchOn } from '@/lib/ws'
 import { AlphaPane } from '@/screens/tasks/alpha-pane'
-import { labTasks, type RankedAlpha, type TaskAlpha } from '@/screens/tasks/api'
-import {
-  ALPHA_ID,
-  compareAlphas,
-  METRIC_COLUMNS,
-  PROD_CORRELATION,
-  SETTING_COLUMNS,
-} from '@/screens/tasks/columns'
-import type { Column, Sort } from '@/ui/table'
+import { labTasks, type RankedAlpha } from '@/screens/tasks/api'
+import { TASK_OFFER } from '@/screens/tasks/columns'
+import type { Sort } from '@/ui/table'
 
-/** The task's own columns, minus Checks Failed — every row here has none — plus the task. */
-const columns = (): Column<RankedAlpha>[] => [
-  ALPHA_ID,
-  ...SETTING_COLUMNS,
-  PROD_CORRELATION,
-  ...METRIC_COLUMNS,
-  {
-    key: 'taskName',
-    header: 'Task',
-    width: 'minmax(180px,1.4fr)',
-    sortable: true,
-    cell: (r) => <span className="truncate text-ink-muted">{(r as TaskAlpha).taskName ?? ''}</span>,
-  },
+/** A task's columns, minus Checks Failed — every row here has none — plus the task. */
+const OFFER = [...TASK_OFFER.filter((k) => k !== 'failedChecks'), 'taskName']
+
+const DEFAULTS = [
+  'alphaId',
+  'taskName',
+  'region',
+  'delay',
+  'universe',
+  'neutralization',
+  'investability',
+  'powerPoolCorrelation',
+  'prodCorrelation',
+  ...CORE_ORDER,
+  'afterCostSharpe',
+  'testSharpe',
+  'testFitness',
 ]
 
 export function SubmittableAlphas({ onOpenAlpha }: { onOpenAlpha: (alphaId: string) => void }) {
@@ -42,10 +41,10 @@ export function SubmittableAlphas({ onOpenAlpha }: { onOpenAlpha: (alphaId: stri
   return (
     <AlphaPane
       title="Submittable Alphas"
+      view="submittable"
       rows={rows}
-      columns={columns}
-      compare={compareAlphas}
-      poolColumnAfter="investability"
+      offer={OFFER}
+      defaults={DEFAULTS}
       sort={sort}
       onSort={setSort}
       loading={query.isPending}

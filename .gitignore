@@ -4,7 +4,6 @@
 # References for Development
 CLAUDE.md
 /docs/
-/research-notes/
 
 .venv/
 node_modules/
