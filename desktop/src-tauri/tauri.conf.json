@@ -31,7 +31,6 @@
       "nsis",
       "app",
       "dmg",
-      "appimage",
       "deb"
     ],
     "category": "Finance",
@@ -46,6 +45,10 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "10.15"
+    },
     "windows": {
       "nsis": {
         "installMode": "currentUser"

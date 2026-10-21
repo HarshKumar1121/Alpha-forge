@@ -207,7 +207,7 @@ function LauncherNotice({
   collapsed,
 }: {
   version: string | null
-  /** The release download for this machine, e.g. `AlphaHarness-macOS-arm64.zip`. */
+  /** The release download for this machine, e.g. `AlphaHarness-macOS-arm64.dmg`. */
   file: string
   url: string
   collapsed: boolean
@@ -253,8 +253,10 @@ function LauncherNotice({
       >
         <p className="text-body-compact text-ink-subtle">
           Alpha Harness updates itself, but it cannot replace the program that starts it. Download{' '}
-          <span className="num">{file}</span> from the release, open it in place of the one you
-          have, and run it. Nothing you have is lost — your data, alphas and sign-in all stay.
+          <span className="num">{file}</span> from the release, quit this one, then install and open
+          the new one. Nothing you have is lost — your data, alphas and sign-in all stay. If you had
+          the old <span className="num">AlphaHarness</span> program, or a shortcut you made to it,
+          that can then go in the bin.
         </p>
       </Dialog>
     </>

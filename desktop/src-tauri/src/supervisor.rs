@@ -99,11 +99,37 @@ pub fn home() -> PathBuf {
     } else if cfg!(target_os = "macos") {
         user.join("Library").join("Application Support")
     } else {
-        std::env::var_os("XDG_DATA_HOME")
-            .filter(|v| !v.is_empty())
-            .map_or_else(|| user.join(".local").join("share"), PathBuf::from)
+        xdg_data(&user)
     };
     base.join("AlphaHarness")
+}
+
+fn xdg_data(user: &Path) -> PathBuf {
+    // The XDG spec has a relative one ignored, as it does an empty one.
+    std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .unwrap_or_else(|| user.join(".local").join("share"))
+}
+
+/// The applications menu entry the Python launcher wrote, named as this app's own: left behind,
+/// the menu shows Alpha Harness twice, and one of them opens the old launcher.
+#[cfg(target_os = "linux")]
+fn forget_old_launcher() {
+    // Without a home, the entry's path would be relative to wherever this was started.
+    let Some(user) = std::env::home_dir() else {
+        return;
+    };
+    let entry = xdg_data(&user)
+        .join("applications")
+        .join("alpha-harness.desktop");
+    // Only the one it wrote, known by its comment; an entry someone made by hand stays.
+    if fs::read_to_string(&entry)
+        .is_ok_and(|text| text.contains("Comment=Alpha generation for WorldQuant BRAIN"))
+        && fs::remove_file(&entry).is_ok()
+    {
+        note("removed the old launcher's applications menu entry");
+    }
 }
 
 fn root() -> &'static Path {
@@ -1043,6 +1069,8 @@ fn run(app: &AppHandle) -> i32 {
         fail(app, message);
         return 0;
     }
+    #[cfg(target_os = "linux")]
+    forget_old_launcher();
     let Some(uv) = find_uv() else {
         fail(
             app,

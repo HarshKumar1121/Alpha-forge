@@ -57,23 +57,26 @@ HOME_VARIABLE = "ALPHA_HARNESS_HOME"
 LAUNCHER_VARIABLE = "ALPHA_HARNESS_LAUNCHER"
 #: The launcher's process id, from a launcher new enough to say so.
 PID_VARIABLE = "ALPHA_HARNESS_LAUNCHER_PID"
+#: Set by the desktop app, which shows the app in a window of its own. The PyInstaller
+#: launchers before it never set it.
+SHELL_VARIABLE = "ALPHA_HARNESS_SHELL"
 
-#: The oldest ``AlphaHarness.exe`` this release works fully with.
+#: The oldest desktop app this release works fully with.
 #:
-#: Raised by hand, and only when a launcher change actually matters — the exe is rebuilt every
-#: release, so comparing it to the wheel would nag after every update for nothing. The system
-#: tray arrived in this one, and an older exe simply has no tray.
-LAUNCHER_NEEDED = "2026.9.21.1"
+#: Raised by hand, and only when a desktop app change actually matters — it is rebuilt every
+#: release, so comparing it to the wheel would nag after every update for nothing. Its first
+#: release is all any needs so far.
+LAUNCHER_NEEDED = "2026.10.21rc1"
 
 
 def _launcher_asset() -> str:
     """The release download for this machine, named as the release names it."""
     if sys.platform == "win32":
-        return "AlphaHarness.exe"
+        return "AlphaHarness-windows-x64-setup.exe"
     arm = platform.machine().lower() in ("arm64", "aarch64")
     if sys.platform == "darwin":
-        return f"AlphaHarness-macOS-{'arm64' if arm else 'x86_64'}.zip"
-    return "AlphaHarness-linux-x86_64.tar.gz"
+        return f"AlphaHarness-macOS-{'arm64' if arm else 'x86_64'}.dmg"
+    return "AlphaHarness-linux-amd64.deb"
 
 
 #: The launcher download to fetch for this machine, for the notice that asks for a newer one.
@@ -166,6 +169,9 @@ def launcher_outdated() -> bool:
     """
     if launcher_home() is None:
         return False
+    # A PyInstaller launcher, which the desktop app replaces whatever its version.
+    if not os.environ.get(SHELL_VARIABLE):
+        return True
     running = launcher_version()
     return running is None or is_newer(LAUNCHER_NEEDED, running)
 

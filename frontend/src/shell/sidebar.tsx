@@ -267,7 +267,6 @@ export function Sidebar({
               onClick: () => signOut.mutate(),
             },
             // Only a launcher can bring the app back, so only a launched app offers to close.
-            // On macOS and Linux this is the only way to close it: there is no tray icon.
             ...(launched
               ? [
                   {
