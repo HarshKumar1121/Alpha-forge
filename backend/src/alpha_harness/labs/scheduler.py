@@ -6,6 +6,7 @@ only decides how one point of its search is drawn (its ``draw``).
 """
 
 import asyncio
+import functools
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -456,13 +457,19 @@ def _search_memory(
     """The fields tried as ``covers`` and every point already scored, from unpruned trials.
 
     Runs in a worker thread: identity keys validate each trial's settings, which costs
-    seconds at the largest task sizes.
+    seconds at the largest task sizes. A task reuses a few settings many times over, so each
+    is validated once: measured, a seventh of the time.
     """
+
+    @functools.cache
+    def settings_of(raw: str | None) -> str:
+        return search.settings_identity(json.loads(raw or "null"))
+
     tried: set[Any] = set()
     seen: dict[tuple[str, str], float | bool] = {}
     for state, params, expression, settings, values in rows:
         tried.add((json.loads(params or "null") or {}).get(covers))
-        key = search.identity_of(expression, json.loads(settings or "null"))
+        key = (expression or "", settings_of(settings))
         scores = json.loads(values or "null")
         if state == TrialState.COMPLETE and scores:
             seen[key] = float(scores[0])

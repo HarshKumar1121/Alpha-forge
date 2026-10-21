@@ -38,11 +38,11 @@ from ..labs.fastexpr import (
     Node,
     ParseError,
     data_fields,
+    guarded,
     parse,
-    protected,
     render,
     replace_at,
-    walk,
+    walk_with_parents,
 )
 from ..labs.params import FieldsSamplerParams, params_of
 from ..labs.search import identity_of
@@ -94,8 +94,8 @@ def slots(tree: Node) -> list[str]:
 def swapped(tree: Node, field: str, swap: str) -> Node:
     """The expression with ``field`` read as ``swap`` everywhere it appears, so a field that is
     used twice stays one field."""
-    for path, node in walk(tree):
-        if node.kind == "name" and node.value == field and not protected(tree, path):
+    for path, node, parent in walk_with_parents(tree):
+        if node.kind == "name" and node.value == field and not guarded(parent, path):
             tree = replace_at(tree, path, Node("name", swap))
     return tree
 

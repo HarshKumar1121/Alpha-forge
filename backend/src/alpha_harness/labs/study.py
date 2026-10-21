@@ -24,7 +24,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import structlog
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from ..brain.platform import IGNORED_CHECKS, QUOTA_CHECKS
 from ..brain.schemas import FULL_MODE, QUICK_MODE
@@ -384,9 +384,16 @@ class Optimizer:
                             message=scheduler.PENDING_FULL,
                         )
                     )
+            # One read for the lot rather than one per trial.
+            stored_by_id = {
+                t.id: t
+                for t in await session.scalars(
+                    select(Trial).where(Trial.id.in_([t.id for _, t, _, _ in finished]))
+                )
+            }
             for _optuna_trial, trial, values, summary in finished:
                 live.pop(trial.number, None)
-                stored = await session.get(Trial, trial.id)
+                stored = stored_by_id.get(trial.id)
                 if stored is None:
                     continue
                 stored.finished_at = utcnow()
@@ -439,10 +446,9 @@ class Optimizer:
 
     async def _mark_running(self, trial_ids: list[int]) -> None:
         async with self.db.session() as session:
-            for trial_id in trial_ids:
-                stored = await session.get(Trial, trial_id)
-                if stored is not None:
-                    stored.state = TrialState.RUNNING
+            await session.execute(
+                update(Trial).where(Trial.id.in_(trial_ids)).values(state=TrialState.RUNNING)
+            )
             await session.commit()
 
     # -- optuna ----------------------------------------------------------

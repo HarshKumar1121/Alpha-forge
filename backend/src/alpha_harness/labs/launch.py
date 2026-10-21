@@ -215,13 +215,9 @@ async def market_for(body: SearchRequest, state: Any, need: tuple[str, ...] = ()
 
     lacking: set[str] = set()
     if need and universes:
-        held: dict[str, set[str]] = {}
-        for name in need:
-            held[name] = {
-                str(r["universe"])
-                for r in await state.queries.field_availability(name)
-                if r["region"] == body.region and int(r["delay"]) == body.delay
-            }
+        held: dict[str, set[str]] = {name: set() for name in need}
+        for r in await state.queries.universes_holding(body.region, body.delay, list(need)):
+            held[str(r["field_id"])].add(str(r["universe"]))
         for universe in list(universes):
             short = [name for name in need if universe not in held[name]]
             if short:

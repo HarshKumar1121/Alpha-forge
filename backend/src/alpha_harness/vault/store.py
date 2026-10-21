@@ -8,6 +8,7 @@ if the series are kept. The stored series rebuilds the platform's own figures (s
 :mod:`.metrics`), so a mix can be judged before a simulation is spent on it.
 """
 
+import asyncio
 import itertools
 import json
 from datetime import date, datetime
@@ -21,6 +22,8 @@ from . import metrics
 from .yields import SUBMITTED, children_check, without_quota_checks
 
 if TYPE_CHECKING:
+    import pyarrow as pa
+
     from ..brain.schemas import Alpha
 
 log = structlog.get_logger(__name__)
@@ -338,6 +341,39 @@ def _by_alpha[T](ids: list[str], days: list[date], values: list[T]) -> dict[str,
         ids[s]: dict(zip(days[s:e], values[s:e], strict=True))
         for s, e in zip(starts, ends, strict=True)
     }
+
+
+# The three below run in a worker thread: on a portfolio's 240,000 days each holds the
+# event loop, and every live update with it, for a third of a second.
+
+
+def _daily(table: pa.Table) -> dict[str, dict[date, float]]:
+    """``alpha_id, date, pnl`` rows, sorted by Alpha and date, as each Alpha's PnL by date."""
+    # Through numpy: Arrow's own to_pylist builds dates twenty times slower.
+    return _by_alpha(
+        table.column("alpha_id").to_pylist(),
+        table.column("date").to_numpy().tolist(),
+        table.column("pnl").to_numpy().tolist(),
+    )
+
+
+def _daily_traded(table: pa.Table) -> dict[str, dict[date, tuple[float, float]]]:
+    """:func:`_daily` with each day's turnover beside its PnL."""
+    pnl, traded = table.column("pnl").to_numpy(), table.column("turnover").to_numpy()
+    return _by_alpha(
+        table.column("alpha_id").to_pylist(),
+        table.column("date").to_numpy().tolist(),
+        list(zip(pnl.tolist(), traded.tolist(), strict=True)),
+    )
+
+
+def _grid(table: pa.Table) -> PnlGrid:
+    """``alpha_id, date, pnl`` rows as a calendar of dates by Alphas, NaN where one has none."""
+    ids = table.column("alpha_id").combine_chunks().dictionary_encode()
+    days, row = np.unique(table.column("date").to_numpy(), return_inverse=True)
+    grid = np.full((len(days), len(ids.dictionary)), np.nan)
+    grid[row, ids.indices.to_numpy()] = table.column("pnl").to_numpy()
+    return ids.dictionary.to_pylist(), days.tolist(), grid
 
 
 def json_list(raw: Any) -> list[str]:
@@ -696,12 +732,7 @@ class AlphaVault:
             """,  # noqa: S608
             list(alpha_ids),
         )
-        # Through numpy: Arrow's own to_pylist builds dates twenty times slower.
-        return _by_alpha(
-            table.column("alpha_id").to_pylist(),
-            table.column("date").to_numpy().tolist(),
-            table.column("pnl").to_numpy().tolist(),
-        )
+        return await asyncio.to_thread(_daily, table)
 
     async def series(self, alpha_ids: list[str]) -> dict[str, dict[date, tuple[float, float]]]:
         """Each Alpha's daily ``(pnl, turnover)`` by date. Alphas still on the old series,
@@ -717,12 +748,7 @@ class AlphaVault:
             """,  # noqa: S608
             list(alpha_ids),
         )
-        pnl, traded = table.column("pnl").to_numpy(), table.column("turnover").to_numpy()
-        return _by_alpha(
-            table.column("alpha_id").to_pylist(),
-            table.column("date").to_numpy().tolist(),
-            list(zip(pnl.tolist(), traded.tolist(), strict=True)),
-        )
+        return await asyncio.to_thread(_daily_traded, table)
 
     async def pnl_grid(self, alpha_ids: list[str]) -> PnlGrid:
         """Of these Alphas, the ones holding a current daily PnL (turnover or not); every date
@@ -742,11 +768,7 @@ class AlphaVault:
             """,  # noqa: S608
             [*alpha_ids, SERIES_VERSION],
         )
-        ids = table.column("alpha_id").combine_chunks().dictionary_encode()
-        days, row = np.unique(table.column("date").to_numpy(), return_inverse=True)
-        grid = np.full((len(days), len(ids.dictionary)), np.nan)
-        grid[row, ids.indices.to_numpy()] = table.column("pnl").to_numpy()
-        return ids.dictionary.to_pylist(), days.tolist(), grid
+        return await asyncio.to_thread(_grid, table)
 
     async def submitted_members(self) -> list[dict[str, Any]]:
         """Every submitted Alpha with what the Portfolio page filters on.
@@ -816,21 +838,20 @@ class AlphaVault:
         if not alpha_ids:
             return {}
         placeholders = ", ".join("?" for _ in alpha_ids)
-        rows = await self.catalog.query(
+        # Arrow rather than a dict per row: measured, a third of the time for a hundred Alphas.
+        table = await self.catalog.arrow(
             f"""
-            SELECT p.alpha_id, p.date, p.pnl FROM alpha_pnl p
+            SELECT p.alpha_id, p.date, coalesce(p.pnl, 0) AS pnl FROM alpha_pnl p
             JOIN (
                 SELECT alpha_id, max(date) - INTERVAL 2 YEAR AS cutoff FROM alpha_pnl
                 WHERE alpha_id IN ({placeholders}) GROUP BY alpha_id
             ) c ON p.alpha_id = c.alpha_id
             WHERE p.date < c.cutoff
+            ORDER BY p.alpha_id, p.date
             """,  # noqa: S608
             list(alpha_ids),
         )
-        out: dict[str, dict[date, float]] = {}
-        for row in rows:
-            out.setdefault(str(row["alpha_id"]), {})[row["date"]] = float(row["pnl"] or 0.0)
-        return out
+        return await asyncio.to_thread(_daily, table)
 
     async def families(self, rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         """The scorable region-agnostic parents among ``rows``, as family rows by id."""

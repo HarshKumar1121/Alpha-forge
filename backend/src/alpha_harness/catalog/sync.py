@@ -478,6 +478,19 @@ class CatalogSync:
             with contextlib.suppress(Exception, asyncio.CancelledError):
                 await bulk_datasets
 
+        # A market BRAIN stopped offering is never fetched, so nothing above replaces it: left,
+        # it stays browsable and counted, and a Lab could spend simulations on it. Logged
+        # rather than raised, like the compaction: it leaves only what was there before.
+        try:
+            removed = await self.catalog.prune_markets(
+                [(t.instrument_type, t.region, t.delay, t.universe) for t in targets],
+                region_agnostic=targets[0].region == REGION_AGNOSTIC_REGION,
+            )
+            if removed:
+                log.info("sync_all.pruned", run_id=run_id, fields=removed)
+        except Exception:
+            log.warning("sync_all.prune_failed", run_id=run_id, exc_info=True)
+
         # Once, at the end: per market this would serialise behind every other market's
         # write. A failure here costs disk, not data, so it is logged rather than raised.
         try:

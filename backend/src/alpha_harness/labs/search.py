@@ -13,6 +13,7 @@ every field one trial, budget permitting; after that the sampler concentrates on
 scores.
 """
 
+import asyncio
 import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -264,11 +265,15 @@ def request_for(params: dict[str, Any], run: SearchParams) -> SimulationRequest:
 
 
 def identity_of(expression: str | None, settings: dict[str, Any] | None) -> tuple[str, str]:
-    """What makes two trials the same simulation: the expression and the settings.
+    """What makes two trials the same simulation: the expression and the settings."""
+    return expression or "", settings_identity(settings)
 
-    Settings go through the request model first: seeds keep the short dict stored with the
-    Alpha and children the full request, so compared raw a child identical to a seed looks
-    new.
+
+def settings_identity(settings: dict[str, Any] | None) -> str:
+    """Settings as :func:`identity_of` compares them.
+
+    They go through the request model first: seeds keep the short dict stored with the Alpha
+    and children the full request, so compared raw a child identical to a seed looks new.
     """
     try:
         normal = SimulationSettings.model_validate(settings or {}).model_dump(
@@ -276,7 +281,7 @@ def identity_of(expression: str | None, settings: dict[str, Any] | None) -> tupl
         )
     except ValueError:
         normal = settings or {}
-    return expression or "", json.dumps(normal, sort_keys=True, default=str)
+    return json.dumps(normal, sort_keys=True, default=str)
 
 
 # --- the field pool ---------------------------------------------------------
@@ -317,21 +322,27 @@ async def field_pool(
     types = [t for t in ("MATRIX", "VECTOR") if t in wanted]
     if not types:
         return Pool({}, (), {}, 0)
-    found: dict[str, dict[str, str]] = {}
-    for universe in universes:
-        page = await queries.fields(
-            Tuple4(region=region, delay=delay, universe=universe),
-            (narrow or FieldFilter()).model_copy(
-                update={
-                    "dataset_ids": list(dataset_ids),
-                    "field_types": types,
-                    "sort_by": "coverage",
-                    "sort_desc": True,
-                    "limit": POOL_LIMIT,
-                    "offset": 0,
-                }
-            ),
+    wanted_page = (narrow or FieldFilter()).model_copy(
+        update={
+            "dataset_ids": list(dataset_ids),
+            "field_types": types,
+            "sort_by": "coverage",
+            "sort_desc": True,
+            "limit": POOL_LIMIT,
+            "offset": 0,
+        }
+    )
+    # Every universe at once, and no count: only the rows are read.
+    pages = await asyncio.gather(
+        *(
+            queries.fields(
+                Tuple4(region=region, delay=delay, universe=universe), wanted_page, counted=False
+            )
+            for universe in universes
         )
+    )
+    found: dict[str, dict[str, str]] = {}
+    for universe, page in zip(universes, pages, strict=True):
         rows = page.get("results") or []
         if rows:
             found[universe] = {str(r["field_id"]): str(r["field_type"]) for r in rows}

@@ -12,6 +12,7 @@ keeps an equal share of capital whether or not its market was open.
 
 import asyncio
 import itertools
+import math
 from bisect import bisect_left
 from collections import Counter
 from dataclasses import asdict
@@ -22,11 +23,11 @@ import numpy as np
 from ..vault import metrics
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Iterator
     from datetime import date
 
     from ..vault.metrics import Bools, Floats, Stats
-    from ..vault.store import AlphaVault, PnlGrid
+    from ..vault.store import AlphaVault
 
     type Framed = tuple[list[date], Floats, Floats, Bools]
 
@@ -116,21 +117,6 @@ def highest_correlations(ids: list[str], framed: Framed) -> dict[str, float | No
     }
 
 
-def net_grid(
-    grid: PnlGrid, series: dict[str, dict[date, tuple[float, float]]], bps: float
-) -> PnlGrid:
-    """A :meth:`AlphaVault.pnl_grid` with each day's cost taken off. It holds only the days
-    BRAIN exported, so no closing day is rebuilt from it."""
-    ids, dates, pnl = grid
-    # Without a turnover series an Alpha cannot be costed: dropped rather than left gross.
-    costed = [j for j, a in enumerate(ids) if series.get(a)]
-    ids, pnl = [ids[j] for j in costed], pnl[:, costed]
-    traded = np.array(
-        [[(series.get(a) or {}).get(d, (0.0, 0.0))[1] for a in ids] for d in dates]
-    ).reshape(pnl.shape)
-    return ids, dates, metrics.after_cost(pnl, traded, bps)
-
-
 #: Alphas whose series :func:`net_figures_of` holds in memory at once.
 NET_CHUNK = 200
 
@@ -179,6 +165,32 @@ def net_figures(
     return found
 
 
+#: Alphas the leave-one-out figures work through at once: one array operation per block
+#: rather than a Python step per Alpha, without a days-by-Alphas copy of every intermediate.
+LEAVE_ONE_OUT_BLOCK = 256
+
+
+def _blocks_of(count: int) -> Iterator[slice]:
+    for start in range(0, count, LEAVE_ONE_OUT_BLOCK):
+        yield slice(start, min(start + LEAVE_ONE_OUT_BLOCK, count))
+
+
+def _sharpes(book: Floats, moved: Floats) -> Floats:
+    """:func:`metrics.stats`'s Sharpe of each column, NaN where it has none: trimmed to the
+    column's first trade, as ``stats`` trims."""
+    active = (book != 0) | (moved != 0)
+    first = np.where(active.any(axis=0), active.argmax(axis=0), len(book))
+    valid = np.arange(len(book))[:, None] >= first[None, :]
+    days = valid.sum(axis=0)
+    mean = np.where(valid, book, 0.0).sum(axis=0) / np.maximum(days, 1)
+    squares = np.where(valid, (book - mean) ** 2, 0.0).sum(axis=0)
+    spread = np.sqrt(squares / np.maximum(days - 1, 1))
+    good = (days > 1) & (spread > 0)
+    return np.where(good, mean / np.where(good, spread, 1.0), np.nan) * math.sqrt(
+        metrics.TRADING_DAYS
+    )
+
+
 def incremental_sharpes(ids: list[str], framed: Framed) -> dict[str, float | None]:
     """Each Alpha's Incremental Sharpe: the in-sample Sharpe of the equal-weighted Portfolio of
     ``ids`` with it, less the Sharpe of the same Portfolio without it. ``framed`` is their
@@ -192,17 +204,19 @@ def incremental_sharpes(ids: list[str], framed: Framed) -> dict[str, float | Non
     filled = np.nan_to_num(pnl)
     started = np.maximum.accumulate((filled != 0) | (turnover != 0), axis=0)
     total, traded, live = filled.sum(axis=1), turnover.sum(axis=1), started.sum(axis=1)
-
-    def sharpe(book: Floats, moved: Floats, count: Floats) -> float | None:
-        held = np.maximum(count, 1)
-        found = metrics.stats(book / held, moved / held)
-        return found.sharpe if found else None
-
-    whole = sharpe(total, traded, live)
+    held = np.maximum(live, 1)
+    whole = metrics.stats(total / held, traded / held)
+    if whole is None or whole.sharpe is None:
+        return dict.fromkeys(ids)
     found: dict[str, float | None] = {}
-    for col, alpha_id in enumerate(ids):
-        without = sharpe(total - filled[:, col], traded - turnover[:, col], live - started[:, col])
-        found[alpha_id] = whole - without if whole is not None and without is not None else None
+    for block in _blocks_of(len(ids)):
+        held = np.maximum(live[:, None] - started[:, block], 1)
+        without = _sharpes(
+            (total[:, None] - filled[:, block]) / held,
+            (traded[:, None] - turnover[:, block]) / held,
+        )
+        for alpha_id, sharpe in zip(ids[block], without.tolist(), strict=True):
+            found[alpha_id] = None if math.isnan(sharpe) else whole.sharpe - sharpe
     return found
 
 
@@ -223,16 +237,26 @@ def portfolio_correlations(ids: list[str], framed: Framed) -> dict[str, float | 
     started = np.maximum.accumulate((filled != 0) | (turnover != 0), axis=0)
     total, live = filled.sum(axis=1), started.sum(axis=1)
     since = bisect_left(dates, start)
-    own = pnl[since:]
     found: dict[str, float | None] = {}
-    for col, alpha_id in enumerate(ids):
-        others = (live - started[:, col])[since:]
-        rest = np.full(len(others), np.nan)
-        np.divide((total - filled[:, col])[since:], others, out=rest, where=others > 0)
-        keep = ~np.isnan(own[:, col]) & ~np.isnan(rest)
-        x, y = own[keep, col], rest[keep]
-        measurable = len(x) >= metrics.MIN_OVERLAP and x.std() > 0 and y.std() > 0
-        found[alpha_id] = float(np.corrcoef(x, y)[0, 1]) if measurable else None
+    for block in _blocks_of(len(ids)):
+        own = pnl[since:, block]
+        others = live[since:, None] - started[since:, block]
+        rest = np.full(own.shape, np.nan)
+        np.divide(total[since:, None] - filled[since:, block], others, out=rest, where=others > 0)
+        keep = ~np.isnan(own) & ~np.isnan(rest)
+        days = keep.sum(axis=0)
+        x = np.where(keep, own, 0.0)
+        y = np.where(keep, rest, 0.0)
+        dx = np.where(keep, x - x.sum(axis=0) / np.maximum(days, 1), 0.0)
+        dy = np.where(keep, y - y.sum(axis=0) / np.maximum(days, 1), 0.0)
+        xx, yy = (dx * dx).sum(axis=0), (dy * dy).sum(axis=0)
+        measurable = (days >= metrics.MIN_OVERLAP) & (xx > 0) & (yy > 0)
+        scale = np.sqrt(np.where(measurable, xx * yy, 1.0))
+        correlation = np.clip((dx * dy).sum(axis=0) / scale, -1.0, 1.0)
+        for alpha_id, ok, value in zip(
+            ids[block], measurable.tolist(), correlation.tolist(), strict=True
+        ):
+            found[alpha_id] = value if ok else None
     return found
 
 

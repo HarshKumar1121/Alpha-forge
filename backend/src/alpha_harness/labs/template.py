@@ -27,7 +27,15 @@ from ..brain.platform import (
     UNCOUNTED_OPERATORS,
 )
 from ..brain.schemas import SimulationRequest, SimulationSettings
-from .fastexpr import Node, OperatorInfo, ParseError, node_at, operator_count, parse, walk
+from .fastexpr import (
+    Node,
+    OperatorInfo,
+    ParseError,
+    operator_count,
+    parse,
+    walk,
+    walk_with_parents,
+)
 from .fastexpr import data_fields as names_read
 from .fastexpr import render as write
 
@@ -124,14 +132,13 @@ def uses(tree: Node, vector: Callable[[str], bool]) -> dict[str, Use]:
     vector operators, or a variable whose every value is one.
     """
     found: dict[str, Use] = {}
-    for path, node in walk(tree):
+    for path, node, parent in walk_with_parents(tree):
         if node.kind not in ("name", "call") or not node.value.startswith("$"):
             continue
         use = found.setdefault(node.value[1:], Use(node.value[1:]))
         if node.kind == "call":
             use.calls.append(len(node.args))
             continue
-        parent = node_at(tree, path[:-1]) if path else None
         if parent is not None and path[-1] >= len(parent.args):
             use.options += 1
             continue

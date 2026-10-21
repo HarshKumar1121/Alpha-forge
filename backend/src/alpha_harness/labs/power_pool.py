@@ -31,13 +31,13 @@ from ..tasks import spawn
 from . import scheduler, search
 from .fastexpr import (
     ParseError,
-    node_at,
     operator_count,
     operator_table,
     parse,
     render,
     validate,
     walk,
+    walk_with_parents,
 )
 from .objectives import FAILURE
 from .params import PowerPoolParams, params_of
@@ -204,13 +204,15 @@ def check(text: str, ctx: Context, table: dict[str, Any]) -> tuple[str, frozense
         raise Rejected(f"{len(data)} data fields ({', '.join(data)}); Power Pool allows 3.")
     if not used & (ctx.own - set(GROUPING_FIELDS)):
         raise Rejected(f"Uses no field of {ctx.id}.")
-    for path, node in walk(tree):
-        if node.kind == "name" and ctx.types.get(node.value) == "VECTOR":
-            parent = node_at(tree, path[:-1]) if path else None
-            if parent is None or parent.kind != "call" or not parent.value.startswith("vec_"):
-                raise Rejected(
-                    f"{node.value} is a VECTOR field: put it straight inside a vec_ operator."
-                )
+    for _, node, parent in walk_with_parents(tree):
+        if (
+            node.kind == "name"
+            and ctx.types.get(node.value) == "VECTOR"
+            and (parent is None or parent.kind != "call" or not parent.value.startswith("vec_"))
+        ):
+            raise Rejected(
+                f"{node.value} is a VECTOR field: put it straight inside a vec_ operator."
+            )
     return render(tree), used
 
 

@@ -105,12 +105,13 @@ def _spread(edges: tuple[np.ndarray, np.ndarray, np.ndarray], own: np.ndarray) -
     degree[degree == 0] = 1
     norm = weight / np.sqrt(degree[frm] * degree[to])
     found = own.copy()
+    kept = (1 - SPREAD) * own
     for _ in range(50):
         moved = np.stack(
             [np.bincount(to, found[frm, j] * norm, minlength=n) for j in range(own.shape[1])],
             axis=1,
         )
-        found = SPREAD * moved + (1 - SPREAD) * own
+        found = SPREAD * moved + kept
     return found
 
 

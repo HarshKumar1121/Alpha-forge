@@ -20,6 +20,8 @@ import duckdb
 import pyarrow as pa
 import structlog
 
+from ..brain.platform import REGION_AGNOSTIC_REGION
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
     from pathlib import Path
@@ -694,6 +696,41 @@ class Catalog:
                 conn.execute(f"ALTER TABLE data_field ALTER COLUMN {column} SET NOT NULL")
         conn.execute("CHECKPOINT")
 
+    async def prune_markets(
+        self, kept: list[tuple[str, str, int, str]], *, region_agnostic: bool
+    ) -> int:
+        """Delete the fields and datasets of every market a full sync no longer covers: one
+        BRAIN has stopped offering this account. Returns the fields removed.
+
+        ``kept`` is every market the sync was asked for, failed ones included, so a market
+        that only failed this time keeps what it had. ``region_agnostic`` says which of the
+        two syncs ran, and each prunes only its own: the ordinary markets, or region ``ALL``.
+        """
+        return await self._locked(self._prune_sync, kept, region_agnostic)
+
+    def _prune_sync(self, kept: list[tuple[str, str, int, str]], region_agnostic: bool) -> int:
+        conn = self._require()
+        markets = ", ".join("(?, ?, ?, ?)" for _ in kept)
+        params = [REGION_AGNOSTIC_REGION, *(value for market in kept for value in market)]
+        removed = 0
+        with _transaction(conn):
+            for table in ("data_field", "data_set"):
+                found = conn.execute(
+                    f"""
+                    DELETE FROM {table} t
+                    WHERE t.region {"=" if region_agnostic else "<>"} ?
+                      AND NOT EXISTS (
+                          SELECT 1 FROM (VALUES {markets}) k(kind, region, delay, universe)
+                          WHERE k.kind = t.instrument_type AND k.region = t.region
+                            AND k.delay = t.delay AND k.universe = t.universe
+                      )
+                    """,  # noqa: S608 - table names and placeholders only
+                    params,
+                ).fetchone()
+                if table == "data_field":
+                    removed = int(found[0]) if found else 0
+        return removed
+
     async def replace_fields(self, scope: list[Any], rows: list[tuple[Any, ...]]) -> int:
         """Make one scope's fields exactly ``rows``, in one transaction.
 
@@ -725,7 +762,7 @@ class Catalog:
         """
         if not rows:
             return 0
-        table = self._to_arrow("alpha_pnl", PNL_COLUMNS, rows)
+        table = await asyncio.to_thread(self._to_arrow, "alpha_pnl", PNL_COLUMNS, rows)
         columns = ", ".join(PNL_COLUMNS)
         await self._locked(
             self._load,

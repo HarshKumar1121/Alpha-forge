@@ -339,6 +339,17 @@ def walk(node: Node, path: Path = ()) -> list[tuple[Path, Node]]:
     return found
 
 
+def walk_with_parents(
+    node: Node, path: Path = (), parent: Node | None = None
+) -> list[tuple[Path, Node, Node | None]]:
+    """:func:`walk` with each node's parent beside it, ``None`` at the root: found on the way
+    down rather than by descending from the root again for every node."""
+    found = [(path, node, parent)]
+    for index, child in enumerate(children(node)):
+        found.extend(walk_with_parents(child, (*path, index), node))
+    return found
+
+
 def node_at(node: Node, path: Path) -> Node:
     for index in path:
         node = children(node)[index]
@@ -367,15 +378,15 @@ def data_fields(tree: Node, *, grouping: bool = False) -> list[str]:
     keeps the grouping fields: they do not count, but they still have to exist where the
     expression runs, and some (``currency``, ``split``) are missing from some markets.
     """
-    nodes = walk(tree)
-    assigned = {n.value for _, n in nodes if n.kind == "assign"}
+    nodes = walk_with_parents(tree)
+    assigned = {n.value for _, n, _ in nodes if n.kind == "assign"}
     # In order of first appearance, left to right, as the reader wrote them.
     return list(
         dict.fromkeys(
             n.value
-            for path, n in nodes
+            for path, n, parent in nodes
             if n.kind == "name"
-            and not (path and path[-1] >= len(node_at(tree, path[:-1]).args))
+            and not (parent is not None and path[-1] >= len(parent.args))
             and n.value not in assigned
             and (grouping or n.value not in GROUPING_FIELDS)
             and n.value.lower() not in ("true", "false", "nan")
@@ -399,9 +410,13 @@ def operator_count(node: Node) -> int:
 
 def protected(tree: Node, path: Path) -> bool:
     """A grouping input or a keyword value: slots that must not receive a signal."""
-    if not path:
+    return guarded(node_at(tree, path[:-1]) if path else None, path)
+
+
+def guarded(parent: Node | None, path: Path) -> bool:
+    """:func:`protected`, for a node whose ``parent`` is already known."""
+    if parent is None:
         return False
-    parent = node_at(tree, path[:-1])
     if path[-1] >= len(parent.args):
         return True
     return parent.kind == "call" and parent.value.startswith("group_") and path[-1] >= 1
@@ -416,8 +431,10 @@ def crossover(rng: random.Random, left: Node, right: Node) -> Node | None:
     The left root is never replaced (that would just be the other parent), and grouping
     and keyword slots are never exchanged.
     """
-    mine = [p for p, n in walk(left) if p and n.kind == "call" and not protected(left, p)]
-    theirs = [n for p, n in walk(right) if n.kind == "call" and not protected(right, p)]
+    mine = [
+        p for p, n, up in walk_with_parents(left) if p and n.kind == "call" and not guarded(up, p)
+    ]
+    theirs = [n for p, n, up in walk_with_parents(right) if n.kind == "call" and not guarded(up, p)]
     if not mine or not theirs:
         return None
     child = replace_at(left, rng.choice(mine), rng.choice(theirs))
@@ -429,8 +446,9 @@ def validate(
 ) -> list[str]:
     """Why BRAIN would reject this tree, or nothing."""
     problems: list[str] = []
-    assigned = {node.value for _, node in walk(tree) if node.kind == "assign"}
-    for path, node in walk(tree):
+    nodes = walk_with_parents(tree)
+    assigned = {node.value for _, node, _ in nodes if node.kind == "assign"}
+    for path, node, parent in nodes:
         if node.kind == "call":
             info = table.get(node.value)
             if info is None:
@@ -450,7 +468,7 @@ def validate(
         elif (
             node.kind == "name"
             # A keyword value names an option (``driver=gaussian``), not a data field.
-            and not (path and path[-1] >= len(node_at(tree, path[:-1]).args))
+            and not (parent is not None and path[-1] >= len(parent.args))
             and node.value not in known_names
             and node.value not in assigned
             and node.value.lower() not in ("true", "false", "nan")

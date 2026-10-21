@@ -303,14 +303,18 @@ async def members(
     ids = [str(r["alpha_id"]) for r in rows]
     series = await state.alphas.series(ids)
     meta = await state.alphas.by_ids(ids)
-    grid = await state.alphas.pnl_grid(list(meta))
     # Worked out even at no cost: some figures, like the K-ratio, BRAIN does not report.
     net = await asyncio.to_thread(portfolio.net_figures, series, meta, cost_bps or 0.0)
-    if cost_bps is not None:
-        grid = await asyncio.to_thread(portfolio.net_grid, grid, series, cost_bps)
     # Laid out once for all three: it was each one's slowest step.
     with_series = [a for a in dict.fromkeys(ids) if series.get(a)]
     framed = await asyncio.to_thread(portfolio.frame, series, meta, with_series, cost_bps or 0.0)
+    if cost_bps is None:
+        grid = await state.alphas.pnl_grid(list(meta))
+    else:
+        # Net of cost, the grid is the frame cut to the days BRAIN exported: measured, the
+        # same to the cell as reading the PnL again and costing it, at a fifth of the time.
+        dates, pnl, _ = await asyncio.to_thread(portfolio.exported, *framed)
+        grid = (with_series, dates, pnl)
     highest = await asyncio.to_thread(portfolio.highest_correlations, with_series, framed)
     together = await asyncio.to_thread(portfolio.portfolio_correlations, with_series, framed)
     adds = await asyncio.to_thread(portfolio.incremental_sharpes, with_series, framed)

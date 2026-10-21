@@ -272,18 +272,29 @@ class CatalogQueries:
         return bool(found)
 
     async def _page(
-        self, scope: Tuple4, filters: FieldFilter, terms: str | None, *, conjunctive: bool
+        self,
+        scope: Tuple4,
+        filters: FieldFilter,
+        terms: str | None,
+        *,
+        conjunctive: bool,
+        counted: bool = True,
     ) -> dict[str, Any]:
-        """One page of fields and the total behind it, both narrowed the same way."""
+        """One page of fields and the total behind it, both narrowed the same way. Without
+        ``counted`` the total is ``None`` and never read."""
         ranked = terms is not None
         source = SCORED_SOURCE if ranked else "data_field"
         head: list[Any] = [terms, int(conjunctive)] if ranked else []
         where, params = filters.where(scope, search=not ranked)
         scored = ranked and filters.sort_by == RELEVANCE
 
-        total = await self.catalog.scalar(
-            f"SELECT count(*) FROM {source} WHERE {where}",  # noqa: S608
-            [*head, *params],
+        total = (
+            await self.catalog.scalar(
+                f"SELECT count(*) FROM {source} WHERE {where}",  # noqa: S608
+                [*head, *params],
+            )
+            if counted
+            else None
         )
         rows = await self.catalog.query(
             f"""
@@ -299,26 +310,32 @@ class CatalogQueries:
             [*head, *params, filters.limit, filters.offset],
         )
         return {
-            "total": int(total or 0),
+            "total": int(total or 0) if counted else None,
             "limit": filters.limit,
             "offset": filters.offset,
             "results": rows,
         }
 
-    async def fields(self, scope: Tuple4, filters: FieldFilter) -> dict[str, Any]:
+    async def fields(
+        self, scope: Tuple4, filters: FieldFilter, *, counted: bool = True
+    ) -> dict[str, Any]:
         """A filtered, sorted, paginated page of fields plus the total match count.
 
         Where the index exists the search is answered by joining it, which narrows and ranks
         in one pass. Requiring every word is what makes a multi-word search mean something,
         so that is tried first; the count it produces is also the test of whether it found
         anything, and only an empty one costs a second round with any-of-the-words.
+
+        ``counted=False`` skips the total, for a caller reading only the first page's rows:
+        there an empty page says what a total of nought does.
         """
         terms = filters.terms()
         if not (terms and await search_ready(self.catalog)):
-            return await self._page(scope, filters, None, conjunctive=True)
-        page = await self._page(scope, filters, terms, conjunctive=True)
-        if page["total"] == 0 and " " in terms:
-            return await self._page(scope, filters, terms, conjunctive=False)
+            return await self._page(scope, filters, None, conjunctive=True, counted=counted)
+        page = await self._page(scope, filters, terms, conjunctive=True, counted=counted)
+        found = page["total"] if counted else len(page["results"])
+        if found == 0 and " " in terms:
+            return await self._page(scope, filters, terms, conjunctive=False, counted=counted)
         return page
 
     async def field(self, scope: Tuple4, field_id: str) -> dict[str, Any] | None:

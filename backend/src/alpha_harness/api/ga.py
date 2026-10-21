@@ -207,9 +207,11 @@ async def _plan(body: EvolutionRequest, state: Any) -> dict[str, Any]:
         run = EvolutionParams(region=body.region, delay=body.delay, universe=body.universe)
         parents = [p for r in seeds if (p := ga.Parent.of(str(r["alpha_id"]), r["expression"], r))]
         bred = market
+        shapes = {p.tree: ga.Shape.of(p.tree, bred) for p in parents}
 
         def draw(rng: random.Random) -> SimulationRequest | None:
-            made = ga.child(rng, rng.choice(parents), rng.choice(parents), bred, body.mutation_rate)
+            a, b = rng.choice(parents), rng.choice(parents)
+            made = ga.child(rng, a, b, bred, body.mutation_rate, shapes)
             return ga.request_for(*made, run) if made else None
 
         sample = preview_samples(draw, tries=50)
