@@ -208,6 +208,9 @@ importers:
       '@tanstack/react-virtual':
         specifier: ^3.14.13
         version: 3.14.13(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@tauri-apps/api':
+        specifier: 2.12.4
+        version: 2.12.4
       '@tauri-apps/plugin-notification':
         specifier: 2.5.1
         version: 2.5.1

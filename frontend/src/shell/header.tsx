@@ -17,13 +17,22 @@ import { useRefetchOn } from '@/lib/ws'
 import { Button, STATUS } from '@/ui/kit'
 import { Tooltip } from '@/ui/overlay'
 import { useCommandMenu } from './command-menu'
+import { inDesktop, onMac, WindowControls } from './desktop'
 import { SidebarToggle } from './sidebar'
 
 export function Header() {
   const openMenu = useCommandMenu((s) => s.setOpen)
 
   return (
-    <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-hairline bg-canvas px-4">
+    // In the desktop app this is the title bar: dragged by any part that is not a control, with
+    // the window's buttons at its right end, or macOS's own over its left.
+    <header
+      data-tauri-drag-region={inDesktop ? 'deep' : undefined}
+      className={cn(
+        'flex h-12 shrink-0 items-center justify-between gap-3 border-b border-hairline bg-canvas px-4',
+        inDesktop && (onMac ? 'pl-20' : 'pr-0'),
+      )}
+    >
       <div className="flex min-w-0 items-center gap-3">
         <SidebarToggle />
         <HeaderCores />
@@ -39,6 +48,7 @@ export function Header() {
         >
           <SearchIcon />
         </Button>
+        {inDesktop && !onMac && <WindowControls />}
       </div>
     </header>
   )

@@ -39,7 +39,7 @@ fn tray(app: &AppHandle) -> tauri::Result<()> {
     let login = CheckMenuItem::with_id(
         app,
         "login",
-        "Start at login",
+        "Start at Login",
         true,
         app.autolaunch().is_enabled().unwrap_or(false),
         None::<&str>,

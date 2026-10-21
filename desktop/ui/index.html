@@ -64,6 +64,41 @@
           transform: translateX(250%);
         }
       }
+      /* The window has no title bar of its own on Windows and Linux: this one drags it. */
+      .titlebar {
+        position: fixed;
+        inset: 0 0 auto;
+        height: 48px;
+        display: flex;
+        justify-content: flex-end;
+      }
+      .titlebar button {
+        width: 44px;
+        border: 0;
+        background: transparent;
+        color: inherit;
+        opacity: 0.72;
+        display: grid;
+        place-items: center;
+      }
+      .titlebar button[hidden] {
+        display: none;
+      }
+      .titlebar button:hover {
+        opacity: 1;
+        background: color-mix(in srgb, CanvasText 10%, transparent);
+      }
+      .titlebar button.close:hover {
+        background: #e5484d;
+        color: #fff;
+      }
+      .titlebar svg {
+        width: 16px;
+        height: 16px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.5;
+      }
       @media (prefers-reduced-motion: reduce) {
         .bar::after {
           animation: none;
@@ -74,6 +109,17 @@
     </style>
   </head>
   <body>
+    <header class="titlebar" data-tauri-drag-region="deep">
+      <button type="button" data-action="minimize" aria-label="Minimise" hidden>
+        <svg viewBox="0 0 16 16"><path d="M3 8h10" /></svg>
+      </button>
+      <button type="button" data-action="toggleMaximize" aria-label="Maximise" hidden>
+        <svg viewBox="0 0 16 16"><rect x="3.5" y="3.5" width="9" height="9" /></svg>
+      </button>
+      <button type="button" class="close" data-action="close" aria-label="Close to the tray" hidden>
+        <svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+      </button>
+    </header>
     <main>
       <img src="icon.svg" alt="" />
       <h1>Alpha Harness</h1>
@@ -87,6 +133,14 @@
         if (text) status.textContent = text;
       };
       const tauri = window.__TAURI__;
+      // macOS draws its own window buttons; elsewhere these stand in for the missing title bar.
+      if (tauri && !navigator.userAgent.includes("Mac")) {
+        const appWindow = tauri.window.getCurrentWindow();
+        for (const button of document.querySelectorAll(".titlebar button")) {
+          button.hidden = false;
+          button.addEventListener("click", () => appWindow[button.dataset.action]());
+        }
+      }
       if (tauri) {
         // Asked once listening, and only if nothing newer was heard while asking.
         let heard = false;

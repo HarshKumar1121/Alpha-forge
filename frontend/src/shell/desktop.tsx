@@ -5,14 +5,68 @@
  */
 
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useRef } from 'react'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import { CopyIcon, MinusIcon, SquareIcon, XIcon } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import { simulations } from '@/api/core'
+import { cn } from '@/lib/cn'
 import { useRefetchOn } from '@/lib/ws'
 import { labTasks } from '@/screens/tasks/api'
 import { useUpdateStatus } from './update'
 
 /** Tauri puts its bridge into the page it shows; a browser tab has none. */
 export const inDesktop = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+/** macOS keeps its own window buttons, drawn over the top bar's left end. */
+export const onMac = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac')
+
+const CONTROL =
+  'flex h-12 w-11 items-center justify-center text-ink-subtle transition-colors hover:bg-surface-2 hover:text-ink [&_svg]:size-4'
+
+/** Minimise, maximise and close, for Windows and Linux, where the window has no title bar. */
+export function WindowControls() {
+  const [maximized, setMaximized] = useState(false)
+  useEffect(() => {
+    const appWindow = getCurrentWindow()
+    const read = () => void appWindow.isMaximized().then(setMaximized)
+    read()
+    const stop = appWindow.onResized(read)
+    return () => void stop.then((unlisten) => unlisten())
+  }, [])
+  const appWindow = getCurrentWindow()
+  return (
+    <div className="flex">
+      <button
+        type="button"
+        aria-label="Minimise"
+        className={CONTROL}
+        onClick={() => void appWindow.minimize()}
+      >
+        <MinusIcon strokeWidth={1.5} aria-hidden />
+      </button>
+      <button
+        type="button"
+        aria-label={maximized ? 'Restore' : 'Maximise'}
+        className={CONTROL}
+        onClick={() => void appWindow.toggleMaximize()}
+      >
+        {maximized ? (
+          <CopyIcon strokeWidth={1.5} className="-scale-x-100" aria-hidden />
+        ) : (
+          <SquareIcon strokeWidth={1.5} aria-hidden />
+        )}
+      </button>
+      {/* Closing keeps Alpha Harness in the tray, as the window's own close did. */}
+      <button
+        type="button"
+        aria-label="Close to the tray"
+        className={cn(CONTROL, 'hover:bg-pnl-negative hover:text-ink')}
+        onClick={() => void appWindow.close()}
+      >
+        <XIcon strokeWidth={1.5} aria-hidden />
+      </button>
+    </div>
+  )
+}
 
 const ENDED: Record<string, string> = { COMPLETE: 'finished', PAUSED: 'paused', FAILED: 'failed' }
 const LIVE = new Set(['QUEUED', 'RUNNING'])

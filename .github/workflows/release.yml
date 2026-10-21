@@ -138,20 +138,25 @@ jobs:
       matrix:
         include:
           - os: windows-latest
+            target: x86_64-pc-windows-msvc
             bundle: nsis
             built: nsis/*-setup.exe
             asset: AlphaHarness-windows-x64-setup.exe
           # Apple Silicon, whose oldest macOS is 11.
           - os: macos-latest
+            target: aarch64-apple-darwin
             macos: "11.0"
             # The .app too: built alone, the .dmg leaves none behind for the check below.
             bundle: app,dmg
             built: dmg/*.dmg
             asset: AlphaHarness-macOS-arm64.dmg
-          # The last Intel label there will be: macOS 26 is the final release for Intel Macs,
-          # and there is no -latest alias for Intel on the standard runners.
-          - os: macos-26-intel
+          # Intel, built on Apple Silicon: the Intel runner took 8 minutes to compile what an
+          # Apple Silicon one does in under 3, and Apple's toolchain builds for both.
+          - os: macos-latest
+            target: x86_64-apple-darwin
             macos: "10.15"
+            # Its uv is not the runner's own, so it is fetched, and checked against this.
+            uv-sha256: 2e4108f5395397c8bc5d43bf83d3bdbb2d0e92b90d0efa607756be704905fa33
             # The .app too: built alone, the .dmg leaves none behind for the check below.
             bundle: app,dmg
             built: dmg/*.dmg
@@ -161,6 +166,7 @@ jobs:
           # browser drops a download's executable bit, while a .deb opens straight in the
           # software installer.
           - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
             bundle: deb
             built: deb/*.deb
             asset: AlphaHarness-linux-amd64.deb
@@ -174,6 +180,10 @@ jobs:
       ALPHA_HARNESS_VERSION: ${{ needs.wheel.outputs.version }}
       # The oldest macOS the build may need: see Build, and the check after it.
       MACOS_FLOOR: ${{ matrix.macos }}
+      TARGET: ${{ matrix.target }}
+      # Pinned, not `latest`: uv ships inside the installer, so an upstream release must never
+      # change what a re-run of an old tag produces.
+      UV_VERSION: "0.12.18"
       BUNDLE: ${{ matrix.bundle }}
       BUILT: ${{ matrix.built }}
       ASSET: ${{ matrix.asset }}
@@ -181,12 +191,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      # Pinned, not `latest`: this binary ships inside the installer, so an upstream release
-      # must never change what a re-run of an old tag produces. The action checks its checksum.
+      # The action checks its checksum.
       - id: uv
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          version: "0.12.18"
+          version: ${{ env.UV_VERSION }}
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with:
           package_json_file: desktop/package.json
@@ -196,7 +205,11 @@ jobs:
           cache: pnpm
           cache-dependency-path: desktop/pnpm-lock.yaml
       # The version rust-toolchain.toml names, rather than whatever the runner image carries.
-      - run: cd desktop/src-tauri && rustup toolchain install && rustc --version
+      - run: |
+          cd desktop/src-tauri
+          rustup toolchain install
+          rustup target add "$TARGET"
+          rustc --version
       - name: Install WebKitGTK and the tray's indicator library
         if: runner.os == 'Linux'
         run: |
@@ -205,19 +218,29 @@ jobs:
             libayatana-appindicator3-dev librsvg2-dev
 
       # Named for the target, as Tauri looks for a sidecar. setup-uv reports the binary without
-      # its extension on Windows (measured: `...\uv`), while the file on disk is uv.exe.
+      # its extension on Windows (measured: `...\uv`), while the file on disk is uv.exe. Another
+      # architecture's uv is Astral's own build of the same version, held to its checksum.
       - name: Bundle uv
         env:
           UV_PATH: ${{ steps.uv.outputs.uv-path }}
+          UV_SHA256: ${{ matrix.uv-sha256 }}
         run: |
           cd desktop/src-tauri
           ext=""
           if [ "$RUNNER_OS" = Windows ]; then ext=.exe; fi
-          uv="${UV_PATH%.exe}$ext"
-          sidecar="binaries/alpha-harness-uv-$(rustc --print host-tuple)$ext"
+          sidecar="binaries/alpha-harness-uv-$TARGET$ext"
           mkdir -p binaries
-          cp "$uv" "$sidecar"
-          "./$sidecar" --version
+          if [ -z "$UV_SHA256" ]; then
+            cp "${UV_PATH%.exe}$ext" "$sidecar"
+            "./$sidecar" --version
+          else
+            curl -fsSL -o "$RUNNER_TEMP/uv.tar.gz" \
+              "https://github.com/astral-sh/uv/releases/download/$UV_VERSION/uv-$TARGET.tar.gz"
+            echo "$UV_SHA256  $RUNNER_TEMP/uv.tar.gz" | shasum -a 256 -c -
+            tar -xzf "$RUNNER_TEMP/uv.tar.gz" -C "$RUNNER_TEMP"
+            cp "$RUNNER_TEMP/uv-$TARGET/uv" "$sidecar"
+            file "$sidecar"
+          fi
 
       # Installers take semver, so a second release in a day, `.1`, goes in as `+1`: dpkg orders
       # 2026.10.21 < 2026.10.21+1 < 2026.10.22, and NSIS makes it the fourth number. A candidate
@@ -246,9 +269,9 @@ jobs:
           cat "$RUNNER_TEMP/version.json"
           pnpm --dir desktop install --frozen-lockfile
           # --locked: built from Cargo.lock as committed, or not at all.
-          pnpm --dir desktop exec tauri build --bundles "$BUNDLE" \
+          pnpm --dir desktop exec tauri build --target "$TARGET" --bundles "$BUNDLE" \
             --config "$RUNNER_TEMP/version.json" -- --locked
-          cp desktop/src-tauri/target/release/bundle/$BUILT "$ASSET"
+          cp desktop/src-tauri/target/$TARGET/release/bundle/$BUILT "$ASSET"
 
       # Nothing else would notice an app that only opens on the runner's own macOS: CI builds it
       # without complaint and the Macs it refuses are the users'.
@@ -281,7 +304,8 @@ jobs:
               return found
 
 
-          built = list(pathlib.Path("desktop/src-tauri/target/release/bundle/macos").glob("*.app"))
+          bundles = pathlib.Path("desktop/src-tauri/target", os.environ["TARGET"], "release/bundle")
+          built = list((bundles / "macos").glob("*.app"))
           if len(built) != 1:
               sys.exit(f"::error::expected one .app, found {built}")
           app = built[0]
