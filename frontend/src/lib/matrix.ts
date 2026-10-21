@@ -124,8 +124,11 @@ export function buildCores(
   const liveParents = new Set(parents.map((p) => p.id))
   const children = new Map<number, SimulationRow[]>()
   const standalones: SimulationRow[] = []
-  const adopt = (parentId: number, row: SimulationRow) =>
-    children.set(parentId, [...(children.get(parentId) ?? []), row])
+  const adopt = (parentId: number, row: SimulationRow) => {
+    const siblings = children.get(parentId)
+    if (siblings) siblings.push(row)
+    else children.set(parentId, [row])
+  }
 
   for (const row of live) {
     if (row.isBatch) continue

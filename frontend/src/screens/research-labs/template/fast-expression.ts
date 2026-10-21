@@ -79,7 +79,12 @@ export const fastExpression = StreamLanguage.define<Reading>({
       return `bracket${state.depth % 3}`
     }
     if (stream.match(/^(?:&&|\|\||==|!=|<=|>=|[-+*/^<>!?:=])/)) return 'operator'
-    if (stream.match(/^[,;]/)) return 'punctuation'
+    if (stream.match(';')) {
+      // A statement ends here, so a bracket it left open cannot colour the next one's names.
+      state.depth = 0
+      return 'punctuation'
+    }
+    if (stream.eat(',')) return 'punctuation'
     stream.next()
     return 'invalid'
   },
@@ -101,10 +106,11 @@ export const fastExpression = StreamLanguage.define<Reading>({
   },
 })
 
-/** The text with comments and strings blanked, every position kept, so a scan reads only code. */
+/** The text with comments and strings blanked, every position and line break kept, so a scan
+ *  reads only code and a statement still ends where its line does. */
 export function code(text: string): string {
   return text.replace(/\/\*[\s\S]*?(?:\*\/|$)|\/\/[^\n]*|#[^\n]*|"[^"]*"?|'[^']*'?/g, (m) =>
-    ' '.repeat(m.length),
+    m.replace(/[^\n]/g, ' '),
   )
 }
 

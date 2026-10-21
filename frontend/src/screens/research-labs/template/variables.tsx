@@ -451,11 +451,11 @@ function FieldsChoice({
   // The market's whole tree, so ticking a category takes every dataset in it.
   const source = useQuery({
     queryKey: ['catalog', 'facets', scope, {}],
-    queryFn: () => catalog.facets(scope, {}),
+    queryFn: ({ signal }) => catalog.facets(scope, {}, signal),
   })
   const counts = useQuery({
     queryKey: ['catalog', 'facets', scope, active],
-    queryFn: () => catalog.facets(scope, active),
+    queryFn: ({ signal }) => catalog.facets(scope, active, signal),
     placeholderData: keepPreviousData,
   })
   const datasets = useQuery({

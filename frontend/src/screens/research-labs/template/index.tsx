@@ -242,8 +242,8 @@ export function TemplateLabScreen() {
     template_name: '',
   }
   // Each plan carries the text it was made for, so its problems are never drawn on newer text.
-  const previewed = (sent: TemplateLabRequest) =>
-    templateLab.preview(sent).then((plan) => ({ ...plan, text: sent.template }))
+  const previewed = (sent: TemplateLabRequest, signal: AbortSignal) =>
+    templateLab.preview(sent, signal).then((plan) => ({ ...plan, text: sent.template }))
   const { preview, current: planned } = useLabPreview('template-lab', body, previewed, {
     // Only once every default can be read, so a name never shows as undefined in passing.
     enabled: options.isSuccess && known !== undefined && (scope === null || datasets.isFetched),

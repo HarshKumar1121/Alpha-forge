@@ -221,7 +221,7 @@ export function TemplateBlocks({
   const blank = text.trim() === ''
   const read = useQuery({
     queryKey: ['template-lab', 'tree', text],
-    queryFn: () => templateLab.tree(text),
+    queryFn: ({ signal }) => templateLab.tree(text, signal),
     enabled: !blank,
     staleTime: Number.POSITIVE_INFINITY,
     placeholderData: keepPreviousData,

@@ -136,7 +136,9 @@ const STAMP = new Intl.DateTimeFormat('en-US', {
   minute: '2-digit',
 })
 /** A date inside a check message. */
-const MESSAGE_DAY = new Intl.DateTimeFormat('en-US')
+// BRAIN sends a bare day, which parses as UTC midnight: read in UTC, or west of it the message
+// names the day before.
+const MESSAGE_DAY = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC' })
 
 const valid = (iso: string | null | undefined) => {
   const date = iso ? new Date(iso) : null
@@ -210,7 +212,9 @@ export function byResult(checks: AlphaCheck[]): [string, AlphaCheck[]][] {
   const groups = new Map<string, AlphaCheck[]>()
   for (const check of checks) {
     const result = check.result ?? 'PENDING'
-    groups.set(result, [...(groups.get(result) ?? []), check])
+    const group = groups.get(result)
+    if (group) group.push(check)
+    else groups.set(result, [check])
   }
   const rank = (result: string) => {
     const at = RESULT_ORDER.indexOf(result)

@@ -326,7 +326,7 @@ export function FieldsTab({ scope }: { scope: Scope }) {
   }
   const query = useQuery({
     queryKey: ['catalog', 'fields', scope, body],
-    queryFn: () => catalog.fields(scope, body),
+    queryFn: ({ signal }) => catalog.fields(scope, body, signal),
     placeholderData: keepPreviousData,
   })
   const filtered = Object.values(active).some(isActive)
@@ -410,13 +410,13 @@ function FieldFilters({ scope }: { scope: Scope }) {
   const active: FieldFilterState = { ...filter, dataset_ids: datasetIds }
   const facets = useQuery({
     queryKey: ['catalog', 'facets', scope, active],
-    queryFn: () => catalog.facets(scope, active),
+    queryFn: ({ signal }) => catalog.facets(scope, active, signal),
     placeholderData: keepPreviousData,
   })
   // The market's whole tree whatever else is filtered, so ticking a category takes every dataset in it.
   const tree = useQuery({
     queryKey: ['catalog', 'facets', scope, {}],
-    queryFn: () => catalog.facets(scope, {}),
+    queryFn: ({ signal }) => catalog.facets(scope, {}, signal),
   })
   const datasets = useQuery({
     queryKey: ['catalog', 'datasets', scope, ''],

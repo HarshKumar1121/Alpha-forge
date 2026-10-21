@@ -60,10 +60,10 @@ export const catalog = {
   counts: (s: Scope) => http.get<CatalogCounts>(`${B}/counts${scopeQs(s)}`),
   stats: (s: Scope) => http.get<CatalogStats>(`${B}/stats${scopeQs(s)}`),
   /** Counts under every other active filter; each facet ignores its own selection. */
-  facets: (s: Scope, filter: FieldFilter) =>
-    http.post<CatalogFacets>(`${B}/facets${scopeQs(s)}`, filter),
-  fields: (s: Scope, filter: FieldFilter) =>
-    http.post<FieldPage>(`${B}/fields${scopeQs(s)}`, filter),
+  facets: (s: Scope, filter: FieldFilter, signal?: AbortSignal) =>
+    http.post<CatalogFacets>(`${B}/facets${scopeQs(s)}`, filter, signal),
+  fields: (s: Scope, filter: FieldFilter, signal?: AbortSignal) =>
+    http.post<FieldPage>(`${B}/fields${scopeQs(s)}`, filter, signal),
   field: (s: Scope, id: string) =>
     http.get<DataFieldDetail>(`${B}/fields/${encodeURIComponent(id)}${scopeQs(s)}`),
   /** What a field is, from whichever market covers it best: for what is not market-bound. */

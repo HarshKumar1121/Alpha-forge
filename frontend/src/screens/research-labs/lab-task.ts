@@ -91,14 +91,14 @@ export function useLabMarket(
 export function useLabPreview<Body, Plan>(
   lab: string,
   body: Body,
-  preview: (body: Body) => Promise<Plan>,
+  preview: (body: Body, signal: AbortSignal) => Promise<Plan>,
   { enabled = true, wait = 300 }: { enabled?: boolean; wait?: number } = {},
 ) {
   const key = JSON.stringify(body)
   const settled = useDebounced(key, wait)
   const query = useQuery({
     queryKey: [lab, 'preview', settled],
-    queryFn: () => preview(JSON.parse(settled) as Body),
+    queryFn: ({ signal }) => preview(JSON.parse(settled) as Body, signal),
     enabled: enabled && settled === key,
     placeholderData: keepPreviousData,
   })

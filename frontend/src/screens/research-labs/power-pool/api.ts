@@ -32,6 +32,7 @@ const B = '/api/power-pool-lab'
 export const powerPoolLab = {
   options: () => http.get<PowerPoolOptions>(`${B}/options`),
   /** Free: no LLM call, no simulation. */
-  preview: (body: PowerPoolRequest) => http.post<PowerPoolPreview>(`${B}/preview`, body),
+  preview: (body: PowerPoolRequest, signal?: AbortSignal) =>
+    http.post<PowerPoolPreview>(`${B}/preview`, body, signal),
   addTask: (body: PowerPoolRequest) => http.post<Schemas['AddedTask']>(`${B}/tasks`, body),
 }

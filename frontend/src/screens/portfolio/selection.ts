@@ -43,8 +43,18 @@ export const FUNCTIONS: Record<string, [number, number, (...args: number[]) => n
   power: [2, 2, Math.pow],
   max: [2, Number.POSITIVE_INFINITY, Math.max],
   min: [2, Number.POSITIVE_INFINITY, Math.min],
-  and: [2, 2, (a, b) => bool(truth(a) && truth(b))],
-  or: [2, 2, (a, b) => bool(truth(a) || truth(b))],
+  // Three-valued, so a missing metric stays missing: `not(or(x > 1, y > 1))` with neither
+  // measured must not select. A false side settles `and` and a true one `or` regardless.
+  and: [
+    2,
+    2,
+    (a, b) => (a === 0 || b === 0 ? 0 : Number.isNaN(a) || Number.isNaN(b) ? Number.NaN : 1),
+  ],
+  or: [
+    2,
+    2,
+    (a, b) => (truth(a) || truth(b) ? 1 : Number.isNaN(a) || Number.isNaN(b) ? Number.NaN : 0),
+  ],
   not: [1, 1, (a) => (Number.isNaN(a) ? Number.NaN : bool(a === 0))],
   if_else: [3, 3, (c, a, b) => (Number.isNaN(c) ? Number.NaN : c !== 0 ? a : b)],
   is_nan: [1, 1, (a) => bool(Number.isNaN(a))],
@@ -186,7 +196,11 @@ function parser(tokens: Token[], known: ReadonlySet<string>) {
     return power()
   }
 
-  const product = binary(unary, { '*': (a, b) => a * b, '/': (a, b) => a / b })
+  // A ratio over nought has no answer: NaN leaves the Alpha out, where Infinity would pass.
+  const product = binary(unary, {
+    '*': (a, b) => a * b,
+    '/': (a, b) => (b === 0 ? Number.NaN : a / b),
+  })
   const sum = binary(product, { '+': (a, b) => a + b, '-': (a, b) => a - b })
   const comparison = binary(sum, COMPARISONS)
 
@@ -219,7 +233,8 @@ export function compile(text: string, metrics: readonly string[]): Selection {
   return {
     conditions: conditions.length,
     test: (metrics) => {
-      const scope: Metrics = { ...metrics }
+      // Copied only when a statement names a value into it; read-only otherwise.
+      const scope: Metrics = named.length ? { ...metrics } : metrics
       for (const { name, value } of named) scope[name] = value(scope)
       return conditions.every((c) => truth(c(scope)))
     },

@@ -32,7 +32,8 @@ export const searchLab = {
   /** Reads the account's operators, syncing them from BRAIN when missing. */
   options: () => http.get<SearchLabOptions>(`${B}/options`),
   /** Free; queues nothing. */
-  preview: (body: SearchLabRequest) => http.post<SearchLabPreview>(`${B}/preview`, body),
+  preview: (body: SearchLabRequest, signal?: AbortSignal) =>
+    http.post<SearchLabPreview>(`${B}/preview`, body, signal),
   /** Adds the search to Tasks, not started. */
   addTask: (body: SearchLabRequest & { simulations: number }) =>
     http.post<Schemas['AddedTask']>(`${B}/tasks`, body),
