@@ -144,14 +144,16 @@ jobs:
           # Apple Silicon, whose oldest macOS is 11.
           - os: macos-latest
             macos: "11.0"
-            bundle: dmg
+            # The .app too: built alone, the .dmg leaves none behind for the check below.
+            bundle: app,dmg
             built: dmg/*.dmg
             asset: AlphaHarness-macOS-arm64.dmg
           # The last Intel label there will be: macOS 26 is the final release for Intel Macs,
           # and there is no -latest alias for Intel on the standard runners.
           - os: macos-26-intel
             macos: "10.15"
-            bundle: dmg
+            # The .app too: built alone, the .dmg leaves none behind for the check below.
+            bundle: app,dmg
             built: dmg/*.dmg
             asset: AlphaHarness-macOS-x86_64.dmg
           # The oldest Ubuntu runner, so the .deb asks for no newer glibc or WebKitGTK than

@@ -31,9 +31,9 @@ windows-sys = { version = "=0.61.2", features = [
     "Win32_System_Threading",
 ] }
 
+# No LTO and the default codegen units: measured, a release build takes 40% less time for a
+# binary 2 MB bigger, next to the 330 MB the first start downloads anyway.
 [profile.release]
-codegen-units = 1
-lto = true
 opt-level = "s"
 panic = "abort"
 strip = true
