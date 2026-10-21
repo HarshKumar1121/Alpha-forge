@@ -8,7 +8,7 @@ window, which :func:`vault.metrics.window_start` reproduces to four decimals.
 Which Alphas this applies to is BRAIN's own call, read off its ``POWER_POOL_CORRELATION``
 check (``vault.yields.is_power_pool``). Two rules then decide eligibility, both BRAIN's:
 
-- Power Pool Correlation must be below the planner's :data:`POWER_POOL_CORRELATION_CEILING`.
+- Power Pool Correlation must be below :data:`POWER_POOL_CORRELATION_CEILING`.
 - Above it, the Alpha needs a Sharpe at least :data:`POWER_POOL_ESCAPE` times that of **every**
   Alpha it collides with — not merely the one it correlates with most.
 
