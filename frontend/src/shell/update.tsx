@@ -142,6 +142,8 @@ export function useUpdateStatus() {
     queryFn: () => update.status(),
     staleTime: POLL_MS,
     refetchInterval: (query) => (query.state.data?.checkedAt ? POLL_MS : FIRST_LOOK_MS),
+    // The desktop app spends most of its life hidden in the tray, and still has news to give.
+    refetchIntervalInBackground: true,
     // A check that fails is not worth a retry storm: the next poll is the retry.
     retry: false,
   })

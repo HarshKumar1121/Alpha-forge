@@ -14,6 +14,8 @@ from .window import open_window
 
 HOST = "127.0.0.1"
 PORT = 8000
+#: Set by the desktop app, whose own window shows the page: no browser is opened for it.
+SHELL_VARIABLE = "ALPHA_HARNESS_SHELL"
 #: A port another program holds: POSIX's number, and Windows' own (WSAEADDRINUSE).
 PORT_TAKEN = frozenset({errno.EADDRINUSE, 10048})
 #: How long a start straight after an update waits for the page that asked for it to return.
@@ -49,9 +51,11 @@ async def _serve() -> str | None:
         await asyncio.sleep(0.1)
     if server.started:
         updates.served()
-    # Straight after an update the page that asked for it reloads onto this one by itself.
-    if server.started and not (updates.page_reloads() and await _page_returns(app)):
-        open_window(f"http://{HOST}:{PORT}")
+        # Taken on every start, so a desktop window's update never leaves it for a later one.
+        reloads = updates.page_reloads()
+        # Straight after an update the page that asked for it reloads onto this one by itself.
+        if not os.environ.get(SHELL_VARIABLE) and not (reloads and await _page_returns(app)):
+            open_window(f"http://{HOST}:{PORT}")
     await serving
     if watching is not None:
         watching.cancel()

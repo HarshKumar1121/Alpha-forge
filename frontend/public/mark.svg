@@ -1,11 +1,46 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Alpha">
-  <title>Alpha</title>
-  <text
-    x="32"
-    y="47"
-    text-anchor="middle"
-    font-family="Georgia, 'Times New Roman', Times, serif"
-    font-size="56"
-    fill="#5e6ad2"
-  >α</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <!-- 1. App Canvas Gutter (#010102) -->
+  <rect width="512" height="512" fill="#010102" />
+
+  <!-- 2. Workstation Panel (surface-1: #0f1011, rounded-lg scaled, hairline border: #23252a) -->
+  <rect x="16" y="16" width="480" height="480" rx="40" fill="#0f1011" stroke="#23252a" stroke-width="2" />
+
+  <!-- 3. Panel-Highlight (inset 1px top edge in hairline-strong: #34343a) -->
+  <path d="M 56 17 L 456 17" stroke="#34343a" stroke-width="2" stroke-linecap="round" />
+
+  <!-- =================================================================
+       4. THE MARK: 4px-Grid Topological Weave
+       Width: 32px | Channel Gap: 16px (lg) | Cutout Gap: 12px (md)
+       Outer Track: ink (#f7f8f8) | Inner Track: primary (#5e6ad2)
+       ================================================================= -->
+  <g transform="translate(216, 256) rotate(-45)" 
+     fill="none" 
+     stroke-width="32" 
+     stroke-linecap="butt">
+
+    <!-- INNER EXECUTION HARNESS (R = 60, primary: #5e6ad2) -->
+    <g stroke="#5e6ad2">
+      <!-- Bottom-Right Tail: Passes OVER ink track at y=108, stops 12px before y=60 -->
+      <path d="M 60 164 L 60 88" />
+      
+      <!-- Core Loop: Resumes 12px after y=60, arcs 270°, passes OVER at x=60, stops 12px before x=108 -->
+      <path d="M 60 32 L 60 0 A 60 60 0 1 0 0 60 L 80 60" />
+      
+      <!-- Top-Right Tail: Resumes 12px after x=108 -->
+      <path d="M 136 60 L 164 60" />
+    </g>
+
+    <!-- OUTER ALPHA SIGNAL (R = 108, ink: #f7f8f8) -->
+    <g stroke="#f7f8f8">
+      <!-- Bottom-Right Tail: Stops 12px before y=108 -->
+      <path d="M 108 164 L 108 136" />
+      
+      <!-- Outer Loop: Resumes 12px after y=108, passes OVER primary track at y=60, arcs 270°, stops 12px before x=60 -->
+      <path d="M 108 80 L 108 0 A 108 108 0 1 0 0 108 L 32 108" />
+      
+      <!-- Top-Right Tail: Resumes 12px after x=60, passes OVER at x=108 -->
+      <path d="M 88 108 L 164 108" />
+    </g>
+
+  </g>
 </svg>
