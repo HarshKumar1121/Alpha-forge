@@ -152,6 +152,8 @@ class LabTask(Out):
     #: When it first began running, which is where elapsed time is measured from.
     started_at: str | None
     finished_at: str | None
+    #: LLM Power Pool Lab only: answered calls by the model that answered them.
+    llm_models: dict[str, int] = Field(default_factory=dict[str, int])
 
 
 class LabTasks(Out):
@@ -409,6 +411,7 @@ def _task(row: Study, progress: dict[str, Any]) -> LabTask:
             "datasetIds": params.get("datasetIds") or [],
             "fields": _fields(params.get("space")),
             "target": row.max_trials,
+            "llmModels": (params.get("llm") or {}).get("byModel") or {},
             # What spent quota, as the scheduler counts toward the target.
             "simulated": told - progress["free"] - progress["fullRuns"],
             "cached": progress["free"],

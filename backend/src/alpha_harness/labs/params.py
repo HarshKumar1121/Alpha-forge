@@ -102,7 +102,10 @@ class PowerPoolParams(TaskParams):
     #: The Data Explorer's filter the datasets were chosen under, applied on every call.
     field_filter: dict[str, Any] | None = None
     model: str = ""
-    #: Running LLM tallies: ``calls``, ``empty``, ``failed`` and ``byDataset``.
+    #: Off, a call ``model`` cannot make (no budget left, provider down) goes to the next model
+    #: a Key can run; on, the task waits for ``model`` alone.
+    only_model: bool = False
+    #: Running LLM tallies: ``calls``, ``empty``, ``failed``, ``byDataset`` and ``byModel``.
     llm: dict[str, Any] = Field(default_factory=dict)
     #: The last hundred LLM calls, for the task's detail view.
     calls: list[dict[str, Any]] = Field(default_factory=list)

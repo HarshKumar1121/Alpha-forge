@@ -19,7 +19,7 @@ from openai import DefaultAsyncHttpxClient
 
 from ..schemas import camel_dict
 from .budget import Ledger
-from .keys import BudgetExhaustedError, KeyStore, LLMError
+from .keys import BudgetExhaustedError, KeyStore, LLMError, LLMUnavailable
 from .openai_compat import OpenAICompatible, ProviderError
 from .providers import PROVIDERS
 from .text import estimate_tokens
@@ -256,7 +256,7 @@ class LLMService:
                     await self.keys.mark(key_id, error="Timed out")
                     # The provider had the request and may well bill it, so it counts.
                     await self.ledger.record(key_id, model, estimate)
-                    raise LLMError(
+                    raise LLMUnavailable(
                         f"{model.id} did not answer within {TIMEOUT_SECONDS:.0f} seconds. "
                         "Try a smaller question or a lighter model."
                     ) from exc
@@ -276,9 +276,9 @@ class LLMService:
                         await self.ledger.penalise(key_id, model, daily=daily)
                         log.warning("llm.rate_limited", key_id=key_id, model=model.id, daily=daily)
                         continue
-                    error = LLMError(
-                        _plain_reason(exc) or f"{model.id} could not be reached: {exc}"
-                    )
+                    # 5xx is the provider's own trouble ("overloaded"): another model may answer.
+                    kind = LLMUnavailable if (_status(exc) or 0) >= 500 else LLMError
+                    error = kind(_plain_reason(exc) or f"{model.id} could not be reached: {exc}")
                     if _refused(exc):
                         log.warning("llm.key_refused", key_id=key_id, model=model.id)
                         refusal = error

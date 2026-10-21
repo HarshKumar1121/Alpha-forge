@@ -3561,6 +3561,10 @@ export interface components {
             lab: string;
             /** Labname */
             labName: string;
+            /** Llmmodels */
+            llmModels?: {
+                [key: string]: number;
+            };
             /** Markets */
             markets?: number | null;
             /** Message */
@@ -4066,6 +4070,11 @@ export interface components {
             model?: string | null;
             /** Neutralizations */
             neutralizations?: string[];
+            /**
+             * Only Model
+             * @default false
+             */
+            only_model: boolean;
             /** Region */
             region: string;
             /**

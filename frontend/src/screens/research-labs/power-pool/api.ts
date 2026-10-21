@@ -17,6 +17,8 @@ export interface PowerPoolRequest {
   /** The Data Explorer's filter the datasets were chosen under; `null` uses every field. */
   field_filter?: FieldFilterState | null
   model: string | null
+  /** Wait for `model` alone instead of moving on to another model when it cannot answer. */
+  only_model: boolean
   /** Empty keeps every neutralization BRAIN offers for the market. */
   neutralizations: string[]
   /** Empty draws from every downloaded universe of the market. */

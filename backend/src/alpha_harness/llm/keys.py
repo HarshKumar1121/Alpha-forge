@@ -35,6 +35,10 @@ class LLMError(Exception):
     """Something wrong with the LLM setup, phrased for whoever has to fix it."""
 
 
+class LLMUnavailable(LLMError):
+    """The provider timed out or failed on its side: worth trying another model, or later."""
+
+
 class NoKeysError(LLMError):
     def __init__(self, provider: str | None = None) -> None:
         if provider and provider != "google":

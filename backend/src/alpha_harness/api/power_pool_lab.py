@@ -37,6 +37,8 @@ class PowerPoolRequest(BaseModel):
     universe: str
     dataset_ids: list[str] = Field(default_factory=list, max_length=50)
     model: str | None = None
+    #: Never switch to another model when ``model`` cannot answer: wait for it instead.
+    only_model: bool = False
     #: What the LLM draws from. Empty is refused: see ``NO_NEUTRALIZATION``.
     neutralizations: list[str] = Field(default_factory=list, max_length=20)
     #: The universes each Alpha is drawn from. Empty means every downloaded one.
@@ -222,6 +224,7 @@ async def add_task(body: PowerPoolRequest, state: State) -> AddedTask:
                 else None
             ),
             model=plan["model"],
+            only_model=body.only_model,
             cores=body.cores,
             llm={"calls": 0},
         ),

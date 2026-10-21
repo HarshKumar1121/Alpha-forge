@@ -28,6 +28,7 @@ import {
 } from '@/screens/research-labs/task-settings'
 import {
   Button,
+  Checkbox,
   Chips,
   Disclosure,
   ErrorNotice,
@@ -50,6 +51,7 @@ interface PowerPoolDraft {
   cores: number | null
   simulations: number | null
   model: string | null
+  onlyModel: boolean
   /** Empty keeps every neutralization BRAIN offers for the market. */
   neutralizations: string[]
   /** Empty draws from every downloaded universe of the market. */
@@ -67,6 +69,7 @@ const useDraft = create<PowerPoolDraft>()(
       cores: null,
       simulations: null,
       model: null,
+      onlyModel: false,
       neutralizations: [],
       universes: [],
     }),
@@ -120,6 +123,7 @@ export function PowerPoolLabScreen() {
     dataset_ids: draft.datasetIds,
     field_filter: draft.fieldFilter ?? null,
     model,
+    only_model: draft.onlyModel,
     neutralizations: offeredOnly(draft.neutralizations, scopeOptions.neutralizations),
     universes,
     cores,
@@ -168,15 +172,27 @@ export function PowerPoolLabScreen() {
         <div className="flex flex-col gap-4">
           <div className="flex flex-wrap items-start gap-x-8 gap-y-4">
             <Fieldset legend="Model">
-              <Select
-                label="Model"
-                items={models.map((m) => ({
-                  value: m.ref,
-                  label: `${m.id} · ${providerLabel(m.provider)} · ${fmt.int(m.remainingToday)} left today`,
-                }))}
-                value={model}
-                onChange={(v) => set({ model: v })}
-              />
+              <div className="flex flex-col gap-2">
+                <Select
+                  label="Model"
+                  items={models.map((m) => ({
+                    value: m.ref,
+                    label: `${m.id} · ${providerLabel(m.provider)} · ${fmt.int(m.remainingToday)} left today`,
+                  }))}
+                  value={model}
+                  onChange={(v) => set({ model: v })}
+                />
+                <Checkbox
+                  label="Only use this model"
+                  checked={draft.onlyModel}
+                  onChange={(onlyModel) => set({ onlyModel })}
+                />
+                <p className="text-caption text-pretty text-ink-subtle">
+                  {draft.onlyModel
+                    ? 'When it runs out of requests for the day, the task waits for it.'
+                    : "When it runs out of requests for the day or its provider is overloaded, the task carries on with the next model a Key can run. Every running task shares a model's daily requests."}
+                </p>
+              </div>
             </Fieldset>
             <CoresSetting value={cores} onChange={(next) => set({ cores: next })} />
             <SimulationsSetting

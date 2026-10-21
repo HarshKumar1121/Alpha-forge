@@ -227,6 +227,13 @@ export function TaskResultsScreen() {
           ['Truncation', task.truncationAgent ? 'Truncation Agent' : task.truncation],
           ['NaN Handling', task.nanHandling],
           ['Test Period', task.testPeriod],
+          // Which models answered, when a Power Pool task moved between them.
+          [
+            'Models',
+            Object.entries(task.llmModels ?? {})
+              .map(([model, calls]) => `${model} × ${fmt.int(calls)}`)
+              .join(', '),
+          ],
         ].filter(([, v]) => v != null && v !== '') as [string, string | number][]
       ).map(([label, value]) => [label, String(value)])
     : []

@@ -24,7 +24,7 @@ from ..brain.platform import (
 from ..brain.schemas import SimulationSettings
 from ..catalog.queries import CatalogQueries, FieldFilter, Tuple4
 from ..db.models import Study, StudyStatus, Trial, TrialState, utcnow
-from ..llm.keys import BudgetExhaustedError, LLMError
+from ..llm.keys import BudgetExhaustedError, LLMError, LLMUnavailable
 from ..llm.prompts import POWER_POOL_LAB
 from ..llm.text import FENCE
 from ..tasks import spawn
@@ -430,7 +430,12 @@ async def _write(optimizer: Optimizer, study_id: int) -> None:
         by = dict(llm.get("byDataset") or {})
         ids = run.dataset_ids
         dataset = min(ids, key=lambda d: (by.get(d, {}).get("calls", 0), ids.index(d)))
-        model = optimizer.llm.registry.get(run.model)
+        # The task's model first; with it out of budget or its provider down, the next one a
+        # Key can run, most requests left first, so the run never sits waiting for a reset.
+        refs = [run.model]
+        if not run.only_model:
+            refs += [str(m["ref"]) for m in await optimizer.llm.runnable()]
+        models = [m for ref in dict.fromkeys(refs) if (m := optimizer.llm.registry.get(ref))]
         operators = await optimizer.metadata.cached_operators() or []
         ctx = await context_for(
             optimizer.alphas.catalog,
@@ -440,7 +445,7 @@ async def _write(optimizer: Optimizer, study_id: int) -> None:
             dataset,
             FieldFilter.model_validate(run.field_filter) if run.field_filter else None,
         )
-        if model is None:
+        if not models:
             return await _pause(
                 optimizer,
                 study_id,
@@ -462,42 +467,67 @@ async def _write(optimizer: Optimizer, study_id: int) -> None:
 
         memory = await memory_of(optimizer, study_id, dataset)
         offset = int(by.get(dataset, {}).get("offset", 0))
-        user, shown = user_prompt(ctx, operators, run, memory, offset, model.prompt_tokens)
-        entry: dict[str, Any] = {
-            "at": utcnow().isoformat(),
-            "dataset": dataset,
-            "model": model.id,
-            "fields": shown,
-        }
         items: list[dict[str, Any]] = []
         answered = False
         failing: str | None = None
-        try:
-            answer = await optimizer.llm.generate(
-                system=POWER_POOL_LAB,
-                user=user,
-                model_ref=model.ref,
-                response_schema=SCHEMA,
-                temperature=1.0,
-            )
+        spent: list[BudgetExhaustedError] = []
+        down: LLMUnavailable | None = None
+        entry: dict[str, Any] = {}
+        model = models[0]
+        shown = 0
+        for model in models:
+            user, shown = user_prompt(ctx, operators, run, memory, offset, model.prompt_tokens)
+            entry = {
+                "at": utcnow().isoformat(),
+                "dataset": dataset,
+                "model": model.id,
+                "fields": shown,
+            }
+            try:
+                answer = await optimizer.llm.generate(
+                    system=POWER_POOL_LAB,
+                    user=user,
+                    model_ref=model.ref,
+                    response_schema=SCHEMA,
+                    temperature=1.0,
+                )
+            except BudgetExhaustedError as exc:
+                spent.append(exc)
+                continue
+            except LLMUnavailable as exc:
+                down = exc
+                continue
+            except LLMError as exc:
+                _retry[study_id] = time.monotonic() + 60.0
+                entry["error"] = str(exc)[:300]
+                llm["failed"] = int(llm.get("failed") or 0) + 1
+                if llm["failed"] >= 3:
+                    # Saved as none, so a resumed task counts its failures afresh.
+                    llm["failed"] = 0
+                    failing = f"The LLM failed 3 times in a row: {exc}"
+                break
             answered = True
             items = parse_alphas(answer.text)[:40]
             entry["tokens"] = answer.total_tokens
             if not items:
                 entry["error"] = "The answer was not the JSON asked for: " + answer.text[:200]
-        except BudgetExhaustedError as exc:
-            _retry[study_id] = time.monotonic() + max(5.0, exc.retry_after)
-            if exc.daily:
-                await _note(optimizer, study_id, f"Waiting for LLM budget: {exc}")
-            return None
-        except LLMError as exc:
+            break
+        else:
+            if down is None:
+                # Every model is out of budget: wait for the soonest to come back.
+                _retry[study_id] = time.monotonic() + max(5.0, min(e.retry_after for e in spent))
+                if any(e.daily for e in spent):
+                    reason = (
+                        str(spent[0])
+                        if len(spent) == 1
+                        else f"all {len(spent)} models a Key can run have used their daily "
+                        "allowance. The task carries on when the first one resets."
+                    )
+                    await _note(optimizer, study_id, f"Waiting for LLM budget: {reason}")
+                return None
+            # A busy provider passes: tried again in a minute, never counted toward a pause.
             _retry[study_id] = time.monotonic() + 60.0
-            entry["error"] = str(exc)[:300]
-            llm["failed"] = int(llm.get("failed") or 0) + 1
-            if llm["failed"] >= 3:
-                # Saved as none, so a resumed task counts its failures afresh.
-                llm["failed"] = 0
-                failing = f"The LLM failed 3 times in a row: {exc}"
+            entry["error"] = str(down)[:300]
 
         table = operator_table(operators)
         rng = random.Random()
@@ -533,7 +563,7 @@ async def _write(optimizer: Optimizer, study_id: int) -> None:
                         Trial(
                             study_id=study_id,
                             number=number,
-                            params={"dataset": dataset},
+                            params={"dataset": dataset, "model": model.id},
                             distributions={},
                             expression=expression,
                             settings=settings,
@@ -547,7 +577,7 @@ async def _write(optimizer: Optimizer, study_id: int) -> None:
                         Trial(
                             study_id=study_id,
                             number=number,
-                            params={"dataset": dataset, "rejected": True},
+                            params={"dataset": dataset, "model": model.id, "rejected": True},
                             distributions={},
                             expression=text[:2000],
                             settings={},
@@ -571,6 +601,9 @@ async def _write(optimizer: Optimizer, study_id: int) -> None:
                 mine["offset"] = offset + shown
                 by[dataset] = mine
                 llm["byDataset"] = by
+                tally = dict(llm.get("byModel") or {})
+                tally[model.id] = int(tally.get(model.id) or 0) + 1
+                llm["byModel"] = tally
             entry |= {"valid": valid, "rejected": rejected}
             params.llm = llm
             params.calls = [*params.calls, entry][-100:]
