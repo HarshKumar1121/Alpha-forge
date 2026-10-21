@@ -35,7 +35,8 @@ const DATE_TIME = new Intl.DateTimeFormat('en-US', {
 })
 
 /** The moment an ISO string names, or null when it is not one. */
-function moment(iso: string | null | undefined): Date | null {
+/** An ISO time as a Date, an offset-less one read as UTC; `null` when it is not one. */
+export function moment(iso: string | null | undefined): Date | null {
   if (!iso) return null
   const parsed = new Date(normaliseIso(iso))
   // Formatting an Invalid Date throws, which would blank the screen over one bad field.
@@ -138,5 +139,5 @@ export function secondsSince(iso: string | null | undefined, now = Date.now()): 
 
 /** Some backend timestamps carry no offset; they are UTC. */
 function normaliseIso(iso: string): string {
-  return /[zZ]|[+-]\d\d:\d\d$/.test(iso) || iso.length <= 10 ? iso : `${iso}Z`
+  return /[zZ]|[+-]\d\d:?\d\d$/.test(iso) || iso.length <= 10 ? iso : `${iso}Z`
 }

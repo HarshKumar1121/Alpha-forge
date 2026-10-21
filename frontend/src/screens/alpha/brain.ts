@@ -11,7 +11,7 @@ import {
   POWER_POOL_DESCRIPTION_MIN_LENGTH,
 } from '@/api/platform'
 import type { AlphaCheck } from '@/api/types'
-import { isNum } from '@/lib/format'
+import { isNum, moment } from '@/lib/format'
 import type { AlphaInfo } from './api'
 import { CHECK_MESSAGES } from './messages'
 
@@ -140,15 +140,10 @@ const STAMP = new Intl.DateTimeFormat('en-US', {
 // names the day before.
 const MESSAGE_DAY = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC' })
 
-const valid = (iso: string | null | undefined) => {
-  const date = iso ? new Date(iso) : null
-  return date && !Number.isNaN(date.getTime()) ? date : null
-}
-
 /** `09/30/2026 EDT`: a day on BRAIN's own clock, as its Created and Start Date read. */
 export function platformDay(iso: string | null | undefined): string {
   // A bare day is that day in New York, not the UTC midnight that would read as the day before.
-  const date = valid(iso?.length === 10 ? `${iso}T12:00:00Z` : iso)
+  const date = moment(iso?.length === 10 ? `${iso}T12:00:00Z` : iso)
   if (!date) return ''
   const part = (type: string) => ZONED_DAY.formatToParts(date).find((p) => p.type === type)?.value
   return `${part('month')}/${part('day')}/${part('year')} ${part('timeZoneName')}`
@@ -156,7 +151,7 @@ export function platformDay(iso: string | null | undefined): string {
 
 /** `Wed, 09/30/2026, 10:03 AM` on this computer's clock: Last saved, Last Run. */
 export const stamp = (iso: string | null | undefined) => {
-  const date = valid(iso)
+  const date = moment(iso)
   return date ? STAMP.format(date) : ''
 }
 

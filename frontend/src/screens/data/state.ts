@@ -166,6 +166,9 @@ export const multiplier = (v: number | null | undefined) =>
   isNum(v) ? `×${fmt.ratio(v, 1)}` : DASH
 
 /** Client-side sort for tables the backend returns whole. Absent values last. */
+/** Numbers inside text in their own order: TOP200 before TOP1000, model2 before model10. */
+const NATURAL = new Intl.Collator('en-US', { numeric: true })
+
 export function sortRows<T>(rows: T[], sort: Sort): T[] {
   const key = sort.key as keyof T
   return [...rows].sort((a, b) => {
@@ -173,7 +176,14 @@ export function sortRows<T>(rows: T[], sort: Sort): T[] {
     const y = b[key]
     if (x == null) return y == null ? 0 : 1
     if (y == null) return -1
-    const c = x < y ? -1 : x > y ? 1 : 0
+    const c =
+      typeof x === 'string' && typeof y === 'string'
+        ? NATURAL.compare(x, y)
+        : x < y
+          ? -1
+          : x > y
+            ? 1
+            : 0
     return sort.desc ? -c : c
   })
 }

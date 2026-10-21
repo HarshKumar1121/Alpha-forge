@@ -114,11 +114,34 @@ export function code(text: string): string {
   )
 }
 
-/** The names the template's own lines define: `r = …;`. */
+/** A name being assigned, read from where a statement starts. */
+const ASSIGNED = /\s*([A-Za-z_]\w*)\s*=(?!=)/y
+
+/**
+ * The names the template's own lines define: `r = …;`. Only outside brackets, as the
+ * highlighter reads them: inside a call spread over lines, `lag = 1` names an option.
+ */
 export function locals(blank: string): Set<string> {
-  return new Set(
-    [...blank.matchAll(/(?:^|[;\n])\s*([A-Za-z_]\w*)\s*=(?!=)/g)].map((m) => m[1] ?? ''),
-  )
+  const found = new Set<string>()
+  let depth = 0
+  const statement = (at: number) => {
+    if (depth > 0) return
+    ASSIGNED.lastIndex = at
+    const name = ASSIGNED.exec(blank)?.[1]
+    if (name) found.add(name)
+  }
+  statement(0)
+  for (let at = 0; at < blank.length; at++) {
+    const ch = blank[at]
+    if (ch === '(' || ch === '[' || ch === '{') depth += 1
+    else if (ch === ')' || ch === ']' || ch === '}') depth = Math.max(0, depth - 1)
+    else if (ch === ';') {
+      // A statement ends here, as the highlighter also reads it: an unclosed bracket stops.
+      depth = 0
+      statement(at + 1)
+    } else if (ch === '\n') statement(at + 1)
+  }
+  return found
 }
 
 /** Every bare name, not a `$variable` and not an operator being called. */
