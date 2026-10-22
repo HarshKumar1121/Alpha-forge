@@ -269,7 +269,7 @@ function TreeRow({
     >
       <div
         className={cn(
-          'flex h-7 shrink-0 items-center gap-1 pr-3 text-body-compact transition-colors hover:bg-surface-2 data-[popup-open]:bg-surface-2',
+          'group/row flex h-7 shrink-0 items-center gap-1 pr-3 text-body-compact transition-colors hover:bg-surface-2 data-[popup-open]:bg-surface-2',
           depth === 0 ? 'pl-1.5' : depth === 1 ? 'pl-6' : 'pl-10.5',
         )}
       >
@@ -307,6 +307,16 @@ function TreeRow({
             </span>
           }
         />
+        {/* The right-click menu's first item, in sight on hover so it can be found at all. */}
+        <button
+          type="button"
+          aria-label={`Copy the Data Fields of ${label}`}
+          title="Copy Data Fields · right-click for more"
+          onClick={onCopy}
+          className="shrink-0 rounded-xs p-0.5 text-ink-subtle opacity-0 transition-opacity group-hover/row:opacity-100 hover:text-ink focus-visible:opacity-100"
+        >
+          <CopyIcon className="size-3.5" aria-hidden />
+        </button>
         {count != null && <span className="num shrink-0 text-ink-subtle">{fmt.int(count)}</span>}
       </div>
     </ContextMenu>

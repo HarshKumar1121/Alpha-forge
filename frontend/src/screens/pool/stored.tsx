@@ -355,7 +355,7 @@ export function Stored({
             selected: picked,
             onSelect: toggle,
           })}
-          loading={page.isPending}
+          loading={page.isPending || page.isPlaceholderData}
           error={page.error}
           empty={
             overview.data?.counts.alphas === 0

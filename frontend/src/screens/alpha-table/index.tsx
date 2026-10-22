@@ -11,6 +11,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { components } from '@/api/generated'
 import { http } from '@/api/http'
+import { fmt } from '@/lib/format'
 import { useDebounced } from '@/lib/use-debounced'
 import { AlphaActionsMenu } from '@/screens/pool/shared'
 import { Button, Checkbox, Input, Switch } from '@/ui/kit'
@@ -128,7 +129,7 @@ function useLocalNet(view: string, rows: AlphaTableRow[], on: boolean) {
     enabled: charged !== undefined && ids.length > 0,
     placeholderData: keepPreviousData,
   })
-  return useMemo(() => {
+  const merged = useMemo(() => {
     if (charged === undefined) return rows
     const figures = query.data?.figures ?? {}
     return rows.map((r) => {
@@ -138,6 +139,7 @@ function useLocalNet(view: string, rows: AlphaTableRow[], on: boolean) {
       return merged
     })
   }, [rows, charged, query.data])
+  return { rows: merged, pending: query.isFetching }
 }
 
 /** Rows in a column's order, blank last whichever way: an Alpha with no figure is not the lowest. */
@@ -224,7 +226,8 @@ export function AlphaTable({
     (o) => overrides.find((x) => x.key === o.key) ?? o,
   )
 
-  const netRows = useLocalNet(view, rows, afterCost === 'local')
+  const { rows: netRows, pending: netPending } = useLocalNet(view, rows, afterCost === 'local')
+  const netBps = useNetBps(view)
   const [ownSort, setOwnSort] = useState<Sort | null>(null)
   const current = onSort ? (sort ?? null) : ownSort
   const sorted = useMemo(
@@ -258,23 +261,54 @@ export function AlphaTable({
 
   return (
     <AnglesContext.Provider value={angles}>
-      <DataTable
-        label={label}
-        rows={sorted}
-        rowKey={(r) => r.key}
-        activeKey={openAlpha ? sorted.find((r) => r.alphaId === openAlpha)?.key : null}
-        columns={columns}
-        {...(current ? { sort: current } : {})}
-        onSort={onSort ?? setOwnSort}
-        {...(selected && onSelect ? { selected, onSelect } : {})}
-        {...(onRowClick ? { onRowClick } : {})}
-        {...(rowClass ? { rowClass: rowClass(sorted) } : {})}
-        {...(loading !== undefined ? { loading } : {})}
-        error={error}
-        {...(empty !== undefined ? { empty } : {})}
-        maxHeight={maxHeight}
-        {...(page !== undefined ? { page } : {})}
-      />
+      <div className="flex min-w-0 flex-col gap-2">
+        {/* Each way the table is read other than as BRAIN sends it, said on the table itself
+          rather than only in the column picker that turned it on. */}
+        {(netBps !== undefined || angles) && (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-body-compact text-ink-muted">
+            {netBps !== undefined && (
+              <span className="inline-flex flex-wrap items-center gap-1.5">
+                After-Cost Mode · <span className="num text-ink">{fmt.ratio(netBps, 1)} bps</span>
+                {afterCost === 'local' && (
+                  <span className="text-ink-subtle">· — where no daily PnL is stored</span>
+                )}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setView(view, { afterCost: false })}
+                >
+                  Turn Off
+                </Button>
+              </span>
+            )}
+            {angles && (
+              <span className="inline-flex items-center gap-1.5">
+                Correlations as Angles
+                <Button size="sm" variant="ghost" onClick={() => setView(view, { angles: false })}>
+                  Show ρ
+                </Button>
+              </span>
+            )}
+          </div>
+        )}
+        <DataTable
+          label={label}
+          rows={sorted}
+          rowKey={(r) => r.key}
+          activeKey={openAlpha ? sorted.find((r) => r.alphaId === openAlpha)?.key : null}
+          columns={columns}
+          {...(current ? { sort: current } : {})}
+          onSort={onSort ?? setOwnSort}
+          {...(selected && onSelect ? { selected, onSelect } : {})}
+          {...(onRowClick ? { onRowClick } : {})}
+          {...(rowClass ? { rowClass: rowClass(sorted) } : {})}
+          loading={(loading ?? false) || netPending}
+          error={error}
+          {...(empty !== undefined ? { empty } : {})}
+          maxHeight={maxHeight}
+          {...(page !== undefined ? { page } : {})}
+        />
+      </div>
     </AnglesContext.Provider>
   )
 }

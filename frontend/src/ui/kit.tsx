@@ -312,7 +312,7 @@ export function Checkbox({
 }) {
   const id = useId()
   return (
-    <span className={cn('group inline-flex items-start gap-2.5', className)}>
+    <span className={cn('group/check inline-flex items-start gap-2.5', className)}>
       <BaseCheckbox.Root
         id={id}
         checked={checked}
@@ -325,7 +325,7 @@ export function Checkbox({
           'data-[checked]:border-(--btn-primary-bg) data-[checked]:bg-(--btn-primary-bg)',
           'data-[indeterminate]:border-(--btn-primary-bg) data-[indeterminate]:bg-(--btn-primary-bg)',
           'data-[disabled]:border-(--field-border-disabled) data-[disabled]:bg-surface-2',
-          !disabled && 'cursor-pointer group-hover:border-(--field-border-hover)',
+          !disabled && 'cursor-pointer group-hover/check:border-(--field-border-hover)',
         )}
         {...props}
       >
@@ -344,7 +344,7 @@ export function Checkbox({
             'flex min-w-0 flex-col gap-0.5 text-body select-none',
             disabled
               ? 'cursor-not-allowed text-(--field-text-disabled)'
-              : 'cursor-pointer text-ink-muted group-hover:text-ink',
+              : 'cursor-pointer text-ink-muted group-hover/check:text-ink',
           )}
         >
           {label}

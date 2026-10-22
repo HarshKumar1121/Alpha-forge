@@ -38,6 +38,7 @@ import { type Column, DataTable, Pager, type Sort } from '@/ui/table'
 import { AvailabilityFilters } from './availability'
 import { datasetNames } from './dataset-tree'
 import {
+  describeFilter,
   endDatasetPick,
   type FieldFilterState,
   isActive,
@@ -388,7 +389,7 @@ export function FieldsTab({ scope }: { scope: Scope }) {
               page={offset}
               // While a lab picks datasets, its ticks are the only ones on the page.
               {...(picking ? {} : { selected: picked, onSelect: pick })}
-              loading={query.isPending}
+              loading={query.isPending || query.isPlaceholderData}
               error={query.error}
               maxHeight={full.on ? 'calc(100vh - 17rem)' : undefined}
               empty={
@@ -512,6 +513,16 @@ function FieldFilters({ scope }: { scope: Scope }) {
     ]),
   ]
   const advancedOn = ADVANCED.filter((k) => isActive(active[k])).length
+  // What More Filters narrows by, said on it while it is closed.
+  const narrowed = [
+    ...(datasetIds.length
+      ? [`${fmt.int(datasetIds.length)} Dataset${datasetIds.length === 1 ? '' : 's'}`]
+      : []),
+    ...describeFilter(
+      Object.fromEntries(ADVANCED.map((k) => [k, active[k]])) as FieldFilterState,
+      scope.region,
+    ),
+  ]
   const s = stats.data
 
   // A lab choosing datasets lands here: More Filters opens, lit, and scrolls into view.
@@ -616,6 +627,11 @@ function FieldFilters({ scope }: { scope: Scope }) {
             <>
               More Filters
               {advancedOn > 0 && <Badge className="num">{advancedOn}</Badge>}
+              {narrowed.length > 0 && (
+                <span className="min-w-0 truncate text-body-compact text-ink-subtle group-open:hidden">
+                  {narrowed.join(' · ')}
+                </span>
+              )}
             </>
           }
         >
@@ -714,9 +730,13 @@ function NumberBox({
 }) {
   const shown = value == null ? '' : String(+(value * scale).toFixed(6))
   const [text, setText] = useState(shown)
+  // Passed on once typing pauses, so "0.75" asks for the fields once rather than per key.
+  const [waiting, setWaiting] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  useEffect(() => () => clearTimeout(timer.current), [])
   // Typed text stands while it still means the number held above: "1.0" typed on the way to
   // "1.05" parses to 1, and rewriting the box to "1" would eat the zero the user just typed.
-  const same = text === '' ? value == null : Number(text) / scale === value
+  const same = waiting || (text === '' ? value == null : Number(text) / scale === value)
   return (
     <Input
       type="number"
@@ -726,8 +746,14 @@ function NumberBox({
       placeholder={placeholder}
       value={same ? text : shown}
       onChange={(e) => {
-        setText(e.target.value)
-        onChange(e.target.value === '' ? null : Number(e.target.value) / scale)
+        const typed = e.target.value
+        setText(typed)
+        setWaiting(true)
+        clearTimeout(timer.current)
+        timer.current = setTimeout(() => {
+          setWaiting(false)
+          onChange(typed === '' ? null : Number(typed) / scale)
+        }, 400)
       }}
     />
   )

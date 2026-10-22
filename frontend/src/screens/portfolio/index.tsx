@@ -292,20 +292,24 @@ export function PortfolioScreen() {
               <span className="num text-ink">{included.length}</span> of{' '}
               <span className="num">{all.length}</span> SUBMITTED selected
             </span>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => setOverrides(new Map(all.map((m) => [m.alphaId, true])))}
-            >
-              Select All
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => setOverrides(new Map(all.map((m) => [m.alphaId, false])))}
-            >
-              Deselect All
-            </Button>
+            {/* Back to every Alpha: filters, Selection Expression and hand ticks all cleared, so
+                no chip stays pressed over a selection it no longer makes. Ticking all or none
+                by hand is the table's own header box. */}
+            {(Object.values(picked).some((v) => v.length > 0) ||
+              selection.trim() !== '' ||
+              overrides.size > 0) && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setPicked({})
+                  setSelection('')
+                  setOverrides(new Map())
+                }}
+              >
+                Reset Filters
+              </Button>
+            )}
             <Button
               size="sm"
               variant="ghost"

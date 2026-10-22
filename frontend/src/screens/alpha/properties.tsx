@@ -1,6 +1,7 @@
 /** Name, category, colour, tags and description, saved to the Alpha on BRAIN. Saving never submits. */
 
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useBlocker } from '@tanstack/react-router'
 import { CheckIcon, CopyIcon, SparklesIcon } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
@@ -9,7 +10,7 @@ import { cn } from '@/lib/cn'
 import { usePreferences } from '@/lib/preferences'
 import { useRunnableModels } from '@/screens/ai/shared'
 import { Button, ErrorNotice, Field, Input, Panel, Textarea } from '@/ui/kit'
-import { Select } from '@/ui/overlay'
+import { Confirm, Select } from '@/ui/overlay'
 import { type AlphaInfo, type AlphaView, alpha as api } from './api'
 import { describedForPowerPool, descriptionProblems, POWER_POOL_TEMPLATE, stamp } from './brain'
 
@@ -149,6 +150,12 @@ export function PropertiesPanel({ alpha }: { alpha: AlphaInfo }) {
         description: 'Read it through, then Save to BRAIN.',
       })
     },
+  })
+  // A description written by hand, or by a model on a paid request, is not dropped unasked.
+  const leaving = useBlocker({
+    shouldBlockFn: () => dirty && !save.isPending,
+    enableBeforeUnload: () => dirty,
+    withResolver: true,
   })
 
   return (
@@ -298,6 +305,17 @@ export function PropertiesPanel({ alpha }: { alpha: AlphaInfo }) {
           </p>
         ))}
       </div>
+      <Confirm
+        open={leaving.status === 'blocked'}
+        onOpenChange={(open) => !open && leaving.reset?.()}
+        title="Leave without saving?"
+        confirmLabel="Leave"
+        cancelLabel="Stay"
+        danger
+        onConfirm={() => leaving.proceed?.()}
+      >
+        The changes to this Alpha's properties are not saved to BRAIN yet.
+      </Confirm>
     </Panel>
   )
 }

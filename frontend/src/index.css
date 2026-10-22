@@ -337,6 +337,12 @@
     scrollbar-width: thin;
     scrollbar-color: var(--color-hairline-strong) transparent;
   }
+  /* Tailwind v4 leaves buttons on the arrow; rows and boxes here already point, so these do too. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  summary {
+    cursor: pointer;
+  }
   :focus-visible {
     outline: 2px solid var(--focus-ring);
     outline-offset: 2px;

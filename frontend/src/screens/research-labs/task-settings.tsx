@@ -26,6 +26,7 @@ import {
   Segmented,
 } from '@/ui/kit'
 import { Sheet } from '@/ui/overlay'
+import { ScopePicker } from '@/ui/scope-picker'
 import type { LabDraft } from './lab-task'
 
 const DECAYS = [0, 3, 5, 7, 10]
@@ -92,6 +93,24 @@ export interface LabPlan {
   sample: { expression: string; settings: Record<string, unknown> }[]
   problems: string[]
   warnings: string[]
+}
+
+/** The market a lab's task runs in. Another region or delay starts its datasets afresh. */
+export function MarketPanel({
+  scope,
+  onChange,
+}: {
+  scope: Scope
+  onChange: (change: Partial<Scope>) => void
+}) {
+  return (
+    <Panel
+      title="Market"
+      description="Where every Alpha in the task runs. Datasets are chosen within it."
+    >
+      <ScopePicker scope={scope} onChange={onChange} />
+    </Panel>
+  )
 }
 
 export function DatasetsPanel({
@@ -230,10 +249,13 @@ export function SettingsPanel({
   chosenVector,
   decays = DECAYS,
   maxSimulations,
+  suggested,
   plan,
   error,
 }: {
   draft: LabDraft
+  /** What the task runs while the Simulations box is empty. */
+  suggested?: number | null
   set: (change: Partial<LabDraft>) => void
   vector: string[]
   chosenVector: string[]
@@ -262,6 +284,7 @@ export function SettingsPanel({
           <SimulationsSetting
             value={simulations}
             max={maxSimulations}
+            {...(suggested ? { placeholder: String(suggested) } : {})}
             onChange={(next) => set({ simulations: next })}
           />
           <Fieldset legend="Decay">

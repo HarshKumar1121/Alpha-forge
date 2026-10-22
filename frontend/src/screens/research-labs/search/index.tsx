@@ -19,14 +19,14 @@ import {
 } from '@/screens/research-labs/lab-task'
 import { type SearchLabRequest, searchLab } from '@/screens/research-labs/search/api'
 import { useSearchLab } from '@/screens/research-labs/search/state'
-import { DatasetsPanel, SettingsPanel } from '@/screens/research-labs/task-settings'
+import { DatasetsPanel, MarketPanel, SettingsPanel } from '@/screens/research-labs/task-settings'
 import { ErrorNotice, Page, PageHeader } from '@/ui/kit'
 
 export function SearchLabScreen() {
   const stored = useSearchLab()
   const set = useSearchLab.setState
   const day = useQuery({ queryKey: ['today'], queryFn: () => today.get() })
-  const { chosen, scope, choose } = useLabMarket(stored, set, '/labs/search')
+  const { chosen, scope, choose, move } = useLabMarket(stored, set, '/labs/search')
 
   const options = useQuery({
     queryKey: ['search-lab', 'options'],
@@ -36,10 +36,8 @@ export function SearchLabScreen() {
   // Until the user types a number, the task takes what is left of today (never stored).
   const maxSimulations = options.data?.maxSimulations ?? MAX_SIMULATIONS
   const unspoken = day.data?.simulations.unspoken ?? 0
-  const draft = {
-    ...stored,
-    simulations: stored.simulations ?? (unspoken > 0 ? Math.min(unspoken, maxSimulations) : null),
-  }
+  const suggested = unspoken > 0 ? Math.min(unspoken, maxSimulations) : null
+  const draft = { ...stored, simulations: stored.simulations ?? suggested }
   const vectorOperators = vectorOperatorsOf(draft, options.data?.vector)
   const cores = useCores(draft.cores)
   const { neutralizations } = useScopeOptions({
@@ -77,6 +75,7 @@ export function SearchLabScreen() {
       {options.isError && (
         <ErrorNotice error={options.error} title="Could not read your operators" />
       )}
+      <MarketPanel scope={scope} onChange={move} />
       <DatasetsPanel
         ids={draft.datasetIds}
         scope={scope}
@@ -87,7 +86,9 @@ export function SearchLabScreen() {
         onRemove={(ids) => set({ datasetIds: stored.datasetIds.filter((x) => !ids.includes(x)) })}
       />
       <SettingsPanel
-        draft={draft}
+        // The box holds only what was typed, so it can be emptied; the suggestion shows faintly.
+        draft={stored}
+        suggested={suggested}
         set={set}
         vector={options.data?.vector ?? []}
         chosenVector={vectorOperators}

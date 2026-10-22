@@ -79,8 +79,9 @@ export function DataTable<T>({
   page?: number
 }) {
   const scroller = useRef<HTMLDivElement>(null)
-  // Where the last tick landed and whether shift is held for this one, for ticking a run.
-  const lastTicked = useRef<number | null>(null)
+  // The row last ticked, by key so a list refiltered since cannot aim a run at another row,
+  // and whether shift is held for this one, for ticking a run.
+  const lastTicked = useRef<string | null>(null)
   const shift = useRef(false)
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-run to start each new sort or page at its top
   useEffect(() => {
@@ -218,7 +219,13 @@ export function DataTable<T>({
         ) : rows.length === 0 ? (
           <Empty title={empty} />
         ) : (
-          <div role="rowgroup" className="relative" style={{ height: virtual.getTotalSize() }}>
+          <div
+            role="rowgroup"
+            // Rows from before a new sort or page still showing while it loads: dimmed, not live.
+            className={cn('relative transition-opacity', loading && 'opacity-60')}
+            aria-busy={loading || undefined}
+            style={{ height: virtual.getTotalSize() }}
+          >
             {virtual.getVirtualItems().map((item) => {
               const row = rows[item.index]
               if (row === undefined) return null
@@ -283,11 +290,12 @@ export function DataTable<T>({
                         aria-label="Select row"
                         checked={isSelected}
                         onChange={(on) => {
-                          const from = shift.current ? lastTicked.current : null
+                          const at = shift.current ? lastTicked.current : null
+                          const from = at === null ? -1 : rows.findIndex((r) => rowKey(r) === at)
                           shift.current = false
-                          lastTicked.current = item.index
+                          lastTicked.current = key
                           const run =
-                            from === null
+                            from < 0
                               ? [row]
                               : rows.slice(
                                   Math.min(from, item.index),

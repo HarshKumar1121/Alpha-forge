@@ -81,7 +81,18 @@ export function useLabMarket(
     setDataScope(scope)
     void navigate({ to: '/data' })
   }
-  return { chosen, scope, choose }
+  /** To another market. Datasets belong to a region and delay, so leaving one drops them. */
+  const move = (change: Partial<Scope>) => {
+    const next: Partial<LabMarket> = {}
+    if (change.region !== undefined) next.region = change.region
+    if (change.delay !== undefined) next.delay = change.delay
+    if (change.universe !== undefined) next.universe = change.universe
+    const moved =
+      (next.region ?? draft.region) !== draft.region || (next.delay ?? draft.delay) !== draft.delay
+    if (moved) Object.assign(next, { datasetIds: [], fieldFilter: null })
+    if (Object.keys(next).length) set(next)
+  }
+  return { chosen, scope, choose, move }
 }
 
 /**

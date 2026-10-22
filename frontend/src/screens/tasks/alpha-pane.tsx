@@ -240,6 +240,15 @@ export function AlphaPane({
     (pool.found?.rows.filter((r) => r.verdict === 'unmeasured').length ?? 0)
   const unsynced = pool.found?.scopes.flatMap((s) => s.poolWithoutPnl).length ?? 0
   const uncosted = survivors.filter((r) => r.afterCostSharpe == null).length
+  // Opening on the last step with nothing measured yet would show an empty table over Alphas
+  // that are clean: start one step back then, once, and leave the choice to the reader after.
+  const opened = useRef(false)
+  useEffect(() => {
+    if (opened.current || !pool.found) return
+    opened.current = true
+    if (initial === 'pool' && survivors.length === 0 && clean.length > 0 && unmeasured > 0)
+      setStage('clean')
+  }, [pool.found, initial, survivors.length, clean.length, unmeasured])
 
   return (
     <Panel

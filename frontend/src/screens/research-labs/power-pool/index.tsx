@@ -24,6 +24,7 @@ import { type PowerPoolRequest, powerPoolLab } from '@/screens/research-labs/pow
 import {
   CoresSetting,
   DatasetsPanel,
+  MarketPanel,
   SimulationsSetting,
 } from '@/screens/research-labs/task-settings'
 import {
@@ -94,7 +95,7 @@ const PRE =
 export function PowerPoolLabScreen() {
   const draft = useDraft()
   const set = useDraft.setState
-  const { scope, choose } = useLabMarket(draft, set, '/labs/power-pool')
+  const { scope, choose, move } = useLabMarket(draft, set, '/labs/power-pool')
   const options = useQuery({
     queryKey: ['power-pool-lab', 'options'],
     queryFn: powerPoolLab.options,
@@ -163,6 +164,7 @@ export function PowerPoolLabScreen() {
           shows you.
         </Notice>
       )}
+      <MarketPanel scope={scope} onChange={move} />
       <DatasetsPanel
         ids={draft.datasetIds}
         scope={scope}

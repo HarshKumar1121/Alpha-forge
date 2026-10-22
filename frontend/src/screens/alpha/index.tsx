@@ -8,7 +8,7 @@ import { Link, useCanGoBack, useParams, useRouter } from '@tanstack/react-router
 import { ArrowLeftIcon, ExternalLinkIcon } from 'lucide-react'
 import { useState } from 'react'
 import { DetailSheet } from '@/screens/pool/detail'
-import { AlphaActionsMenu, AstInspector, RecheckButton } from '@/screens/pool/shared'
+import { AlphaActionsMenu, AstInspector, OpenInBrain, RecheckButton } from '@/screens/pool/shared'
 import { Badge, Button, ErrorNotice, Notice, Page, Panel, Skeleton, type Tone } from '@/ui/kit'
 import { Select } from '@/ui/overlay'
 import { type AlphaInfo, alpha as api, type RecordsetName } from './api'
@@ -192,16 +192,20 @@ function Header({
                 disabled={!unsubmitted || failing || quick}
               />
             )}
-            <Button
-              size="sm"
-              variant="primary"
-              disabled={!unsubmitted || failing || quick || hidingTest}
-              title="Submitting is permanent, so it happens on BRAIN: this opens the Alpha there"
-              render={<a href={a.brainUrl} target="_blank" rel="noopener noreferrer" />}
-            >
-              <ExternalLinkIcon aria-hidden />
-              Submit on BRAIN
-            </Button>
+            {/* Not ready to submit, it still opens on BRAIN: only the invitation changes. */}
+            {unsubmitted && !failing && !quick && !hidingTest ? (
+              <Button
+                size="sm"
+                variant="primary"
+                title="Submitting is permanent, so it happens on BRAIN: this opens the Alpha there"
+                render={<a href={a.brainUrl} target="_blank" rel="noopener noreferrer" />}
+              >
+                <ExternalLinkIcon aria-hidden />
+                Submit on BRAIN
+              </Button>
+            ) : (
+              <OpenInBrain url={a.brainUrl} />
+            )}
           </>
         )}
         <AlphaActionsMenu alphaId={a.alphaId} />
