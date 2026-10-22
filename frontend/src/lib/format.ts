@@ -115,16 +115,17 @@ type Figure = (v: number | null | undefined) => string
 
 /** BRAIN's six core figures, named and written the same wherever they appear. `signed`: the
  *  sign means gain or loss, so the figure takes profit or loss colour. */
+/** Each figure's tone is `figureTone` in the kit. */
 export const CORE_METRICS: Record<
   'sharpe' | 'turnover' | 'fitness' | 'returns' | 'drawdown' | 'margin',
-  { label: string; show: Figure; signed: boolean }
+  { label: string; show: Figure }
 > = {
-  sharpe: { label: 'Sharpe', show: (v) => fmt.ratio(v), signed: true },
-  turnover: { label: 'Turnover', show: (v) => fmt.pct(v, 2), signed: false },
-  fitness: { label: 'Fitness', show: (v) => fmt.ratio(v), signed: true },
-  returns: { label: 'Returns', show: (v) => fmt.pct(v, 2), signed: true },
-  drawdown: { label: 'Drawdown', show: (v) => fmt.pct(v, 2), signed: false },
-  margin: { label: 'Margin', show: (v) => fmt.bps(v, 2), signed: true },
+  sharpe: { label: 'Sharpe', show: (v) => fmt.ratio(v) },
+  turnover: { label: 'Turnover', show: (v) => fmt.pct(v, 2) },
+  fitness: { label: 'Fitness', show: (v) => fmt.ratio(v) },
+  returns: { label: 'Returns', show: (v) => fmt.pct(v, 2) },
+  drawdown: { label: 'Drawdown', show: (v) => fmt.pct(v, 2) },
+  margin: { label: 'Margin', show: (v) => fmt.bps(v, 2) },
 }
 
 /** The order figures are read in, Sharpe first. */

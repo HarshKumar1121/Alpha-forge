@@ -2490,6 +2490,10 @@ export interface components {
             fitness: number | null;
             /** Haspnl */
             hasPnl: boolean;
+            /** Limits */
+            limits?: {
+                [key: string]: number;
+            };
             /** Longcount */
             longCount?: number | null;
             /** Margin */
@@ -3224,15 +3228,6 @@ export interface components {
             /** Reason */
             reason: string;
         };
-        /** Feature */
-        Feature: {
-            /** Code */
-            code: string;
-            /** Label */
-            label: string;
-            /** Meaning */
-            meaning: string;
-        };
         /** FieldAvailabilityRow */
         FieldAvailabilityRow: {
             /** Alpha Count */
@@ -3956,6 +3951,10 @@ export interface components {
             kRatio?: number | null;
             /** Labelled */
             labelled: boolean;
+            /** Limits */
+            limits?: {
+                [key: string]: number;
+            };
             /** Longcount */
             longCount: number | null;
             /** Margin */
@@ -4432,6 +4431,10 @@ export interface components {
             failedChecks: string[];
             /** Fitness */
             fitness: number | null;
+            /** Limits */
+            limits?: {
+                [key: string]: number;
+            };
             /** Longcount */
             longCount?: number | null;
             /** Margin */
@@ -4661,6 +4664,10 @@ export interface components {
             expression: string;
             /** Fitness */
             fitness: number | null;
+            /** Limits */
+            limits?: {
+                [key: string]: number;
+            };
             /** Margin */
             margin: number | null;
             /** Returns */
@@ -5207,6 +5214,10 @@ export interface components {
             failedChecks: string[];
             /** Fitness */
             fitness: number | null;
+            /** Limits */
+            limits?: {
+                [key: string]: number;
+            };
             /** Longcount */
             longCount?: number | null;
             /** Margin */
@@ -5738,10 +5749,10 @@ export interface components {
             canRunTenAtOnce: boolean;
             /** Email */
             email: string | null;
-            /** Features */
-            features: components["schemas"]["Feature"][];
             /** Fullname */
             fullName: string | null;
+            /** Permissions */
+            permissions: string[];
             /** Signedin */
             signedIn: boolean;
             /** Userid */

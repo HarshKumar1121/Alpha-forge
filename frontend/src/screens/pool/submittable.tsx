@@ -3,7 +3,6 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { CopyIcon } from 'lucide-react'
 import { toast } from 'sonner'
-import { MAX_TURNOVER, MIN_FITNESS, MIN_SHARPE, MIN_TURNOVER } from '@/api/platform'
 import { type AlphaCheck, type Scope, scopeLabel } from '@/api/types'
 import { cn } from '@/lib/cn'
 import { CORE_METRICS, fmt, isNum } from '@/lib/format'
@@ -23,10 +22,11 @@ import {
   Disclosure,
   Empty,
   ErrorNotice,
+  figureTone,
+  type Limits,
   Metric,
   Panel,
   Skeleton,
-  type Tone,
 } from '@/ui/kit'
 import { Tooltip } from '@/ui/overlay'
 import { ScopePicker } from '@/ui/scope-picker'
@@ -44,8 +44,6 @@ const hiddenReasons = (data: SubmittableResponse) =>
   ]
     .filter(Boolean)
     .join('; ')
-
-const pass = (ok: boolean | null): Tone => (ok === null ? 'neutral' : ok ? 'profit' : 'loss')
 
 export function Submittable({ onOpen }: { onOpen: (alphaId: string) => void }) {
   const [scope, setScope] = useScope('pool-submittable')
@@ -177,9 +175,12 @@ function Card({
   alpha: SubmittableAlpha
   onOpen: (alphaId: string) => void
 }) {
-  const d0 = a.settings.delay === 0
-  const sharpeBar = limitOf(a.checks, 'LOW_SHARPE') ?? MIN_SHARPE[d0 ? 0 : 1]
-  const fitnessBar = limitOf(a.checks, 'LOW_FITNESS') ?? MIN_FITNESS[d0 ? 0 : 1]
+  // The limits BRAIN set this Alpha, as its own checks name them: they differ by market.
+  const limits: Limits = Object.fromEntries(
+    a.checks.flatMap((c) => (isNum(c.limit) ? [[c.name, c.limit]] : [])),
+  )
+  const [sharpeBar, fitnessBar] = [limits['LOW_SHARPE'], limits['LOW_FITNESS']]
+  const [turnoverLow, turnoverHigh] = [limits['LOW_TURNOVER'], limits['HIGH_TURNOVER']]
   const passed = a.checks.filter((c) => c.result === 'PASS')
 
   const copy = () =>
@@ -207,34 +208,34 @@ function Card({
           boxed
           size="sm"
           label="Sharpe"
-          hint={`≥ ${fmt.ratio(sharpeBar)}`}
+          {...(sharpeBar !== undefined ? { hint: `≥ ${fmt.ratio(sharpeBar)}` } : {})}
           value={fmt.ratio(a.sharpe)}
-          tone={pass(isNum(a.sharpe) ? a.sharpe >= sharpeBar : null)}
+          tone={figureTone('sharpe', a.sharpe, limits)}
         />
         <Metric
           boxed
           size="sm"
           label="Fitness"
-          hint={`≥ ${fmt.ratio(fitnessBar)}`}
+          {...(fitnessBar !== undefined ? { hint: `≥ ${fmt.ratio(fitnessBar)}` } : {})}
           value={fmt.ratio(a.fitness)}
-          tone={pass(isNum(a.fitness) ? a.fitness >= fitnessBar : null)}
+          tone={figureTone('fitness', a.fitness, limits)}
         />
         <Metric
           boxed
           size="sm"
           label="Turnover"
-          hint={`${fmt.pct(MIN_TURNOVER, 0)}–${fmt.pct(MAX_TURNOVER, 0)}`}
+          {...(turnoverLow !== undefined && turnoverHigh !== undefined
+            ? { hint: `${fmt.pct(turnoverLow, 0)}–${fmt.pct(turnoverHigh, 0)}` }
+            : {})}
           value={CORE_METRICS.turnover.show(a.turnover)}
-          tone={pass(
-            isNum(a.turnover) ? a.turnover >= MIN_TURNOVER && a.turnover <= MAX_TURNOVER : null,
-          )}
+          tone={figureTone('turnover', a.turnover, limits)}
         />
         <Metric
           boxed
           size="sm"
           label="Returns"
           value={CORE_METRICS.returns.show(a.returns)}
-          tone={isNum(a.returns) && a.returns !== 0 ? pass(a.returns > 0) : 'neutral'}
+          tone={figureTone('returns', a.returns)}
         />
         <Metric boxed size="sm" label="Drawdown" value={CORE_METRICS.drawdown.show(a.drawdown)} />
         <Metric boxed size="sm" label="Margin" value={CORE_METRICS.margin.show(a.margin)} />
@@ -248,7 +249,7 @@ function Card({
             label="Test Sharpe"
             hint="held-out years"
             value={fmt.ratio(a.testSharpe)}
-            tone={pass(a.testSharpe > 0)}
+            tone={figureTone('sharpe', a.testSharpe, limits)}
           />
         </div>
       )}
@@ -275,12 +276,6 @@ function Card({
       </div>
     </article>
   )
-}
-
-/** The limit BRAIN reported for a check, e.g. LOW_SHARPE → 1.58. */
-const limitOf = (checks: AlphaCheck[], name: string) => {
-  const limit = checks.find((c) => c.name === name)?.limit
-  return isNum(limit) ? limit : null
 }
 
 function CheckBadge({ check }: { check: AlphaCheck }) {

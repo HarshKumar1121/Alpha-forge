@@ -30,6 +30,7 @@ import {
   Chips,
   Disclosure,
   ErrorNotice,
+  figureTone,
   Notice,
   Page,
   PageHeader,
@@ -92,9 +93,7 @@ function metricColumns<T>(
       width: key === 'margin' ? 'minmax(100px,1fr)' : 'minmax(84px,1fr)',
       cell: (row) => {
         const value = get(row)?.[key]
-        return (
-          <span className={cn('num', m.signed && TEXT_TONE[signTone(value)])}>{m.show(value)}</span>
-        )
+        return <span className={cn('num', TEXT_TONE[figureTone(key, value)])}>{m.show(value)}</span>
       },
     }
   })

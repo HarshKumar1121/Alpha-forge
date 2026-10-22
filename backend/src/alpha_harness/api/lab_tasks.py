@@ -212,6 +212,8 @@ class RankedAlpha(Out):
     #: A check that decides submission came back ERROR: BRAIN could not judge it, which is
     #: told apart from an Alpha a check refused.
     errored: bool = False
+    #: The limit each of BRAIN's figure checks names for this Alpha, by check name.
+    limits: dict[str, float] = Field(default_factory=dict)
 
 
 class WorkflowStarted(Out):

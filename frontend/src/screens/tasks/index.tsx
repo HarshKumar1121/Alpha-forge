@@ -33,13 +33,16 @@ import { SubmittableAlphas } from '@/screens/tasks/submittable'
 import {
   Badge,
   Button,
+  cutoffTone,
   Disclosure,
   Empty,
   ErrorNotice,
   Field,
   Fieldset,
+  figureTone,
   Input,
   LINK,
+  type Limits,
   Metric,
   Notice,
   Page,
@@ -47,7 +50,6 @@ import {
   Panel,
   Progress,
   Segmented,
-  signTone,
   TEXT_TONE,
 } from '@/ui/kit'
 import { Confirm, Dialog, Menu } from '@/ui/overlay'
@@ -63,9 +65,16 @@ const objective = (task: LabTask) =>
     align: 'right',
     value: (r) => r.value,
     cell: (r) => (
-      <span className={cn('num', TEXT_TONE[signTone(r.value)])}>{fmt.ratio(r.value)}</span>
+      <span className={cn('num', TEXT_TONE[objectiveTone(task, r.value, r.limits)])}>
+        {fmt.ratio(r.value)}
+      </span>
     ),
   })
+
+/** A task's objective, judged like Sharpe when it is Sharpe and one Alpha's limits are known;
+ *  otherwise only a negative stands out. */
+const objectiveTone = (task: LabTask, v: number | null | undefined, limits?: Limits) =>
+  task.objectiveLabel === 'Sharpe' ? figureTone('sharpe', v, limits) : cutoffTone(v)
 
 /** A Settings Sampler row is only ever the same expression, so the settings lead instead. */
 const samplerDefaults = (task: LabTask) => [
@@ -254,7 +263,7 @@ export function TasksScreen() {
       width: '96px',
       align: 'right',
       cell: (t) => (
-        <span title={t.objectiveLabel} className={TEXT_TONE[signTone(t.best)]}>
+        <span title={t.objectiveLabel} className={TEXT_TONE[objectiveTone(t, t.best)]}>
           {fmt.ratio(t.best)}
         </span>
       ),

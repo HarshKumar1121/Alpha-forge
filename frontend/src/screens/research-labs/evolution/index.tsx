@@ -34,6 +34,7 @@ import {
   Empty,
   ErrorNotice,
   Fieldset,
+  figureTone,
   Metric,
   Notice,
   Page,
@@ -41,7 +42,6 @@ import {
   Panel,
   Progress,
   Segmented,
-  signTone,
   TEXT_TONE,
 } from '@/ui/kit'
 import { Select } from '@/ui/overlay'
@@ -221,7 +221,11 @@ export function EvolutionLabScreen() {
       header: 'Sharpe',
       width: '80px',
       align: 'right',
-      cell: (r) => <span className={TEXT_TONE[signTone(r.sharpe)]}>{fmt.ratio(r.sharpe)}</span>,
+      cell: (r) => (
+        <span className={TEXT_TONE[figureTone('sharpe', r.sharpe, r.limits)]}>
+          {fmt.ratio(r.sharpe)}
+        </span>
+      ),
     },
     {
       key: 'fitness',

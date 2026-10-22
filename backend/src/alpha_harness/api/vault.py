@@ -140,6 +140,8 @@ class AlphaRow(Out):
     pyramids: list[str] = Field(default_factory=list)
     train_sharpe: float | None = None
     test_sharpe: float | None = None
+    #: The limit each of BRAIN's figure checks names for this Alpha, by check name.
+    limits: dict[str, float] = Field(default_factory=dict)
     #: Picking seeds only: the region a region-agnostic Alpha's figures come from.
     standing_region: str | None = None
 

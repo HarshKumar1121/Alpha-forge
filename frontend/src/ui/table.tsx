@@ -48,7 +48,7 @@ export function DataTable<T>({
   error,
   empty = 'Nothing to show.',
   maxHeight = '70vh',
-  rowHeight = 34,
+  rowHeight = 28,
   label,
   page,
 }: {

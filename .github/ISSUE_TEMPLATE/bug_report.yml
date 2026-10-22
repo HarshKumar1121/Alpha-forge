@@ -1,5 +1,5 @@
-name: 🐛 Bug report
-description: Something in Alpha Harness is broken, and you can say how to make it happen.
+name: 🕷️ Bug report
+description: Report errors or unexpected behavior
 labels: ["type: bug", "status: needs triage"]
 body:
   - type: markdown

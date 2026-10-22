@@ -11,7 +11,7 @@ import {
 } from '@/api/platform'
 import { cn } from '@/lib/cn'
 import { CORE_METRICS, CORE_ORDER, DASH, fmt } from '@/lib/format'
-import { Badge, signTone, TEXT_TONE } from '@/ui/kit'
+import { Badge, cutoffTone, figureTone, signTone, TEXT_TONE } from '@/ui/kit'
 import type { Column } from '@/ui/table'
 import type { AlphaTableRow, Investability } from './row'
 
@@ -99,9 +99,6 @@ const list = (values: string[] | undefined) => {
     </span>
   )
 }
-const signed = (value: number | null | undefined, show = fmt.ratio) => (
-  <span className={cn('num', TEXT_TONE[signTone(value)])}>{show(value)}</span>
-)
 const tip = (label: string, title: string) => <span title={title}>{label}</span>
 
 type Spec = Omit<Column<AlphaTableRow>, 'key' | 'header'> & {
@@ -131,21 +128,31 @@ const metric = (key: MetricKey) =>
     width: key === 'margin' ? 'minmax(100px,1fr)' : 'minmax(84px,1fr)',
     value: (r) => r[key],
     serverKey: key,
-    cell: (r) =>
-      CORE_METRICS[key].signed ? (
-        signed(r[key], CORE_METRICS[key].show)
-      ) : (
-        <span className="num">{CORE_METRICS[key].show(r[key])}</span>
-      ),
+    cell: (r) => (
+      <span className={cn('num', TEXT_TONE[figureTone(key, r[key], r.limits)])}>
+        {CORE_METRICS[key].show(r[key])}
+      </span>
+    ),
   })
 
-const ratio = (key: keyof AlphaTableRow, label: string, title?: string) =>
+/** A ratio column, judged against the cutoff of the core figure it is a version of (`like`),
+ *  or, with none, only called out when negative. */
+const ratio = (
+  key: keyof AlphaTableRow,
+  label: string,
+  title?: string,
+  like?: 'sharpe' | 'fitness',
+) =>
   option('Performance', key, label, {
     ...(title ? { header: tip(label, title) } : {}),
     width: 'minmax(84px,1fr)',
     align: 'right',
     value: (r) => r[key] as number | null | undefined,
-    cell: (r) => signed(r[key] as number | null | undefined),
+    cell: (r) => {
+      const v = r[key] as number | null | undefined
+      const tone = like ? figureTone(like, v, r.limits) : cutoffTone(v)
+      return <span className={cn('num', TEXT_TONE[tone])}>{fmt.ratio(v)}</span>
+    },
   })
 
 /** A correlation, green below the ceiling BRAIN holds it to and amber at or above. */
@@ -226,7 +233,9 @@ export const OPTIONS: Option[] = [
     width: '112px',
     align: 'right',
     value: (r) => r.value,
-    cell: (r) => signed(r.value),
+    cell: (r) => (
+      <span className={cn('num', TEXT_TONE[cutoffTone(r.value)])}>{fmt.ratio(r.value)}</span>
+    ),
   }),
   option('Summary', 'name', 'Name', {
     width: 'minmax(112px,1.5fr)',
@@ -343,14 +352,15 @@ export const OPTIONS: Option[] = [
     cell: (r) => <span className="num">{r.truncation ?? DASH}</span>,
   }),
   ...CORE_ORDER.map(metric),
-  ratio('trainSharpe', 'Train Sharpe'),
+  ratio('trainSharpe', 'Train Sharpe', undefined, 'sharpe'),
   // The held-out years, where an Alpha that only fits its train years shows its decay.
-  ratio('testSharpe', 'Test Sharpe'),
-  ratio('testFitness', 'Test Fitness'),
+  ratio('testSharpe', 'Test Sharpe', undefined, 'sharpe'),
+  ratio('testFitness', 'Test Fitness', undefined, 'fitness'),
   ratio(
     'afterCostSharpe',
     'After-Cost Sharpe (5 bps)',
     "The Sharpe after 5 bps of trading cost, charged on each day's own turnover. Empty until its daily PnL is downloaded.",
+    'sharpe',
   ),
   ratio(
     'kRatio',

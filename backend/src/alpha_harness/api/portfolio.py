@@ -13,6 +13,7 @@ from ..labs.fastexpr import ParseError, data_fields, parse
 from ..schemas import Out
 from ..tools import portfolio, power_pool
 from ..vault.store import SERIES_VERSION, json_list
+from ..vault.yields import checks_of, limits_of
 from .deps import State, refuse
 
 router = APIRouter(prefix="/api/portfolio", tags=["portfolio"])
@@ -61,6 +62,8 @@ class PortfolioMember(Out):
     portfolio_correlation: float | None
     #: BRAIN's Production Correlation for the submitted Alpha, as its listing gives it.
     prod_correlation: float | None = None
+    #: The limit each of BRAIN's figure checks names for this Alpha, by check name.
+    limits: dict[str, float] = Field(default_factory=dict)
     #: Self-Correlation as BRAIN's Alpha page shows it today, worked out locally from the stored
     #: PnL; ``None`` with nothing in its region to compare against.
     self_correlation: float | None = None
@@ -381,6 +384,7 @@ async def members(
                 metrics=brain_metrics(meta.get(str(r["alpha_id"])) or r),
                 incremental_sharpe=adds.get(str(r["alpha_id"])),
                 has_series=bool(r["has_series"]),
+                limits=limits_of(checks_of((meta.get(str(r["alpha_id"])) or {}).get("checks"))),
             )
         )
     return PortfolioMembers(members=out)

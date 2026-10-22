@@ -19,7 +19,7 @@ import structlog
 
 from ..db.duck import ALPHA_COLUMNS, TRAIN_COLUMNS, Catalog
 from . import metrics
-from .yields import SUBMITTED, children_check, without_quota_checks
+from .yields import SUBMITTED, checks_of, children_check, limits_of, without_quota_checks
 
 if TYPE_CHECKING:
     import pyarrow as pa
@@ -316,6 +316,7 @@ def _page_row(r: dict[str, Any]) -> dict[str, Any]:
         "returns": r["returns"],
         "drawdown": r["drawdown"],
         "margin": r["margin"],
+        "limits": limits_of(checks_of(r["checks"])),
         "operatorCount": r["operator_count"],
         "calmar": r["calmar"],
         "dateCreated": _iso(r["date_created"]),
@@ -700,7 +701,7 @@ class AlphaVault:
                        a.operator_count, {ALPHA_METRICS["calmar"]} AS calmar,
                        a.date_created, a.date_submitted, a.long_count, a.short_count,
                        a.max_trade, a.max_position, a.classifications, a.pyramids,
-                       a.train_sharpe, a.test_sharpe, {standing}, {order} AS sort_key
+                       a.train_sharpe, a.test_sharpe, a.checks, {standing}, {order} AS sort_key
                 FROM {source} a
                 WHERE {where}
                 ORDER BY sort_key {direction} NULLS LAST, a.alpha_id

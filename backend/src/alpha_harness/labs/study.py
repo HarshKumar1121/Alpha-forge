@@ -37,7 +37,7 @@ from ..db.models import (
     TrialState,
     utcnow,
 )
-from ..vault.yields import checks_of, clean, gating_results, verdict
+from ..vault.yields import checks_of, clean, gating_results, limits_of, verdict
 from . import objectives as obj
 from . import scheduler
 from .objectives import StudyNotFoundError
@@ -746,6 +746,7 @@ def ranked(
                 "pending": still_judging(result),
                 "quick": bool(result.get("quick")),
                 "errored": "ERROR" in gating_results(result.get("checks") or []),
+                "limits": limits_of(result.get("checks") or []),
             }
         )
     return rows

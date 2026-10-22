@@ -95,6 +95,8 @@ class SeedRow(Out):
     drawdown: float | None
     margin: float | None
     score: float | None
+    #: The limit each of BRAIN's figure checks names for this Alpha, by check name.
+    limits: dict[str, float] = Field(default_factory=dict)
 
 
 class SeedReason(Out):

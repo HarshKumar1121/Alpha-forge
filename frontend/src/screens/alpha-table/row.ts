@@ -73,6 +73,8 @@ export interface AlphaTableRow {
   taskName?: string | null
   /** Whether its daily PnL is stored on this computer. */
   hasPnl?: boolean
+  /** The limits its own checks set its figures, by check name. */
+  limits?: Partial<Record<string, number>>
 }
 
 const investabilityOf = (maxTrade: unknown, maxPosition: unknown): Investability =>

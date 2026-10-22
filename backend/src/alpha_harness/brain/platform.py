@@ -122,11 +122,6 @@ PV1_OPERATORS = frozenset({"inst_pnl", "convert"})
 
 # --- submission checks -----------------------------------------------------------------
 
-#: Sharpe and Fitness an Alpha must reach to be submitted, by delay, where its own check
-#: names no limit.
-MIN_SHARPE: dict[int, float] = {0: 2.69, 1: 1.58}
-MIN_FITNESS: dict[int, float] = {0: 1.5, 1: 1.0}
-MIN_TURNOVER, MAX_TURNOVER = 0.01, 0.7
 #: BRAIN's fitness floors turnover here, so a near-idle Alpha is not rewarded without bound.
 FITNESS_TURNOVER_FLOOR = 0.125
 #: The consultant Weight test in USA: no stock may hold 8% of the Alpha (10% elsewhere).

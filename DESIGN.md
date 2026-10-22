@@ -224,7 +224,7 @@ components:
     backgroundColor: "{colors.surface-1}"
     textColor: "{colors.ink}"
     typography: "{typography.body-compact}"
-    height: 34px
+    height: 28px
   data-table-row-hover:
     backgroundColor: "{colors.surface-2}"
   check-dot-pass:
@@ -317,10 +317,22 @@ one component.
 - **Lavender** (`primary`, `primary-hover`, `primary-focus`, `on-primary`) — execution, focus and
   selection: the primary button, the focus ring, the selected row, the progress fill. Never
   decoration.
-- **`pnl-positive` / `pnl-negative`** — the sign of a number. Applied through `signTone(value)`,
-  never chosen by hand, so a red figure always means a negative figure. These two paint marks,
-  fills and edges; a figure is written in **`pnl-positive-text` / `pnl-negative-text`**, the same
-  hues lifted in OKLCH lightness until they clear the Lc 60 floor (see Floors).
+- **`pnl-positive` / `pnl-negative`** — a verdict on a figure, never chosen by hand. What the
+  verdict is depends on what the figure is:
+  - **Money** (Returns, PnL, a change to the Portfolio) by its sign, through `signTone(value)`:
+    green made, red lost.
+  - **Diagnostic ratios** (Sharpe, Fitness, Turnover, Margin, and their train, test and
+    after-cost versions) against the limits the Alpha's own checks name (`LOW_SHARPE`,
+    `LOW_FITNESS`, `LOW_TURNOVER`, `HIGH_TURNOVER`), through `cutoffTone` and `figureTone`: red
+    when negative, an inverted signal; green once it meets its limit; plain `ink` between,
+    because a positive Sharpe of 0.32 is noise, not profit. The limits are read, never written
+    down here: they differ by market. Turnover has a band rather than a floor, so it is green
+    inside it and red outside, where the Alpha fails outright. With no limit known — Margin,
+    or a figure that is not one Alpha's — only red is earned.
+  So a red figure always means lost money, an inverted signal or a failed check, and a green
+  one always means money made or a cutoff met. These two paint marks, fills and edges; a
+  figure is written in **`pnl-positive-text` / `pnl-negative-text`**, the same hues lifted in
+  OKLCH lightness until they clear the Lc 60 floor (see Floors).
 - **`status-idle` / `status-queued` / `status-running` / `status-warning`** — what a simulation
   core is doing. The four states of the core matrix in the top bar.
 - **`ink` → `ink-muted` → `ink-subtle` → `ink-tertiary`** — four text steps. Body copy is `ink`,
@@ -338,8 +350,7 @@ mix over a named surface:
 - **`pyramid-*`** — eleven steps of `pnl-positive` over `surface-1` (5 → 72%), one per Pyramid
   Multiplier BRAIN offers, mapped from the values actually present rather than an assumed range.
   Deepening rather than diverging: the lowest multiplier is the floor of the payout, not a loss,
-  so nothing on this map is ever red. It tops out at 72% so white figures hold APCA 78, and
-  because each step also rises in lightness the ordering survives red-green colour blindness.
+  so nothing on this map is ever red. It tops out at 72% so white figures hold APCA 78.
 - **`*-tint` / `*-edge`** — a semantic hue at 12% (fill) and 40% (outline) over its surface, for
   judged badges and notices.
 
@@ -375,14 +386,11 @@ Text has three floors, by what it is for:
   landing under Lc 60.
 
 APCA is the stricter judge here — `ink-subtle` passes WCAG AA at 5.86:1 — which is why deferring
-to it is not a relaxation.
+to it is not a relaxation. `frontend/tools/contrast.ts` checks the table, both `-text` tokens on
+their tints, and white on the deepest Pyramid step on every `lefthook run check`.
 
-Two rules hold regardless of contrast:
-
-- Non-text edges and fills: a visible step under deuteranopia and protanopia simulation, which is
-  why the category hues are spaced round the wheel rather than packed into the greens.
-- No colour is the only carrier of a state. A red tile also has a label; a green number also has
-  a sign.
+One rule holds regardless of contrast: no colour is the only carrier of a state. A red tile also
+has a label; a green number also has a sign.
 
 ## Typography
 
@@ -485,7 +493,8 @@ Corners never mix within one surface: a panel at `lg` holds buttons at `sm` hold
 - **kit.tsx** — `Page`, `PageHeader`, `Panel`, `Button`, `Input`, `Textarea`, `Field`, `Fieldset`,
   `Checkbox`, `Switch`, `Chips`, `Segmented`, `Metric`, `Badge`, `MetricBadge`, `KV`, `Progress` (also the
   quota gauge), `Kbd`, `Spinner`, `Skeleton`, `Notice`, `ErrorNotice`, `Empty`, `Disclosure`,
-  `TabBar`, and the tone helpers (`signTone`, `checkTone`, `TEXT_TONE`).
+  `TabBar`, and the tone helpers (`signTone`, `cutoffTone`, `figureTone`, `checkTone`,
+  `TEXT_TONE`).
 - **table.tsx** — `DataTable`, virtualised and server-sorted, and `Pager`.
 - **overlay.tsx** — `Dialog`, `Sheet`, `Confirm`, `Select`, `Menu`, `Tooltip`, on Base UI.
 - **panels.tsx** — `SplitPane`, `ResizeHandle`, `useMediaQuery`.
@@ -510,7 +519,8 @@ let a label be tinted as though it were a verdict.
 ## Do's and Don'ts
 
 - Do reach for a tier-2 token, always.
-- Do let the value pick the colour: `signTone(sharpe)`, `checkTone(result)`.
+- Do let the value pick the colour: `signTone(returns)`, `figureTone('sharpe', sharpe, limits)`,
+  `checkTone(result)`.
 - Do use `num` for every standalone figure and `mono-metric` for every comparable metric.
 - Do add a state to tier 3 only when a second component needs the same one.
 - Do keep panels flush to the viewport width.
@@ -551,18 +561,13 @@ than 300ms.
 1. Changing a palette value: edit the frontmatter here, then `--spec-*` in `index.css`.
 2. Adding a hue (a seventh operator category, say): generate the ramp with
    `frontend/tools/oklch.ts`, paste the eleven steps into tier 1, then add the 10% fill and 45%
-   edge mixes to tier 2. Check it under colour-vision simulation before committing.
+   edge mixes to tier 2.
 3. Adding a component state: put it in tier 3 only if a second component reads it.
 4. `lefthook run check` validates this file's structure, the Floors table against the colours
-   (`frontend/tools/contrast.ts`), and the code's types and formatting. Colour-vision
-   separation is still judged by eye.
+   (`frontend/tools/contrast.ts`), and the code's types and formatting.
 
 ## Known Gaps
 
-- **Colour-vision separation is not gated.** The APCA floors are checked on every run, but that
-  the category hues stay apart under deuteranopia and protanopia is still judged by eye.
-  `design-lint.sh` prints the format's own WCAG 2 findings as advisories and does not fail on
-  them, because WCAG 2 is not this system's standard.
 - **Borders are prose, not tokens.** The DESIGN.md component schema has no `borderColor`, so the
   hairline rules appear here as 1px `rule` components and the real border assignments live in
   `index.css`.

@@ -80,6 +80,22 @@ def checks_of(checks_json: str | None) -> list[dict[str, Any]]:
     return without_quota_checks([c for c in checks if isinstance(c, dict)])
 
 
+#: The checks a figure is judged against, by the limit each one names for this Alpha.
+LIMITED_CHECKS = ("LOW_SHARPE", "LOW_FITNESS", "LOW_TURNOVER", "HIGH_TURNOVER")
+
+
+def limits_of(checks: list[dict[str, Any]]) -> dict[str, float]:
+    """The limits BRAIN set this Alpha's figures, by check name. Read off its own checks, not
+    a table: they differ by region, delay, universe and the account."""
+    return {
+        str(c["name"]): float(limit)
+        for c in checks
+        if c.get("name") in LIMITED_CHECKS
+        and isinstance(limit := c.get("limit"), int | float)
+        and not isinstance(limit, bool)
+    }
+
+
 def gating_results(checks: list[dict[str, Any]]) -> set[str]:
     """The results of the checks that decide anything: every one but :data:`IGNORED_CHECKS`."""
     return {

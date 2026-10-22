@@ -40,7 +40,7 @@ from ..brain.schemas import SimulationRequest, SimulationSettings
 from ..db.models import Study, Trial, TrialState
 from ..vault.metrics import MIN_OVERLAP
 from ..vault.store import EVOLVABLE_TYPES, SEEDABLE
-from ..vault.yields import SUBMITTED, checks_of, is_submitted
+from ..vault.yields import SUBMITTED, checks_of, is_submitted, limits_of
 from . import search
 from .fastexpr import (
     Node,
@@ -798,6 +798,7 @@ def seed_row(row: dict[str, Any]) -> dict[str, Any]:
             for k in ("sharpe", "fitness", "turnover", "returns", "drawdown", "margin")
         },
         "score": round(score, 4) if math.isfinite(score) else None,
+        "limits": limits_of(checks_of(row.get("checks"))),
     }
 
 

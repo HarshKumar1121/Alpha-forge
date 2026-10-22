@@ -1,5 +1,5 @@
-name: ✨ Feature request
-description: A concrete change that would save you time or find better Alphas.
+name: ⭐ Feature or enhancement request
+description: Propose something new.
 labels: ["type: feature", "status: needs triage"]
 body:
   - type: markdown

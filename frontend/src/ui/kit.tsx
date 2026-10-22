@@ -26,6 +26,7 @@ import { type ComponentProps, Fragment, type ReactNode, useId } from 'react'
 import { ApiError, errorMessage } from '@/api/http'
 import type { CheckResult } from '@/api/types'
 import { cn } from '@/lib/cn'
+import { type CORE_ORDER, isNum } from '@/lib/format'
 
 // ── Tone helpers: data colour comes from the value, never from decoration ──────────────
 
@@ -39,9 +40,56 @@ export const TEXT_TONE: Record<Tone, string> = {
   warn: 'text-status-warning',
 }
 
-/** Sign of a return, Sharpe or PnL. */
+/** Sign of money made or lost: a return, a PnL, a change to a portfolio. */
 export const signTone = (v: number | null | undefined): Tone =>
   v == null || v === 0 ? 'neutral' : v > 0 ? 'profit' : 'loss'
+
+/**
+ * A diagnostic ratio judged against the cutoff BRAIN submits at rather than against zero: red
+ * when negative (an inverted signal), green once it `meets` the cutoff, and plain between, since
+ * a positive figure is not yet a good one. With no cutoff to meet, only red is earned.
+ */
+export const cutoffTone = (v: number | null | undefined, meets = false): Tone =>
+  v == null || Number.isNaN(v) ? 'neutral' : v < 0 ? 'loss' : meets ? 'profit' : 'neutral'
+
+/** The limits BRAIN's checks set one Alpha's figures, by check name (`LOW_SHARPE`, …). */
+export type Limits = Partial<Record<string, number>>
+
+/**
+ * A core figure's tone: Returns by sign; Sharpe, Fitness and Turnover against the limits the
+ * Alpha's own checks name, so with none known only a negative is called out; Margin, which BRAIN
+ * checks against nothing, only when negative; Drawdown not at all.
+ */
+export function figureTone(
+  key: (typeof CORE_ORDER)[number],
+  v: number | null | undefined,
+  limits: Limits = {},
+): Tone {
+  if (!isNum(v)) return 'neutral'
+  const at = (check: string) => limits[check]
+  switch (key) {
+    case 'returns':
+      return signTone(v)
+    case 'sharpe': {
+      const floor = at('LOW_SHARPE')
+      return cutoffTone(v, floor !== undefined && v >= floor)
+    }
+    case 'fitness': {
+      const floor = at('LOW_FITNESS')
+      return cutoffTone(v, floor !== undefined && v >= floor)
+    }
+    // A band rather than a floor: outside it the Alpha fails the check outright.
+    case 'turnover': {
+      const [low, high] = [at('LOW_TURNOVER'), at('HIGH_TURNOVER')]
+      if ((low !== undefined && v < low) || (high !== undefined && v > high)) return 'loss'
+      return low !== undefined && high !== undefined ? 'profit' : 'neutral'
+    }
+    case 'margin':
+      return cutoffTone(v)
+    case 'drawdown':
+      return 'neutral'
+  }
+}
 
 /**
  * One BRAIN submission check, coloured by what it says on its own: passed, unsettled, or
