@@ -166,7 +166,8 @@ export function PowerPoolLabScreen() {
       <DatasetsPanel
         ids={draft.datasetIds}
         scope={scope}
-        onChoose={choose}
+        onApply={(datasetIds, fieldFilter) => set({ datasetIds, fieldFilter })}
+        onExplore={choose}
         filter={draft.fieldFilter}
         onClearFilter={() => set({ fieldFilter: null })}
         onRemove={(ids) => set({ datasetIds: draft.datasetIds.filter((x) => !ids.includes(x)) })}

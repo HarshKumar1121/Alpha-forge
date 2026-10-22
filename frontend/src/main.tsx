@@ -56,7 +56,7 @@ const within = (path: string, places: string[]) =>
 router.subscribe('onResolved', ({ toLocation: { pathname } }) => {
   if (useDatasetPick.getState().active && !within(pathname, ['/data', '/sync']))
     endDatasetPick(false)
-  if (useSeedPick.getState().active && !within(pathname, ['/pool/stored', '/alpha']))
+  if (useSeedPick.getState().active && !within(pathname, ['/pool', '/alpha']))
     useSeedPick.getState().cancel()
 })
 

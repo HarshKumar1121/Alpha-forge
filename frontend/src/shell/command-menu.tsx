@@ -4,11 +4,14 @@
  */
 
 import { Dialog as BDialog } from '@base-ui/react/dialog'
+import { useQuery } from '@tanstack/react-query'
 import { useRouter } from '@tanstack/react-router'
 import { Command } from 'cmdk'
 import { SearchIcon } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { create } from 'zustand'
+import { useFieldFilter } from '@/screens/data/state'
+import { labTasks } from '@/screens/tasks/api'
 import { BACKDROP } from '@/ui/overlay'
 import { NAV } from './nav'
 import { useSettings } from './settings'
@@ -64,6 +67,8 @@ export function CommandMenu() {
     if (!open) setQuery('')
   }, [open])
   const typed = query.trim()
+  // The Tasks screen's own list, read when the menu opens, so a task is found by its name.
+  const tasks = useQuery({ queryKey: ['lab-tasks'], queryFn: labTasks.list, enabled: open })
   const groups = useMemo<[string, Destination[]][]>(
     () => [
       ...(ALPHA_ID.test(typed)
@@ -88,7 +93,30 @@ export function CommandMenu() {
             ] as [string, Destination[]],
           ]
         : []),
-      ['Actions', [{ label: 'Open Settings', run: () => useSettings.getState().setOpen(true) }]],
+      [
+        'Actions',
+        [
+          { label: 'Open Settings', run: () => useSettings.getState().setOpen(true) },
+          ...(typed
+            ? [
+                {
+                  label: `Search Data Fields for “${typed}”`,
+                  run: () => {
+                    useFieldFilter.getState().replace({ search: typed })
+                    void router.navigate({ to: '/data' })
+                  },
+                },
+              ]
+            : []),
+        ],
+      ],
+      [
+        'Tasks',
+        (tasks.data?.tasks ?? []).map((t) => ({
+          label: `Task ${t.id} · ${t.name || t.templateName || t.labName}`,
+          href: `/tasks?task=${t.id}`,
+        })),
+      ],
       [
         'Screens & Labs',
         NAV.flatMap((item) => [
@@ -100,7 +128,7 @@ export function CommandMenu() {
         ]),
       ],
     ],
-    [typed],
+    [typed, tasks.data, router],
   )
 
   const go = (destination: Destination) => {

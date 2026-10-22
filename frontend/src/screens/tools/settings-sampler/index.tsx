@@ -483,8 +483,9 @@ export function SettingsSamplerScreen() {
   const plan = query.data
   const cores = Math.min(wantedCores, plan?.maxCores ?? wantedCores)
 
-  // An Alpha is only a way in: its expression and settings are copied into the Expression tab,
-  // which the sweep then runs like any other.
+  // An Alpha's expression and settings are copied into the Expression tab to adjust. Until the
+  // expression itself is edited and analysed, the sweep still runs the Alpha: the task stays
+  // named for it, and the address keeps it, so a reload opens it again.
   useEffect(() => {
     if (!plan?.alphaId || !plan.expression) return
     const own = plan.settings
@@ -496,10 +497,9 @@ export function SettingsSamplerScreen() {
     const period = /^P(\d+)Y(\d+)M/.exec(own.testPeriod ?? '')
     setTestYears(period?.[1] ?? String(TEST_PERIOD_YEARS))
     setTestMonths(period?.[2] ?? '0')
-    setTyped({ expression: plan.expression })
+    setTyped({ alphaId: plan.alphaId })
     setMode('expression')
-    void navigate({ to: '/tools/settings-sampler', search: { alpha: undefined }, replace: true })
-  }, [plan, navigate])
+  }, [plan])
 
   const reset = (from: SettingsPlan) => {
     const start = defaults(from)
@@ -658,7 +658,16 @@ export function SettingsSamplerScreen() {
   const analyse = (event: React.FormEvent) => {
     event.preventDefault()
     if (mode === 'expression') {
-      setTyped({ expression: expression.trim() })
+      const text = expression.trim()
+      // Analysed unchanged, it is still the Alpha; changed, it is an expression of its own.
+      if (typed && 'alphaId' in typed && text === plan?.expression) return
+      setTyped({ expression: text })
+      if (alphaId)
+        void navigate({
+          to: '/tools/settings-sampler',
+          search: { alpha: undefined },
+          replace: true,
+        })
       return
     }
     const next = draft.trim()
@@ -670,11 +679,8 @@ export function SettingsSamplerScreen() {
   }
 
   // The sweep runs what was last analysed, so an edit since then must be analysed first.
-  const edited =
-    mode === 'expression' &&
-    typed !== null &&
-    'expression' in typed &&
-    typed.expression !== expression.trim()
+  const analysed = typed && ('expression' in typed ? typed.expression : plan?.expression)
+  const edited = mode === 'expression' && analysed != null && analysed !== expression.trim()
   // Said on the Truncation box itself.
   const badTruncation = !truncationAgent && truncationOf(truncation) === null
 
@@ -688,7 +694,7 @@ export function SettingsSamplerScreen() {
           <AddTaskButtons
             add={add}
             disabled={simulations === 0 || edited || badTruncation}
-            describedBy={edited ? 'sampler-edited' : undefined}
+            blocked={edited ? 'Edited since the last Analyse: Analyse again.' : null}
           />
         }
       />
@@ -731,7 +737,7 @@ export function SettingsSamplerScreen() {
               </Button>
               {expression.trim() && <Facts stats={sized.data?.stats[0]} />}
               {edited && (
-                <p id="sampler-edited" className="text-body-compact text-ink-subtle">
+                <p className="text-body-compact text-ink-subtle">
                   Edited since the last Analyse. Analyse again to sweep this expression.
                 </p>
               )}

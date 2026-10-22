@@ -41,7 +41,6 @@ export function DataTable<T>({
   maxHeight = '70vh',
   rowHeight = 34,
   label,
-  corner,
   page,
 }: {
   rows: T[]
@@ -65,8 +64,6 @@ export function DataTable<T>({
   maxHeight?: string | undefined
   rowHeight?: number
   label: string
-  /** Shown in the header's first column, above any checkboxes, e.g. the table's column settings. */
-  corner?: ReactNode
   /** The page shown, when the rows are paged: a new page, like a new sort, starts at its top. */
   page?: number
 }) {
@@ -86,9 +83,10 @@ export function DataTable<T>({
     overscan: 12,
   })
   const selectable = selected !== undefined && onSelect !== undefined
-  // The corner needs a column of its own, with or without checkboxes under it.
-  const lead = selectable || corner !== undefined
-  const template = [lead ? '36px' : null, ...columns.map((c) => c.width ?? 'minmax(96px,1fr)')]
+  const template = [
+    selectable ? '36px' : null,
+    ...columns.map((c) => c.width ?? 'minmax(96px,1fr)'),
+  ]
     .filter(Boolean)
     .join(' ')
 
@@ -100,9 +98,19 @@ export function DataTable<T>({
         className="grid border-b border-hairline-strong bg-surface-1 select-none"
         style={{ gridTemplateColumns: template }}
       >
-        {lead && (
-          <div role="columnheader" aria-label="Select" className="flex items-center justify-center">
-            {corner}
+        {selectable && (
+          <div role="columnheader" className="flex items-center justify-center">
+            <Checkbox
+              label={null}
+              aria-label="Select every row shown"
+              checked={rows.length > 0 && rows.every((row) => selected.has(rowKey(row)))}
+              indeterminate={
+                rows.some((row) => selected.has(rowKey(row))) &&
+                !rows.every((row) => selected.has(rowKey(row)))
+              }
+              disabled={rows.length === 0}
+              onChange={(on) => onSelect(rows.map(rowKey), on)}
+            />
           </div>
         )}
         {columns.map((column) => {
@@ -220,7 +228,6 @@ export function DataTable<T>({
                     transform: `translateY(${item.start}px)`,
                   }}
                 >
-                  {!selectable && lead && <div role="cell" />}
                   {selectable && (
                     <div
                       role="cell"

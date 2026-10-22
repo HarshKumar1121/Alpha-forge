@@ -74,9 +74,10 @@ export function useLabMarket(
       })
   }, [from, set])
 
-  const choose = () => {
+  /** Over to the Data Explorer, from `ids` and `filter`: the lab's own unless given. */
+  const choose = (ids = draft.datasetIds, filter = draft.fieldFilter) => {
     // On the filter this lab applies, so the Explorer shows the fields it will use.
-    startDatasetPick(scope, draft.datasetIds, from, draft.fieldFilter)
+    startDatasetPick(scope, ids, from, filter)
     setDataScope(scope)
     void navigate({ to: '/data' })
   }

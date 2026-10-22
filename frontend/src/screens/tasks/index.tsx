@@ -259,6 +259,9 @@ export function TasksScreen() {
       cell: (t) => (
         <Actions
           task={t}
+          busy={
+            act.isPending && act.variables.action !== 'runAll' && act.variables.task.id === t.id
+          }
           // Pausing and running are undone with one click; stopping and removing are not.
           onAct={(action) =>
             action === 'pause' || action === 'run'
@@ -356,6 +359,8 @@ export function TasksScreen() {
               rowClass={(t) =>
                 t.id === selectedId ? 'bg-primary-subtle hover:bg-primary-subtle' : undefined
               }
+              // Short while a task is open below, so the list and the task share the screen.
+              {...(selected ? { maxHeight: '36vh' } : {})}
               loading={list.isPending}
               error={list.error}
             />
@@ -403,15 +408,6 @@ function confirmCopy(a: Act, fresh: number): { title: string; label: string; bod
         title: `Run ${fmt.int(fresh)} ${fresh === 1 ? 'task' : 'tasks'}?`,
         label: 'Run All',
       }
-    case 'run':
-      if (a.task.status === 'PAUSED') return { title: 'Resume this task?', label: 'Resume' }
-      if (a.task.status === 'FAILED')
-        return {
-          title: 'Retry this task?',
-          label: 'Retry',
-          body: 'Simulations it sent before it failed are scored on the way.',
-        }
-      return { title: 'Run this task?', label: 'Run Task' }
     case 'stop':
       // The second press, on a task that has been stopping and has not stopped. It says
       // what it will cost, because forcing gives up on simulations the quota already paid
@@ -454,11 +450,14 @@ const RUN_LABEL = { IDLE: 'Run', PAUSED: 'Resume', FAILED: 'Retry' } as const
 
 function Actions({
   task,
+  busy,
   onAct,
   onEdit,
   onRename,
 }: {
   task: LabTask
+  /** One of its own actions is on its way, so the row's buttons wait for it. */
+  busy: boolean
   onAct: (action: 'run' | 'pause' | 'stop' | 'remove') => void
   onEdit: () => void
   onRename: () => void
@@ -480,6 +479,7 @@ function Actions({
           variant="ghost"
           aria-label={RUN_LABEL[status]}
           title={RUN_LABEL[status]}
+          loading={busy}
           onClick={() => onAct('run')}
         >
           <PlayIcon />
@@ -491,6 +491,7 @@ function Actions({
           variant="ghost"
           aria-label="Pause"
           title="Pause"
+          loading={busy}
           onClick={() => onAct('pause')}
         >
           <PauseIcon />

@@ -238,8 +238,16 @@ export function AlphaTable({
       })),
     {
       key: 'actions',
-      header: '',
-      width: '44px',
+      header: (
+        <ColumnsButton
+          view={view}
+          options={options}
+          shown={shown}
+          defaults={defaults}
+          netKeys={afterCost === 'local' ? new Set<string>(LOCAL_NET) : NET_OF_COST}
+        />
+      ),
+      width: '52px',
       align: 'right',
       cell: (r) => r.alphaId && <AlphaActionsMenu alphaId={r.alphaId} links />,
     },
@@ -249,15 +257,6 @@ export function AlphaTable({
     <AnglesContext.Provider value={angles}>
       <DataTable
         label={label}
-        corner={
-          <ColumnsButton
-            view={view}
-            options={options}
-            shown={shown}
-            defaults={defaults}
-            netKeys={afterCost === 'local' ? new Set<string>(LOCAL_NET) : NET_OF_COST}
-          />
-        }
         rows={sorted}
         rowKey={(r) => r.key}
         columns={columns}

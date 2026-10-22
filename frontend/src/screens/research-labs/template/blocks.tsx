@@ -12,7 +12,7 @@ import { createContext, type ReactNode, use, useState } from 'react'
 import { catalog } from '@/api/catalog'
 import type { Scope } from '@/api/types'
 import { cn } from '@/lib/cn'
-import { Button, Notice, Skeleton } from '@/ui/kit'
+import { Button, Notice, Segmented, Skeleton } from '@/ui/kit'
 import { type TreeNode, templateLab } from './api'
 import { GROUPS, inputsOf, type OperatorDoc, WORDS } from './fast-expression'
 
@@ -148,6 +148,29 @@ function placed(pick: Pick, current: TreeNode): TreeNode {
       return pick.node
   }
 }
+
+/**
+ * `pick` in place of the operator `current`, on the same inputs: `ts_rank(close, 20)` becomes
+ * `ts_zscore(close, 20)`. Inputs past the new one's count are dropped, missing ones left empty,
+ * and options go: they belong to the operator being replaced.
+ */
+function swapped(pick: Pick, current: TreeNode): TreeNode {
+  const take = (count: number) => Array.from({ length: count }, (_, i) => current.args[i] ?? hole())
+  switch (pick.kind) {
+    case 'call':
+      return { kind: 'call', value: pick.name, args: take(pick.inputs), kwargs: [] }
+    case 'binary':
+      return { kind: 'binary', value: pick.symbol, args: take(2), kwargs: [] }
+    case 'ternary':
+      return { kind: 'ternary', value: '', args: take(3), kwargs: [] }
+    case 'negate':
+      return { kind: 'unary', value: '-', args: take(1), kwargs: [] }
+    case 'leaf':
+      return pick.node
+  }
+}
+
+const OPERATOR_KINDS: TreeNode['kind'][] = ['call', 'binary', 'unary', 'ternary']
 
 const ARITHMETIC = ['+', '-', '*', '/', '^']
 const LOGICAL = ['>', '<', '>=', '<=', '==', '!=', '&&', '||']
@@ -416,6 +439,10 @@ function Handle({
     setOpen(false)
   }
   const kept = node.args[0]
+  // On an operator, swapping it for another is the usual edit; wrapping is one click away.
+  const operator = OPERATOR_KINDS.includes(node.kind)
+  const [mode, setMode] = useState<'replace' | 'wrap'>('replace')
+  const replacing = operator && mode === 'replace'
   return (
     <Floating
       open={open}
@@ -433,10 +460,27 @@ function Handle({
       }
     >
       <div className="flex w-80 max-w-full flex-col">
-        <p className="border-b border-hairline px-3 pt-2 pb-1.5 text-caption text-ink-subtle">
-          An operator wraps this block; anything else replaces it.
-        </p>
-        <BlockSearch onPick={(pick) => done(placed(pick, node))} />
+        <div className="flex flex-col gap-1.5 border-b border-hairline px-3 pt-2 pb-1.5">
+          {operator && (
+            <Segmented
+              label="What an operator picked here does"
+              value={mode}
+              onChange={setMode}
+              items={[
+                { value: 'replace', label: 'Replace Operator' },
+                { value: 'wrap', label: 'Wrap in Operator' },
+              ]}
+            />
+          )}
+          <p className="text-caption text-ink-subtle">
+            {replacing
+              ? 'An operator takes this one’s place, on the same inputs; anything else replaces the block.'
+              : 'An operator wraps this block; anything else replaces it.'}
+          </p>
+        </div>
+        <BlockSearch
+          onPick={(pick) => done(replacing ? swapped(pick, node) : placed(pick, node))}
+        />
         <div className="flex flex-wrap gap-2 border-t border-hairline p-2">
           {node.kind === 'call' && (
             <Button

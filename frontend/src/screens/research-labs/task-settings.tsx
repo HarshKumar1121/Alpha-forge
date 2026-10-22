@@ -1,13 +1,15 @@
 /** The Datasets and Settings panels of a lab task, and the task settings every lab asks for. */
 
 import { DatabaseIcon, FilterIcon } from 'lucide-react'
+import { useState } from 'react'
 import { SIMULATION_SLOTS } from '@/api/platform'
 import type { Scope } from '@/api/types'
 import { DASH, fmt } from '@/lib/format'
 import { useCores } from '@/lib/preferences'
 import { isRegionAgnostic, regionLabel, useScopeOptions } from '@/lib/scope'
 import { DatasetChips, useDatasetTree } from '@/screens/data/dataset-chips'
-import { describeFilter, type FieldFilterState } from '@/screens/data/state'
+import { DatasetPicker } from '@/screens/data/dataset-picker'
+import { describeFilter, type FieldFilterState, labFilter } from '@/screens/data/state'
 import { NeutralizationPicker } from '@/screens/research-labs/neutralization'
 import {
   Button,
@@ -23,6 +25,7 @@ import {
   Panel,
   Segmented,
 } from '@/ui/kit'
+import { Sheet } from '@/ui/overlay'
 import type { LabDraft } from './lab-task'
 
 const DECAYS = [0, 3, 5, 7, 10]
@@ -94,7 +97,8 @@ export interface LabPlan {
 export function DatasetsPanel({
   ids,
   scope,
-  onChoose,
+  onApply,
+  onExplore,
   onRemove,
   filter,
   onClearFilter,
@@ -102,7 +106,10 @@ export function DatasetsPanel({
   ids: string[]
   /** The market the datasets belong to, which places each under its category. */
   scope: Scope
-  onChoose: () => void
+  /** Chosen in the sheet, without leaving the lab. */
+  onApply: (ids: string[], filter: FieldFilterState | null) => void
+  /** On to the Data Explorer with what the sheet holds, for the filters it has no room for. */
+  onExplore: (ids: string[], filter: FieldFilterState | null) => void
   onRemove: (ids: string[]) => void
   /** The Data Explorer's filter the datasets were chosen under, which narrows their fields. */
   filter: FieldFilterState | null | undefined
@@ -110,6 +117,8 @@ export function DatasetsPanel({
 }) {
   const chosen = ids.length > 0
   const { tree, nameOf, ready } = useDatasetTree(chosen ? scope : null)
+  const [picking, setPicking] = useState(false)
+  const onChoose = () => setPicking(true)
   return (
     <Panel
       title="Datasets"
@@ -122,6 +131,19 @@ export function DatasetsPanel({
         )
       }
     >
+      {picking && (
+        <DatasetsSheet
+          scope={scope}
+          ids={ids}
+          filter={filter ?? null}
+          onClose={() => setPicking(false)}
+          onApply={(next, narrowed) => {
+            setPicking(false)
+            onApply(next, narrowed)
+          }}
+          onExplore={onExplore}
+        />
+      )}
       {chosen ? (
         <div className="flex flex-col gap-3">
           <DatasetChips tree={tree} value={ids} nameOf={nameOf} onRemove={onRemove} ready={ready} />
@@ -146,6 +168,58 @@ export function DatasetsPanel({
         </Empty>
       )}
     </Panel>
+  )
+}
+
+function DatasetsSheet({
+  scope,
+  ids,
+  filter,
+  onClose,
+  onApply,
+  onExplore,
+}: {
+  scope: Scope
+  ids: string[]
+  filter: FieldFilterState | null
+  onClose: () => void
+  onApply: (ids: string[], filter: FieldFilterState | null) => void
+  onExplore: (ids: string[], filter: FieldFilterState | null) => void
+}) {
+  const [datasetIds, setDatasetIds] = useState(ids)
+  const [narrowed, setNarrowed] = useState<FieldFilterState>(filter ?? {})
+  // `null` when nothing narrows, as the Data Explorer hands a filter back.
+  const kept = () => labFilter(narrowed)
+  return (
+    <Sheet
+      open
+      onOpenChange={(open) => !open && onClose()}
+      title="Datasets"
+      description="The lab writes its Alphas from the fields these leave."
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            disabled={datasetIds.length === 0}
+            onClick={() => onApply(datasetIds, kept())}
+          >
+            Apply
+          </Button>
+        </>
+      }
+    >
+      <DatasetPicker
+        scope={scope}
+        datasetIds={datasetIds}
+        setDatasetIds={setDatasetIds}
+        filter={narrowed}
+        setFilter={setNarrowed}
+        onMoreFilters={() => onExplore(datasetIds, kept())}
+      />
+    </Sheet>
   )
 }
 

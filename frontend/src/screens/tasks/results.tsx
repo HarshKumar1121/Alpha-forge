@@ -378,6 +378,7 @@ export function TaskResultsScreen() {
 
       <AlphaPane
         title="Every Alpha"
+        initial="all"
         view="every-alpha"
         rows={rows}
         offer={TASK_OFFER}

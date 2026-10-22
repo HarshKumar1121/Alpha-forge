@@ -5,7 +5,7 @@
  */
 
 import { useQuery } from '@tanstack/react-query'
-import { LineSeries, LineStyle, type Time } from 'lightweight-charts'
+import { type ISeriesApi, LineSeries, LineStyle, type Time } from 'lightweight-charts'
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/cn'
 import { isNum } from '@/lib/format'
@@ -81,6 +81,10 @@ export function AlphaChart({
   })
   const [hidden, setHidden] = useState<string[]>([])
   const element = useRef<HTMLDivElement>(null)
+  // Each line by name, so showing or hiding one leaves the chart, and its zoom, as it is.
+  const series = useRef(new Map<string, ISeriesApi<'Line'>>())
+  const hiddenNow = useRef(hidden)
+  hiddenNow.current = hidden
   const lines = (set.data?.schema?.properties ?? []).filter((p) => p.name !== 'date')
 
   useEffect(() => {
@@ -104,15 +108,16 @@ export function AlphaChart({
     properties.forEach((p, i) => {
       if (p.name === 'date') return
       const side = look.get(p.name)
-      const series = chart.addSeries(LineSeries, {
+      const line = chart.addSeries(LineSeries, {
         color: side ? color(side.color) : zone.train,
         lineWidth: 1,
         lineStyle: side?.dashed ? LineStyle.Dashed : LineStyle.Solid,
         priceLineVisible: false,
         lastValueVisible: false,
-        visible: !hidden.includes(p.name),
+        visible: !hiddenNow.current.includes(p.name),
       })
-      series.setData(
+      series.current.set(p.name, line)
+      line.setData(
         rows.map((r) => {
           const date = String(r[at])
           const value = r[i]
@@ -126,8 +131,16 @@ export function AlphaChart({
       )
     })
     chart.timeScale().fitContent()
-    return () => chart.remove()
-  }, [set.data, name, testStart, osStart, testShown, hidden])
+    const lines = series.current
+    return () => {
+      lines.clear()
+      chart.remove()
+    }
+  }, [set.data, name, testStart, osStart, testShown])
+
+  useEffect(() => {
+    for (const [key, line] of series.current) line.applyOptions({ visible: !hidden.includes(key) })
+  }, [hidden])
 
   if (set.isPending) return <Skeleton className="h-80" label="Loading the chart from BRAIN" />
   if (set.isError) return <ErrorNotice error={set.error} title="The chart did not load" />

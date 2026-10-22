@@ -31,7 +31,7 @@ import { BRAIN_ALPHA_URL } from '@/screens/pool/api'
 import { alphaIds } from '@/screens/pool/detail'
 import { labTasks, type RankedAlpha } from '@/screens/tasks/api'
 import { type PowerPoolRow, powerPoolTone, usePowerPool } from '@/screens/tasks/power-pool'
-import { Button, ErrorNotice, LINK, Notice, Panel, Progress } from '@/ui/kit'
+import { Button, ErrorNotice, LINK, Notice, Panel, Progress, Segmented } from '@/ui/kit'
 import type { Sort } from '@/ui/table'
 
 const WORKFLOW = 'power-pool-workflow'
@@ -115,6 +115,14 @@ const openRow =
     } else onOpen?.(r.alphaId, alphaIds(shown))
   }
 
+type Stage = 'all' | 'unsubmitted' | 'clean' | 'pool'
+
+const Step = ({ name, count }: { name: string; count: number | null }) => (
+  <>
+    {name} <span className="num text-ink-subtle">{count == null ? DASH : fmt.int(count)}</span>
+  </>
+)
+
 export function AlphaPane({
   title,
   view,
@@ -127,6 +135,7 @@ export function AlphaPane({
   error,
   onRefresh,
   onOpenAlpha,
+  initial = 'pool',
 }: {
   title: string
   /** Where the table's choice of columns is kept. */
@@ -142,8 +151,10 @@ export function AlphaPane({
   onRefresh?: () => Promise<unknown>
   /** Show a row's Alpha in the detail sheet, as the task detail's own table does. */
   onOpenAlpha?: (alphaId: string, ids?: string[]) => void
+  /** The step of the funnel shown first. */
+  initial?: Stage
 }) {
-  const [showAll, setShowAll] = useState(false)
+  const [stage, setStage] = useState<Stage>(initial)
   const [refreshing, setRefreshing] = useState(false)
   const unsubmitted = useMemo(() => rows.filter(isUnsubmitted), [rows])
   const clean = useMemo(() => unsubmitted.filter(isClean), [unsubmitted])
@@ -154,8 +165,8 @@ export function AlphaPane({
     [clean, pool.by],
   )
   const shown = useMemo(
-    () => (showAll ? rows : survivors).map(fromRanked),
-    [showAll, rows, survivors],
+    () => ({ all: rows, unsubmitted, clean, pool: survivors })[stage].map(fromRanked),
+    [stage, rows, unsubmitted, clean, survivors],
   )
   const overrides = useMemo(() => [poolOption(pool.by)], [pool.by])
 
@@ -211,7 +222,7 @@ export function AlphaPane({
   const start = useMutation({
     // Every Alpha here: the server runs the three steps itself rather than trusting ours.
     mutationFn: () => labTasks.powerPoolWorkflow(rows.flatMap((r) => r.alphaId ?? [])),
-    onSuccess: () => setShowAll(false),
+    onSuccess: () => setStage('pool'),
     onError: (e) => toast.error('Could not start the workflow', { description: errorMessage(e) }),
   })
 
@@ -238,15 +249,6 @@ export function AlphaPane({
             }}
           >
             <RefreshCwIcon className={cn((refreshing || pool.refreshing) && 'animate-spin')} />
-          </Button>
-          <Button
-            size="sm"
-            variant={showAll ? 'primary' : 'secondary'}
-            aria-pressed={showAll}
-            onClick={() => setShowAll(!showAll)}
-            title="Every Alpha here, not only the ones the workflow keeps"
-          >
-            Show All
           </Button>
           {prodRunning ? (
             <div className="flex w-52 flex-col gap-1">
@@ -297,16 +299,41 @@ export function AlphaPane({
               Run Power Pool Workflow
             </Button>
           )}
-          <span className="num text-ink-subtle">{fmt.int(shown.length)}</span>
         </div>
       }
     >
-      <p className="num mb-3 text-body-compact text-ink-muted">
-        {fmt.int(unsubmitted.length)} Unsubmitted Alphas → {fmt.int(clean.length)} with no Checks
-        FAIL or ERROR → {pool.found ? fmt.int(survivors.length) : DASH} Pass Power Pool Correlation
-        {unmeasured > 0 && ` · ${fmt.int(unmeasured)} not measured yet`}
-        {uncosted > 0 && ` · ${fmt.int(uncosted)} without After-Cost Sharpe yet`}
-      </p>
+      {/* The funnel, each step one click: every Alpha down to the ones worth submitting. */}
+      <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+        <Segmented
+          label="Which Alphas"
+          value={stage}
+          onChange={setStage}
+          items={[
+            { value: 'all', label: <Step name="All" count={rows.length} /> },
+            { value: 'unsubmitted', label: <Step name="Unsubmitted" count={unsubmitted.length} /> },
+            { value: 'clean', label: <Step name="No Checks FAIL or ERROR" count={clean.length} /> },
+            {
+              value: 'pool',
+              label: (
+                <Step
+                  name="Pass Power Pool Correlation"
+                  count={pool.found ? survivors.length : null}
+                />
+              ),
+            },
+          ]}
+        />
+        {(unmeasured > 0 || uncosted > 0) && (
+          <span className="num text-body-compact text-ink-subtle">
+            {[
+              unmeasured > 0 && `${fmt.int(unmeasured)} not measured yet`,
+              uncosted > 0 && `${fmt.int(uncosted)} without After-Cost Sharpe yet`,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </span>
+        )}
+      </div>
       {job?.state === 'failed' && (
         <Notice tone="error" className="mb-3" title="The Power Pool Workflow stopped">
           {job.error}
@@ -336,15 +363,17 @@ export function AlphaPane({
         onRowClick={openRow(onOpenAlpha)}
         sort={sort}
         onSort={onSort}
-        loading={(loading ?? false) || (!showAll && cleanIds.length > 0 && pool.pending)}
+        loading={(loading ?? false) || (stage === 'pool' && cleanIds.length > 0 && pool.pending)}
         error={error}
         maxHeight="70vh"
         empty={
-          showAll || rows.length === 0
+          rows.length === 0
             ? 'No Alphas back yet.'
-            : unmeasured > 0
-              ? 'Run Power Pool Workflow to measure the rest.'
-              : 'No Alpha here satisfies Power Pool Correlation.'
+            : stage !== 'pool'
+              ? 'No Alpha gets this far.'
+              : unmeasured > 0
+                ? 'Run Power Pool Workflow to measure the rest.'
+                : 'No Alpha here satisfies Power Pool Correlation.'
         }
       />
     </Panel>

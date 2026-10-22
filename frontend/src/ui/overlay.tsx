@@ -112,7 +112,7 @@ export function Sheet({ open, onOpenChange, className, container, ...frame }: Di
 
 /**
  * Previous and next for a sheet opened from a table's rows, `ids` in the order shown: on the
- * buttons, and on K and J as in a mail list (not while typing, where they are letters).
+ * buttons, and on K and J as in a mail list (not while typing or in a menu, where they are letters).
  */
 export function SheetSteps({
   ids,
@@ -131,9 +131,15 @@ export function SheetSteps({
   useEffect(() => {
     if (at < 0) return
     const onKey = (event: KeyboardEvent) => {
-      if (event.metaKey || event.ctrlKey || event.altKey) return
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
       const target = event.target as HTMLElement | null
-      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
+      // Nor inside an open menu or list, where a letter jumps to the item it starts.
+      if (
+        target?.closest(
+          'input, textarea, select, [contenteditable="true"], [role="menu"], [role="listbox"], [role="combobox"]',
+        )
+      )
+        return
       const to = event.key === 'j' ? next : event.key === 'k' ? previous : undefined
       if (to) onStep(to)
     }
