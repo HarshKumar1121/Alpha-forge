@@ -262,11 +262,14 @@ export function DataTable<T>({
                   }
                   className={cn(
                     'absolute inset-x-0 grid border-b border-hairline-subtle bg-surface-1 text-body-compact transition-colors',
+                    // A rule down the row's left edge as well as the fill, which is a faint step to
+                    // follow across a wide screen: hairline on hover, lavender on the open row.
                     onRowClick &&
-                      'cursor-pointer hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:-outline-offset-2',
+                      'cursor-pointer hover:bg-surface-2 hover:shadow-[inset_2px_0_0_0_var(--color-hairline-strong)] focus-visible:bg-surface-2 focus-visible:-outline-offset-2',
                     isSelected && 'bg-surface-2',
                     // Held through hover, which otherwise repaints the row as if it were not open.
-                    isActive && 'bg-primary-subtle hover:bg-primary-subtle',
+                    isActive &&
+                      'bg-primary-subtle shadow-[inset_2px_0_0_0_var(--color-primary)] hover:bg-primary-subtle hover:shadow-[inset_2px_0_0_0_var(--color-primary)]',
                     rowClass?.(row),
                   )}
                   style={{

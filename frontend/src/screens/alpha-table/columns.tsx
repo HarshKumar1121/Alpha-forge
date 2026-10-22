@@ -210,7 +210,8 @@ export const OPTIONS: Option[] = [
     ),
   }),
   option('Summary', 'expression', 'Expression', {
-    width: 'minmax(240px,3fr)',
+    // Most of any spare width: on a wide screen the whole formula, not gaps between figures.
+    width: 'minmax(240px,8fr)',
     cell: (r) => (
       <span className="flex min-w-0 items-center gap-1.5">
         <QuickBadge row={r} />

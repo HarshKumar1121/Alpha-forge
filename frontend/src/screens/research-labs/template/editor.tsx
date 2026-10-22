@@ -25,7 +25,13 @@ import {
 } from '@codemirror/language'
 import { type Diagnostic, forceLinting, linter, lintKeymap } from '@codemirror/lint'
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search'
-import { Annotation, EditorState, RangeSetBuilder, StateEffect } from '@codemirror/state'
+import {
+  Annotation,
+  EditorState,
+  RangeSetBuilder,
+  StateEffect,
+  StateField,
+} from '@codemirror/state'
 import {
   Decoration,
   type DecorationSet,
@@ -39,6 +45,7 @@ import {
   keymap,
   lineNumbers,
   rectangularSelection,
+  showTooltip,
   type Tooltip,
   ViewPlugin,
   type ViewUpdate,
@@ -55,6 +62,7 @@ import {
   GROUPS,
   group,
   hole,
+  inputsOf,
   local,
   locals,
   NAMES,
@@ -165,6 +173,9 @@ const theme = EditorView.theme(
     },
     '.cm-fx-doc code': { fontFamily: 'var(--font-mono)', color: '#dcdcaa', whiteSpace: 'pre-wrap' },
     '.cm-fx-doc .cm-fx-kind': { color: '#9d9d9d', fontSize: '12px' },
+    // Only while typing here: left behind, it would sit over the editor.
+    '&:not(.cm-focused) .cm-fx-signature': { display: 'none' },
+    '.cm-fx-doc code strong': { color: '#ffffff', fontWeight: '700', textDecoration: 'underline' },
     '.cm-fx-doc p': { margin: '0', lineHeight: '1.5' },
     '.cm-diagnostic': { padding: '6px 10px', borderLeftWidth: '3px' },
     '.cm-diagnostic-error': { borderLeftColor: '#f14c4c' },
@@ -275,6 +286,63 @@ function operatorDoc(op: OperatorDoc): HTMLElement {
     op.description ? element('p', op.description) : null,
   ])
 }
+
+/** The call the caret is inside, and which of its inputs it is on, read back from the caret
+ *  over the code alone: a `;` or the start of the text ends the search. */
+function callAt(text: string, pos: number): { name: string; from: number; input: number } | null {
+  const src = code(text)
+  let depth = 0
+  let input = 0
+  for (let i = pos - 1; i >= 0; i--) {
+    const ch = src[i]
+    if (ch === ')') depth += 1
+    else if (ch === '(') {
+      if (depth > 0) {
+        depth -= 1
+        continue
+      }
+      const name = /([A-Za-z_]\w*)\s*$/.exec(src.slice(Math.max(0, i - 80), i))
+      return name?.[1] ? { name: name[1], from: i - name[0].length, input } : null
+    } else if (ch === ',' && depth === 0) input += 1
+    else if (ch === ';' && depth === 0) return null
+  }
+  return null
+}
+
+/** `ts_rank(x, d)` with the input being typed in bold, so a lookback is never put in x's place. */
+function signature(op: OperatorDoc, input: number): HTMLElement {
+  const line = document.createElement('code')
+  const inputs = inputsOf(op)
+  line.append(`${op.name}(`)
+  inputs.forEach((name, i) => {
+    if (i > 0) line.append(', ')
+    line.append(element(i === input ? 'strong' : 'span', name))
+  })
+  line.append(')')
+  const box = doc([line])
+  box.classList.add('cm-fx-signature')
+  return box
+}
+
+/** The signature of the call the caret is in, above it while typing. */
+const signatures = (live: { current: Live }) =>
+  StateField.define<Tooltip | null>({
+    create: () => null,
+    update(_, tr) {
+      const { main } = tr.state.selection
+      if (!main.empty) return null
+      const call = callAt(tr.state.doc.toString(), main.head)
+      const op = call && live.current.reference.find((o) => o.name === call.name)
+      if (!call || !op) return null
+      return {
+        pos: call.from,
+        above: true,
+        strictSide: true,
+        create: () => ({ dom: signature(op, call.input) }),
+      }
+    },
+    provide: (field) => showTooltip.from(field),
+  })
 
 function describe(name: string, live: Live): string {
   const def = live.variables[name]
@@ -556,6 +624,7 @@ function extensions(live: { current: Live }, label: string, readOnly: boolean) {
     highlightActiveLine(),
     highlightSelectionMatches(),
     nameColours(),
+    ...(readOnly ? [] : [signatures(live)]),
     hoverTooltip((view, pos) => hover(view, pos, live.current), { hoverTime: 300 }),
     linter((view) => diagnose(view, live.current), {
       delay: 250,

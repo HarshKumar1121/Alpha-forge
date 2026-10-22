@@ -156,10 +156,11 @@ const BUTTON_VARIANT = {
     'border border-hairline bg-surface-2 text-ink hover:border-hairline-strong hover:bg-surface-3 active:bg-surface-4',
   ghost: 'text-ink-muted hover:bg-surface-2 hover:text-ink active:bg-surface-3',
   danger:
-    'border border-hairline bg-surface-1 text-pnl-negative-text hover:border-(--btn-danger-border-hover) hover:bg-pnl-negative-tint active:border-pnl-negative',
+    'border border-hairline bg-surface-2 text-pnl-negative-text hover:border-(--btn-danger-border-hover) hover:bg-pnl-negative-tint active:border-pnl-negative',
 }
 const BUTTON_SIZE = {
-  md: 'rounded-sm px-3 py-1.5 text-body [&_svg]:size-4',
+  // The input's height, so a button beside a field lines up with it, border or none.
+  md: 'h-8 rounded-sm px-3 text-body [&_svg]:size-4',
   sm: 'h-7 rounded-sm px-2 text-body-compact [&_svg]:size-3.5',
   icon: 'size-8 rounded-sm [&_svg]:size-4',
   'icon-sm': 'size-7 rounded-sm [&_svg]:size-3.5',
@@ -596,13 +597,17 @@ export function Progress({
   value,
   className,
   label,
+  mark,
 }: {
   value: number | null
   className?: string
   label?: string
+  /** A tick across the track at this fraction, for a fill to be read against: the quota gauge's
+   *  share of the day gone. */
+  mark?: { at: number; label: string } | undefined
 }) {
   const clamped = value == null ? null : Math.min(1, Math.max(0, value))
-  return (
+  const bar = (
     <div
       role="progressbar"
       aria-label={label}
@@ -618,6 +623,19 @@ export function Progress({
           clamped == null ? 'w-1/3 animate-pulse' : 'origin-left transition-transform',
         )}
         style={clamped == null ? undefined : { transform: `scaleX(${clamped})` }}
+      />
+    </div>
+  )
+  if (!mark) return bar
+  return (
+    <div className="relative">
+      {bar}
+      <span
+        role="img"
+        aria-label={mark.label}
+        title={mark.label}
+        className="absolute top-1/2 h-2.5 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-pill bg-ink-muted"
+        style={{ left: `${Math.min(1, Math.max(0, mark.at)) * 100}%` }}
       />
     </div>
   )
