@@ -1,7 +1,7 @@
 /** Tasks: everything the labs added. Only here does a task run, wait for cores, pause or stop. */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
+import { Link, useNavigate, useSearch } from '@tanstack/react-router'
 import {
   CopyIcon,
   EllipsisIcon,
@@ -23,7 +23,7 @@ import { useNow } from '@/lib/now'
 import { useRefetchOn } from '@/lib/ws'
 import { AlphaTable, type AlphaTableRow, fromRanked, option } from '@/screens/alpha-table'
 import { DatasetChips, useDatasetTree } from '@/screens/data/dataset-chips'
-import { DetailSheet } from '@/screens/pool/detail'
+import { alphaIds, useDetailSheet } from '@/screens/pool/detail'
 import { MAX_SIMULATIONS } from '@/screens/research-labs/lab-task'
 import { type LabTask, labTasks, type RankedAlpha, TOP_LIMIT } from '@/screens/tasks/api'
 import { TASK_OFFER, taskStatus } from '@/screens/tasks/columns'
@@ -90,6 +90,8 @@ const TOP_DEFAULTS = [
   'testSharpe',
 ]
 
+const TASK_DETAIL = 'task-detail'
+
 type Act = { action: 'runAll' } | { action: 'run' | 'pause' | 'stop' | 'remove'; task: LabTask }
 
 export function TasksScreen() {
@@ -97,19 +99,29 @@ export function TasksScreen() {
   const list = useQuery({ queryKey: ['lab-tasks'], queryFn: labTasks.list })
   useRefetchOn('studies', ['lab-tasks'], 2_000)
   useRefetchOn('simulations', ['lab-tasks'], 5_000)
-  const [selectedId, setSelectedId] = useState<number | null>(null)
   const [editing, setEditing] = useState<LabTask | null>(null)
   const [renaming, setRenaming] = useState<LabTask | null>(null)
   const [confirming, setConfirming] = useState<Act | null>(null)
-  const [alphaId, setAlphaId] = useState<string | null>(null)
-  const [view, setView] = useState<'tasks' | 'submittable'>('tasks')
+  const detail = useDetailSheet()
+  const search = useSearch({ from: '/tasks/' })
+  const navigate = useNavigate({ from: '/tasks/' })
+  const view = search.view ?? 'tasks'
+  const selectedId = search.task ?? null
+  const setView = (next: 'tasks' | 'submittable') =>
+    void navigate({
+      search: ({ view: _, ...s }) => (next === 'submittable' ? { ...s, view: next } : s),
+      replace: true,
+    })
+  const setSelectedId = (task: number) =>
+    void navigate({ search: (s) => ({ ...s, task }), replace: true })
 
   // Nothing picked yet: open on what is running, then stay there. Re-deriving this every render
   // would move the pane out from under the reader the moment that task finished.
   const running = list.data?.tasks.find((t) => t.status === 'RUNNING')?.id ?? null
   useEffect(() => {
-    if (running != null) setSelectedId((id) => id ?? running)
-  }, [running])
+    if (running != null && selectedId === null)
+      void navigate({ search: (s) => ({ ...s, task: running }), replace: true })
+  }, [running, selectedId, navigate])
 
   const act = useMutation({
     meta: { inline: true },
@@ -247,8 +259,11 @@ export function TasksScreen() {
       cell: (t) => (
         <Actions
           task={t}
+          // Pausing and running are undone with one click; stopping and removing are not.
           onAct={(action) =>
-            action === 'pause' ? act.mutate({ action, task: t }) : ask({ action, task: t })
+            action === 'pause' || action === 'run'
+              ? act.mutate({ action, task: t })
+              : ask({ action, task: t })
           }
           onEdit={() => setEditing(t)}
           onRename={() => setRenaming(t)}
@@ -262,14 +277,25 @@ export function TasksScreen() {
       <PageHeader
         title="Tasks"
         actions={
-          <Button
-            variant="primary"
-            disabled={fresh === 0}
-            onClick={() => ask({ action: 'runAll' })}
-          >
-            <PlayIcon />
-            Run All
-          </Button>
+          <>
+            <Segmented
+              label="View"
+              items={[
+                { value: 'tasks', label: 'Tasks' },
+                { value: 'submittable', label: 'Submittable Alphas' },
+              ]}
+              value={view}
+              onChange={setView}
+            />
+            <Button
+              variant="primary"
+              disabled={fresh === 0}
+              onClick={() => ask({ action: 'runAll' })}
+            >
+              <PlayIcon />
+              Run All
+            </Button>
+          </>
         }
       />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -301,44 +327,46 @@ export function TasksScreen() {
       )}
       {act.isError && confirming === null && <ErrorNotice error={act.error} />}
 
-      <Panel
-        actions={
-          <Segmented
-            label="View"
-            items={[
-              { value: 'tasks', label: 'Tasks' },
-              { value: 'submittable', label: 'Submittable Alphas' },
-            ]}
-            value={view}
-            onChange={setView}
-          />
-        }
-      >
-        {view === 'submittable' ? (
-          <SubmittableAlphas onOpenAlpha={setAlphaId} />
-        ) : list.data && all.length === 0 ? (
-          <Empty title="No tasks yet">
-            <Link to="/labs" className={LINK}>
-              Open Research Labs
-            </Link>
-          </Empty>
-        ) : (
-          <DataTable
-            label="Tasks"
-            rows={all}
-            columns={columns}
-            rowKey={(t) => String(t.id)}
-            onRowClick={(t) => setSelectedId(t.id)}
-            // Held through hover, which otherwise repaints the row as if nothing were picked.
-            rowClass={(t) =>
-              t.id === selectedId ? 'bg-primary-subtle hover:bg-primary-subtle' : undefined
-            }
-            loading={list.isPending}
-            error={list.error}
-          />
-        )}
-      </Panel>
-      {view === 'tasks' && selected && <TaskDetail task={selected} onOpenAlpha={setAlphaId} />}
+      {view === 'submittable' ? (
+        <SubmittableAlphas onOpenAlpha={detail.open} />
+      ) : (
+        <Panel>
+          {list.data && all.length === 0 ? (
+            <Empty title="No tasks yet">
+              <Link to="/labs" className={LINK}>
+                Open Research Labs
+              </Link>
+            </Empty>
+          ) : (
+            <DataTable
+              label="Tasks"
+              rows={all}
+              columns={columns}
+              rowKey={(t) => String(t.id)}
+              onRowClick={(t) => {
+                setSelectedId(t.id)
+                // The detail is below the table: bring it up, or the click seems to do nothing.
+                requestAnimationFrame(() =>
+                  document
+                    .getElementById(TASK_DETAIL)
+                    ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }),
+                )
+              }}
+              // Held through hover, which otherwise repaints the row as if nothing were picked.
+              rowClass={(t) =>
+                t.id === selectedId ? 'bg-primary-subtle hover:bg-primary-subtle' : undefined
+              }
+              loading={list.isPending}
+              error={list.error}
+            />
+          )}
+        </Panel>
+      )}
+      {view === 'tasks' && selected && (
+        <div id={TASK_DETAIL} className="scroll-mt-4">
+          <TaskDetail task={selected} onOpenAlpha={detail.open} />
+        </div>
+      )}
 
       {editing && (
         <EditTask key={editing.id} task={editing} slots={slots} onClose={() => setEditing(null)} />
@@ -346,7 +374,7 @@ export function TasksScreen() {
       {renaming && (
         <RenameTask key={renaming.id} task={renaming} onClose={() => setRenaming(null)} />
       )}
-      <DetailSheet alphaId={alphaId} onClose={() => setAlphaId(null)} />
+      {detail.sheet}
       <Confirm
         open={confirming !== null}
         onOpenChange={(isOpen) => {
@@ -522,7 +550,7 @@ function TaskDetail({
   onOpenAlpha,
 }: {
   task: LabTask
-  onOpenAlpha: (alphaId: string) => void
+  onOpenAlpha: (alphaId: string, ids?: string[]) => void
 }) {
   const top = useQuery({
     // Its own key, refreshed at most every 10s: the whole sweep is a megabyte or more on a
@@ -689,7 +717,7 @@ function TaskDetail({
           rows={rows}
           offer={task.objectiveLabel === 'Sharpe' ? TASK_OFFER : ['value', ...TASK_OFFER]}
           overrides={[objective(task)]}
-          onRowClick={(r) => r.alphaId && onOpenAlpha(r.alphaId)}
+          onRowClick={(r, _event, shown) => r.alphaId && onOpenAlpha(r.alphaId, alphaIds(shown))}
           rowClass={() => verdict}
           loading={top.isPending}
           error={top.error}

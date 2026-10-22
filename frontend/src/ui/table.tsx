@@ -5,10 +5,10 @@
 
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ArrowDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon } from 'lucide-react'
-import { Children, cloneElement, isValidElement, type ReactNode, useRef } from 'react'
+import { Children, cloneElement, isValidElement, type ReactNode, useEffect, useRef } from 'react'
 import { cn } from '@/lib/cn'
 import { DASH, fmt } from '@/lib/format'
-import { Button, Empty, ErrorNotice, Skeleton } from './kit'
+import { Button, Checkbox, Empty, ErrorNotice, Skeleton } from './kit'
 
 export interface Column<T> {
   key: string
@@ -42,19 +42,21 @@ export function DataTable<T>({
   rowHeight = 34,
   label,
   corner,
+  page,
 }: {
   rows: T[]
   columns: Column<T>[]
   rowKey: (row: T) => string
-  /** The event comes too, so a table can treat a modified click as its own action. */
-  onRowClick?: (row: T, event: React.MouseEvent | React.KeyboardEvent) => void
+  /** The event comes too, so a table can treat a modified click as its own action, and the
+   *  rows in the order shown, for stepping through them from what the click opened. */
+  onRowClick?: (row: T, event: React.MouseEvent | React.KeyboardEvent, shown: T[]) => void
   /** Extra classes for one row, so a table can mark rows that mean something. */
   rowClass?: (row: T) => string | undefined
   sort?: Sort
   onSort?: (sort: Sort) => void
-  /** With `onSelect`, adds a checkbox column. */
+  /** With `onSelect`, adds a checkbox column. Shift-click ticks or unticks a run of rows. */
   selected?: ReadonlySet<string>
-  onSelect?: (key: string, on: boolean) => void
+  onSelect?: (keys: string[], on: boolean) => void
   loading?: boolean
   /** A failed query: shown in place of the empty state, which would claim there is nothing. */
   error?: unknown
@@ -65,8 +67,18 @@ export function DataTable<T>({
   label: string
   /** Shown in the header's first column, above any checkboxes, e.g. the table's column settings. */
   corner?: ReactNode
+  /** The page shown, when the rows are paged: a new page, like a new sort, starts at its top. */
+  page?: number
 }) {
   const scroller = useRef<HTMLDivElement>(null)
+  // Where the last tick landed and whether shift is held for this one, for ticking a run.
+  const lastTicked = useRef<number | null>(null)
+  const shift = useRef(false)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-run to start each new sort or page at its top
+  useEffect(() => {
+    scroller.current?.scrollTo({ top: 0 })
+    lastTicked.current = null
+  }, [sort?.key, sort?.desc, page])
   const virtual = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scroller.current,
@@ -185,13 +197,13 @@ export function DataTable<T>({
                   aria-rowindex={item.index + 2}
                   aria-selected={selectable ? isSelected : undefined}
                   tabIndex={onRowClick ? 0 : undefined}
-                  onClick={onRowClick ? (e) => onRowClick(row, e) : undefined}
+                  onClick={onRowClick ? (e) => onRowClick(row, e, rows) : undefined}
                   onKeyDown={
                     onRowClick
                       ? (e) => {
                           if (e.key !== 'Enter' && e.key !== ' ') return
                           e.preventDefault()
-                          onRowClick(row, e)
+                          onRowClick(row, e, rows)
                         }
                       : undefined
                   }
@@ -213,15 +225,29 @@ export function DataTable<T>({
                     <div
                       role="cell"
                       className="flex items-center justify-center"
+                      onClickCapture={(e) => {
+                        shift.current = e.shiftKey
+                      }}
                       onClick={(e) => e.stopPropagation()}
                       onKeyDown={(e) => e.stopPropagation()}
                     >
-                      <input
-                        type="checkbox"
+                      <Checkbox
+                        label={null}
                         aria-label="Select row"
-                        className="size-3.5"
                         checked={isSelected}
-                        onChange={(e) => onSelect(key, e.target.checked)}
+                        onChange={(on) => {
+                          const from = shift.current ? lastTicked.current : null
+                          shift.current = false
+                          lastTicked.current = item.index
+                          const run =
+                            from === null
+                              ? [row]
+                              : rows.slice(
+                                  Math.min(from, item.index),
+                                  Math.max(from, item.index) + 1,
+                                )
+                          onSelect(run.map(rowKey), on)
+                        }}
                       />
                     </div>
                   )}

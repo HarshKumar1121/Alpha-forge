@@ -7,7 +7,7 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/cn'
 import { CORE_METRICS, fmt } from '@/lib/format'
-import { pool } from '@/screens/pool/api'
+import { BRAIN_ALPHA_URL, pool } from '@/screens/pool/api'
 import { Button } from '@/ui/kit'
 import { Menu } from '@/ui/overlay'
 import { type AstKind, tokenizeBrainAst } from './brain-ast'
@@ -72,8 +72,11 @@ export function RecheckButton({
   )
 }
 
-/** Per-Alpha actions that are not one-click enough to earn a button of their own. */
-export function AlphaActionsMenu({ alphaId }: { alphaId: string }) {
+/**
+ * Per-Alpha actions that are not one-click enough to earn a button of their own. `links` adds
+ * the full page and BRAIN, for a table row, where nothing else on the row offers them.
+ */
+export function AlphaActionsMenu({ alphaId, links = false }: { alphaId: string; links?: boolean }) {
   const navigate = useNavigate()
   return (
     <Menu
@@ -90,6 +93,19 @@ export function AlphaActionsMenu({ alphaId }: { alphaId: string }) {
         </Button>
       }
       items={[
+        ...(links
+          ? [
+              {
+                label: 'Open Full Page',
+                onClick: () => void navigate({ to: '/alpha/$alphaId', params: { alphaId } }),
+              },
+              {
+                label: 'Open in BRAIN',
+                onClick: () =>
+                  window.open(BRAIN_ALPHA_URL(alphaId), '_blank', 'noopener,noreferrer'),
+              },
+            ]
+          : []),
         {
           label: 'Settings Sampler',
           onClick: () =>
@@ -98,6 +114,11 @@ export function AlphaActionsMenu({ alphaId }: { alphaId: string }) {
         {
           label: 'Fields Sampler',
           onClick: () => void navigate({ to: '/tools/fields-sampler', search: { alpha: alphaId } }),
+        },
+        {
+          label: 'Correlation Breaker',
+          onClick: () =>
+            void navigate({ to: '/tools/correlation-breaker', search: { alpha: alphaId } }),
         },
       ]}
     />

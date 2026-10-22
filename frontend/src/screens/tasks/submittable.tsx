@@ -36,7 +36,11 @@ const DEFAULTS = [
   'testFitness',
 ]
 
-export function SubmittableAlphas({ onOpenAlpha }: { onOpenAlpha: (alphaId: string) => void }) {
+export function SubmittableAlphas({
+  onOpenAlpha,
+}: {
+  onOpenAlpha: (alphaId: string, ids?: string[]) => void
+}) {
   const query = useQuery({ queryKey: ['submittable-alphas'], queryFn: labTasks.submittable })
   // Its own key, refreshed at most every 30s: reading every task's Alphas takes seconds on a
   // large account, too long to redo on each of the Tasks screen's two-second updates.
@@ -113,7 +117,7 @@ function SubmissionOrder({
   onOpenAlpha,
 }: {
   alphaIds: string[]
-  onOpenAlpha: (alphaId: string) => void
+  onOpenAlpha: (alphaId: string, ids?: string[]) => void
 }) {
   const order = useMutation({ mutationFn: () => labTasks.powerPoolOrder(alphaIds) })
   const found = order.data
@@ -153,7 +157,12 @@ function SubmissionOrder({
             rows={picks}
             columns={PICK_COLUMNS}
             rowKey={(r) => r.alphaId}
-            onRowClick={(r) => onOpenAlpha(r.alphaId)}
+            onRowClick={(r, _event, shown) =>
+              onOpenAlpha(
+                r.alphaId,
+                shown.map((p) => p.alphaId),
+              )
+            }
             empty="Nothing here passes Power Pool Correlation today."
             maxHeight="50vh"
           />

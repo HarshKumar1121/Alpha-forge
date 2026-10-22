@@ -22,6 +22,7 @@ import type { Today } from '@/api/types'
 import { cn } from '@/lib/cn'
 import { Button, Kbd } from '@/ui/kit'
 import { Confirm, Menu, Tooltip } from '@/ui/overlay'
+import { MOD } from './desktop'
 import { NAV } from './nav'
 import { SETTINGS_SHORTCUT, useSettings } from './settings'
 import { UpdateBadge, useQuitApp, useUpdateStatus, VersionBadge } from './update'
@@ -87,8 +88,7 @@ export const useSidebarHidden = create<{
   ),
 )
 
-/** The shortcut as this keyboard writes it: most consultants are on Windows, not a Mac. */
-export const SIDEBAR_SHORTCUT = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘B' : 'Ctrl+B'
+export const SIDEBAR_SHORTCUT = `${MOD}B`
 
 /** Shows or hides the sidebar. Lives in the header, so it stays put whichever it is. */
 export function SidebarToggle() {

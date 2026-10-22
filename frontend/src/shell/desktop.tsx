@@ -18,6 +18,8 @@ import { useUpdateStatus } from './update'
 export const inDesktop = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 /** macOS keeps its own window buttons, drawn over the top bar's left end. */
 export const onMac = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac')
+/** The shortcut modifier as this keyboard writes it: most consultants are on Windows. */
+export const MOD = onMac ? '⌘' : 'Ctrl+'
 
 const CONTROL =
   'flex h-12 w-11 items-center justify-center text-ink-subtle transition-colors hover:bg-surface-2 hover:text-ink [&_svg]:size-4'

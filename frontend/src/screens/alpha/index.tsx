@@ -4,7 +4,7 @@
  */
 
 import { useQuery } from '@tanstack/react-query'
-import { Link, useParams } from '@tanstack/react-router'
+import { Link, useCanGoBack, useParams, useRouter } from '@tanstack/react-router'
 import { ArrowLeftIcon, ExternalLinkIcon } from 'lucide-react'
 import { useState } from 'react'
 import { DetailSheet } from '@/screens/pool/detail'
@@ -24,6 +24,9 @@ import {
 import { PropertiesPanel } from './properties'
 import { SettingsList } from './settings-list'
 
+const BACK =
+  'inline-flex w-fit items-center gap-1 px-1 text-body-compact text-ink-subtle hover:text-ink'
+
 export function AlphaScreen() {
   const { alphaId } = useParams({ from: '/alpha/$alphaId' })
   const page = useQuery({
@@ -32,17 +35,23 @@ export function AlphaScreen() {
     retry: false,
   })
   const [stored, setStored] = useState(false)
+  // Back to wherever it was opened from; Alphas only when it was opened here directly.
+  const canGoBack = useCanGoBack()
+  const router = useRouter()
 
   return (
     <Page className="mx-auto w-full max-w-[96rem]">
-      <Link
-        to="/pool/$tab"
-        params={{ tab: 'stored' }}
-        className="inline-flex w-fit items-center gap-1 px-1 text-body-compact text-ink-subtle hover:text-ink"
-      >
-        <ArrowLeftIcon className="size-3.5" aria-hidden />
-        Alphas
-      </Link>
+      {canGoBack ? (
+        <button type="button" onClick={() => router.history.back()} className={BACK}>
+          <ArrowLeftIcon className="size-3.5" aria-hidden />
+          Back
+        </button>
+      ) : (
+        <Link to="/pool/$tab" params={{ tab: 'stored' }} className={BACK}>
+          <ArrowLeftIcon className="size-3.5" aria-hidden />
+          Alphas
+        </Link>
+      )}
       {page.isPending && <Skeleton className="h-[40rem]" label={`Loading ${alphaId} from BRAIN`} />}
       {page.isError && (
         <>

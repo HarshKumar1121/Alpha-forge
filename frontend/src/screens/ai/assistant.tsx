@@ -5,7 +5,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { PlusIcon, Trash2Icon } from 'lucide-react'
+import { CopyIcon, FlaskConicalIcon, PlusIcon, Trash2Icon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { catalog } from '@/api/catalog'
@@ -23,6 +23,9 @@ import {
   type Reasoning,
 } from '@/screens/ai/api'
 import { DatasetChips, useDatasetTree } from '@/screens/data/dataset-chips'
+import { useFieldFilter } from '@/screens/data/state'
+import { useSearchLab } from '@/screens/research-labs/search/state'
+import { onMac } from '@/shell/desktop'
 import {
   Button,
   Empty,
@@ -366,7 +369,7 @@ export function Assistant({ threadId }: { threadId: number | null }) {
                 disabled={say.isPending}
               />
               <span className="ml-auto hidden items-center gap-1 sm:inline-flex">
-                <Kbd>Ctrl</Kbd>
+                <Kbd>{onMac ? '⌘' : 'Ctrl'}</Kbd>
                 <Kbd>Enter</Kbd>
               </span>
               <Button variant="primary" type="submit" loading={say.isPending} disabled={!canSend}>
@@ -398,12 +401,30 @@ export function Assistant({ threadId }: { threadId: number | null }) {
   )
 }
 
-/** The datasets a reply drew its fields from, placed in the chat's market. */
+/** The datasets a reply drew its fields from, placed in the chat's market, and the way to
+ *  search them in Search Lab. */
 function ReplyDatasets({ scope, ids }: { scope: Scope; ids: string[] }) {
   const { tree, nameOf, ready } = useDatasetTree(scope)
+  const navigate = useNavigate()
+  const search = () => {
+    useSearchLab.setState({
+      region: scope.region,
+      delay: scope.delay,
+      universe: scope.universe,
+      datasetIds: ids,
+      fieldFilter: null,
+    })
+    void navigate({ to: '/labs/search' })
+  }
   return (
     <div className="flex flex-col gap-1.5">
-      <span className="text-body-compact text-ink-subtle">Datasets</span>
+      <span className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-body-compact text-ink-subtle">Datasets</span>
+        <Button size="sm" variant="ghost" onClick={search}>
+          <FlaskConicalIcon aria-hidden />
+          Use in Search Lab
+        </Button>
+      </span>
       <DatasetChips tree={tree} value={ids} nameOf={nameOf} ready={ready} />
     </div>
   )
@@ -449,7 +470,7 @@ function Turn({
       <p className="text-body text-pretty break-words whitespace-pre-wrap text-ink-muted">
         {message.text}
       </p>
-      <Picks picks={reply?.picks ?? meta.picks ?? []} />
+      <Picks picks={reply?.picks ?? meta.picks ?? []} scope={scope} />
       {datasets.length > 0 && <ReplyDatasets scope={scope} ids={datasets} />}
       {dropped.length > 0 && (
         <Notice tone="warn" title="Named by the model but not in the catalogue, so dropped">
@@ -464,16 +485,43 @@ function Turn({
   )
 }
 
-function Picks({ picks }: { picks: ChatPick[] }) {
+function Picks({ picks, scope }: { picks: ChatPick[]; scope: Scope }) {
+  const [, setDataScope] = useScope('data')
+  const copy = useMutation({
+    mutationFn: async () => {
+      const outline = await catalog.outline(scope, { field_ids: picks.map((p) => p.field) })
+      await navigator.clipboard.writeText(outline.text)
+      return outline
+    },
+    onSuccess: (outline) =>
+      toast.success(`Copied ${fmt.int(picks.length - outline.missing.length)} Data Fields`, {
+        description: 'Grouped by Category, Subcategory and Dataset, ready to paste into any LLM.',
+      }),
+    onError: (e) => toast.error('Could not copy the Data Fields', { description: errorMessage(e) }),
+  })
   if (picks.length === 0) return null
   return (
     <div className="flex flex-col gap-1 rounded-md border border-hairline bg-surface-1 p-2">
-      <p className="text-body-compact text-ink-subtle">
-        Fields picked (<span className="num">{fmt.int(picks.length)}</span>)
-      </p>
+      <span className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-body-compact text-ink-subtle">
+          Fields picked (<span className="num">{fmt.int(picks.length)}</span>)
+        </span>
+        <Button size="sm" variant="ghost" loading={copy.isPending} onClick={() => copy.mutate()}>
+          {!copy.isPending && <CopyIcon aria-hidden />}
+          Copy Data Fields
+        </Button>
+      </span>
       {picks.map((p) => (
         <div key={p.field} className="flex flex-wrap items-baseline gap-2 text-body-compact">
-          <Link to="/data" className="num text-ink transition-colors hover:text-link">
+          {/* Opens the Explorer on this field, in the chat's market, wherever it was left. */}
+          <Link
+            to="/data"
+            onClick={() => {
+              setDataScope(scope)
+              useFieldFilter.getState().replace({ search: p.field, search_mode: 'text' })
+            }}
+            className="num text-ink transition-colors hover:text-link"
+          >
             {p.field}
           </Link>
           <span className="text-pretty text-ink-subtle">{p.why}</span>

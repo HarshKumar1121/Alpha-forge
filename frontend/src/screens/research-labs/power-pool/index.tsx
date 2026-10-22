@@ -138,12 +138,15 @@ export function PowerPoolLabScreen() {
     current &&
     plan.problems.length === 0 &&
     simulationsValid(draft.simulations, maxSimulations)
+  const blocked =
+    plan?.problems[0] ?? (draft.simulations === null ? 'Enter the simulations to run.' : null)
 
   return (
     <Page>
       <PageHeader
+        sticky
         title="LLM Power Pool Lab"
-        actions={<AddTaskButtons add={add} disabled={!ready} />}
+        actions={<AddTaskButtons add={add} disabled={!ready} blocked={blocked} />}
       />
       {options.isError && <ErrorNotice error={options.error} title="Could not load the models" />}
       {options.isSuccess && models.length === 0 && (

@@ -195,6 +195,9 @@ export function EvolutionLabScreen() {
     hasSeeds &&
     plan.problems.length === 0 &&
     simulationsValid(simulations, maxSimulations)
+  const blocked = !hasSeeds
+    ? 'Choose seeds first.'
+    : (plan?.problems[0] ?? (simulations === null ? 'Enter the simulations to run.' : null))
 
   const columns: Column<SeedRow>[] = [
     {
@@ -255,7 +258,11 @@ export function EvolutionLabScreen() {
 
   return (
     <Page>
-      <PageHeader title="Evolution Lab" actions={<AddTaskButtons add={add} disabled={!ready} />} />
+      <PageHeader
+        sticky
+        title="Evolution Lab"
+        actions={<AddTaskButtons add={add} disabled={!ready} blocked={blocked} />}
+      />
       {options.isError && (
         <ErrorNotice error={options.error} title="Could not load the lab's options" />
       )}

@@ -9,7 +9,7 @@ import type { Scope } from '@/api/types'
 import { cn } from '@/lib/cn'
 import { saveText } from '@/lib/download'
 import { fmt } from '@/lib/format'
-import { Button, Input } from '@/ui/kit'
+import { Button, Checkbox, Input } from '@/ui/kit'
 import { ContextMenu } from '@/ui/overlay'
 import { DatasetChips } from './dataset-chips'
 import { buildTree } from './dataset-tree'
@@ -289,29 +289,24 @@ function TreeRow({
         ) : (
           <span className="w-4.5 shrink-0" aria-hidden />
         )}
-        <label
-          title={title ?? label}
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2"
-        >
-          <input
-            type="checkbox"
-            className="size-3.5 shrink-0"
-            checked={all}
-            ref={(el) => {
-              if (el) el.indeterminate = some
-            }}
-            onChange={(e) => onToggle(e.target.checked)}
-          />
-          <span
-            className={cn(
-              'truncate',
-              depth === 0 && 'font-medium',
-              on > 0 ? 'text-ink' : 'text-ink-muted',
-            )}
-          >
-            {label}
-          </span>
-        </label>
+        <Checkbox
+          className="min-w-0 flex-1"
+          checked={all}
+          indeterminate={some}
+          onChange={onToggle}
+          label={
+            <span
+              title={title ?? label}
+              className={cn(
+                'truncate text-body-compact',
+                depth === 0 && 'font-medium',
+                on > 0 ? 'text-ink' : 'text-ink-muted',
+              )}
+            >
+              {label}
+            </span>
+          }
+        />
         {count != null && <span className="num shrink-0 text-ink-subtle">{fmt.int(count)}</span>}
       </div>
     </ContextMenu>

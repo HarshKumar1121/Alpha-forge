@@ -271,6 +271,14 @@ export function TemplateLabScreen() {
     plan.problems.length === 0 &&
     truncation !== null &&
     simulationsValid(draft.simulations, maxSimulations)
+  // Beside the buttons, since Truncation and Simulations sit at the bottom of the page.
+  const blocked =
+    plan?.problems[0] ??
+    (truncation === null
+      ? 'Set a valid Truncation.'
+      : draft.simulations === null
+        ? 'Enter the simulations to run.'
+        : null)
   const toSave = () => ({
     text: draft.text,
     variables: Object.fromEntries(
@@ -360,7 +368,11 @@ export function TemplateLabScreen() {
 
   return (
     <Page>
-      <PageHeader title="Template Lab" actions={<AddTaskButtons add={add} disabled={!ready} />} />
+      <PageHeader
+        sticky
+        title="Template Lab"
+        actions={<AddTaskButtons add={add} disabled={!ready} blocked={blocked} />}
+      />
       {options.isError && (
         <ErrorNotice error={options.error} title="Could not read your operators" />
       )}
@@ -425,6 +437,7 @@ export function TemplateLabScreen() {
           openTemplate({ id: t.id, name: t.name, text: t.text, variables: t.variables })
         }
         onNew={() => openTemplate(BLANK)}
+        writing={draft.text.trim() !== ''}
       />
 
       <Panel

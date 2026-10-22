@@ -183,11 +183,19 @@ export function FieldsSamplerScreen() {
   return (
     <Page>
       <PageHeader
+        sticky
         title="Fields Sampler"
         actions={
           <AddTaskButtons
             add={add}
             disabled={(!bucketed && chosen.size === 0) || !analysed || first === 0 || overMax}
+            blocked={
+              !analysed
+                ? 'Analyse an Alpha first.'
+                : !bucketed && chosen.size === 0
+                  ? 'Tick the fields to swap.'
+                  : null
+            }
           />
         }
       />

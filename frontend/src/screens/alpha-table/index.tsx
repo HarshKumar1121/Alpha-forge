@@ -179,6 +179,7 @@ export function AlphaTable({
   error,
   empty,
   maxHeight,
+  page,
 }: {
   /** Where this screen's choice of columns is kept. */
   view: string
@@ -198,14 +199,20 @@ export function AlphaTable({
   /** The backend sorts: only columns it knows sort, and the rows arrive in order. */
   serverSort?: boolean
   selected?: ReadonlySet<string>
-  onSelect?: (key: string, on: boolean) => void
-  onRowClick?: (row: AlphaTableRow, event: React.MouseEvent | React.KeyboardEvent) => void
+  onSelect?: (keys: string[], on: boolean) => void
+  onRowClick?: (
+    row: AlphaTableRow,
+    event: React.MouseEvent | React.KeyboardEvent,
+    shown: AlphaTableRow[],
+  ) => void
   /** Given the rows in the order shown, so a mark can depend on its neighbours. */
   rowClass?: (shown: AlphaTableRow[]) => (row: AlphaTableRow) => string | undefined
   loading?: boolean
   error?: unknown
   empty?: ReactNode
   maxHeight?: string
+  /** The page shown, when paged: see the table's own. */
+  page?: number
 }) {
   const saved = useViews((s) => s.views[view])
   const shown = new Set(saved?.shown ?? defaults)
@@ -234,7 +241,7 @@ export function AlphaTable({
       header: '',
       width: '44px',
       align: 'right',
-      cell: (r) => r.alphaId && <AlphaActionsMenu alphaId={r.alphaId} />,
+      cell: (r) => r.alphaId && <AlphaActionsMenu alphaId={r.alphaId} links />,
     },
   ]
 
@@ -263,6 +270,7 @@ export function AlphaTable({
         error={error}
         {...(empty !== undefined ? { empty } : {})}
         maxHeight={maxHeight}
+        {...(page !== undefined ? { page } : {})}
       />
     </AnglesContext.Provider>
   )

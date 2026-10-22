@@ -29,6 +29,7 @@ import { DEFAULT_SCOPE, useScopeOptions } from '@/lib/scope'
 import { useProviderLabel, useRunnableModels } from '@/screens/ai/shared'
 import { Button, Chips, ErrorNotice, Segmented, Skeleton, Switch } from '@/ui/kit'
 import { BACKDROP, Select } from '@/ui/overlay'
+import { MOD } from './desktop'
 import { useApplyUpdate, useUpdateStatus } from './update'
 
 export const useSettings = create<{
@@ -39,8 +40,7 @@ export const useSettings = create<{
   setOpen: (open) => set({ open }),
 }))
 
-/** The shortcut as this keyboard writes it, as for the sidebar's. */
-export const SETTINGS_SHORTCUT = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘,' : 'Ctrl+,'
+export const SETTINGS_SHORTCUT = `${MOD},`
 
 type SectionId = 'simulations' | 'tasks' | 'alphas' | 'updates'
 

@@ -14,10 +14,10 @@ import { useCores, useLive } from '@/lib/live'
 import { coreBlocks } from '@/lib/matrix'
 import { useNow } from '@/lib/now'
 import { useRefetchOn } from '@/lib/ws'
-import { Button, STATUS } from '@/ui/kit'
+import { Button, Kbd, STATUS } from '@/ui/kit'
 import { Tooltip } from '@/ui/overlay'
 import { useCommandMenu } from './command-menu'
-import { inDesktop, onMac, WindowControls } from './desktop'
+import { inDesktop, MOD, onMac, WindowControls } from './desktop'
 import { SidebarToggle } from './sidebar'
 
 export function Header() {
@@ -40,14 +40,21 @@ export function Header() {
       <div className="flex shrink-0 items-center gap-4">
         <Clocks />
         <ConnectionNotice />
-        <Button
-          size="icon-sm"
-          aria-label="Go to a screen or lab (⌘K)"
-          title="Go to a screen or lab (⌘K)"
-          onClick={() => openMenu(true)}
+        <Tooltip
+          content={
+            <span className="flex items-center gap-2">
+              Go to a screen or lab <Kbd>{MOD}K</Kbd>
+            </span>
+          }
         >
-          <SearchIcon />
-        </Button>
+          <Button
+            size="icon-sm"
+            aria-label={`Go to a screen or lab (${MOD}K)`}
+            onClick={() => openMenu(true)}
+          >
+            <SearchIcon />
+          </Button>
+        </Tooltip>
         {inDesktop && !onMac && <WindowControls />}
       </div>
     </header>

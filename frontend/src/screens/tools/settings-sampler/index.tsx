@@ -681,6 +681,7 @@ export function SettingsSamplerScreen() {
   return (
     <Page>
       <PageHeader
+        sticky
         title="Settings Sampler"
         description="Run an expression everywhere BRAIN accepts it"
         actions={

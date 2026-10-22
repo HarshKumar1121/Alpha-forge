@@ -19,6 +19,7 @@ import {
   CircleAlertIcon,
   InfoIcon,
   LoaderCircleIcon,
+  MinusIcon,
   TriangleAlertIcon,
 } from 'lucide-react'
 import { type ComponentProps, Fragment, type ReactNode, useId } from 'react'
@@ -68,13 +69,23 @@ export function PageHeader({
   title,
   description,
   actions,
+  sticky = false,
 }: {
   title: ReactNode
   description?: ReactNode
   actions?: ReactNode
+  /** Stays at the top while the page scrolls, for a form whose buttons are up here and whose
+   *  last inputs are at the bottom. */
+  sticky?: boolean
 }) {
   return (
-    <header className="flex flex-wrap items-end justify-between gap-3 px-1 pt-1">
+    <header
+      className={cn(
+        'flex flex-wrap items-end justify-between gap-3 px-1 pt-1',
+        sticky &&
+          '-mx-3 -mt-3 sticky top-0 z-20 border-b border-hairline bg-canvas/95 px-4 py-3 backdrop-blur-sm lg:-mx-4 lg:-mt-4 lg:px-5',
+      )}
+    >
       <div className="flex min-w-0 flex-col gap-1">
         <h1 className="text-headline text-balance break-words font-semibold text-ink">{title}</h1>
         {description && (
@@ -283,13 +294,17 @@ export function Fieldset({
 export function Checkbox({
   label,
   checked,
+  indeterminate = false,
   onChange,
   disabled,
   className,
   ...props
 }: {
+  /** `null` for a box labelled by `aria-label` alone, as in a table row. */
   label: ReactNode
   checked: boolean
+  /** Some of what it stands for is ticked, not all: drawn as a dash. */
+  indeterminate?: boolean | undefined
   onChange: (checked: boolean) => void
   disabled?: boolean | undefined
   className?: string | undefined
@@ -301,19 +316,25 @@ export function Checkbox({
       <BaseCheckbox.Root
         id={id}
         checked={checked}
+        indeterminate={indeterminate}
         disabled={disabled}
         onCheckedChange={onChange}
         className={cn(
           'mt-px flex size-4 shrink-0 items-center justify-center rounded-xs border transition-colors',
           'border-(--field-border) bg-surface-1',
           'data-[checked]:border-(--btn-primary-bg) data-[checked]:bg-(--btn-primary-bg)',
+          'data-[indeterminate]:border-(--btn-primary-bg) data-[indeterminate]:bg-(--btn-primary-bg)',
           'data-[disabled]:border-(--field-border-disabled) data-[disabled]:bg-surface-2',
           !disabled && 'cursor-pointer group-hover:border-(--field-border-hover)',
         )}
         {...props}
       >
         <BaseCheckbox.Indicator className="flex text-(--btn-primary-text)">
-          <CheckIcon className="size-3" strokeWidth={3.5} aria-hidden />
+          {indeterminate ? (
+            <MinusIcon className="size-3" strokeWidth={3.5} aria-hidden />
+          ) : (
+            <CheckIcon className="size-3" strokeWidth={3.5} aria-hidden />
+          )}
         </BaseCheckbox.Indicator>
       </BaseCheckbox.Root>
       {label && (

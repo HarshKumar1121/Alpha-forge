@@ -34,6 +34,7 @@ import {
 } from '@/ui/kit'
 import { Pager, type Sort } from '@/ui/table'
 import { alphasMarkdown } from './copy'
+import { alphaIds } from './detail'
 
 /** Bounds as the user types them; `div` converts the display unit to the wire fraction. */
 const BOUNDS: { key: AlphaMetricKey; label: string; div: number }[] = [
@@ -91,7 +92,7 @@ const SELECTION_ACTION = 'border-hairline-strong bg-surface-2 text-ink hover:bg-
 
 const unique = <T,>(values: (T | null)[]) => [...new Set(values.filter((v): v is T => v != null))]
 
-export function Stored({ onOpen }: { onOpen: (alphaId: string) => void }) {
+export function Stored({ onOpen }: { onOpen: (alphaId: string, ids?: string[]) => void }) {
   const overview = useQuery({
     queryKey: ['pool', 'overview'],
     queryFn: pool.overview,
@@ -336,7 +337,8 @@ export function Stored({ onOpen }: { onOpen: (alphaId: string) => void }) {
           offer={OFFER}
           defaults={DEFAULTS}
           serverSort
-          onRowClick={(r) => r.alphaId && onOpen(r.alphaId)}
+          page={offset}
+          onRowClick={(r, _event, shown) => r.alphaId && onOpen(r.alphaId, alphaIds(shown))}
           sort={sort}
           onSort={(s) => {
             setSort(s)
@@ -344,7 +346,7 @@ export function Stored({ onOpen }: { onOpen: (alphaId: string) => void }) {
           }}
           {...(market && {
             selected: picked,
-            onSelect: (key: string, on: boolean) => toggle([key], on),
+            onSelect: toggle,
           })}
           loading={page.isPending}
           error={page.error}
@@ -416,7 +418,7 @@ function SeedPickBar({ market }: { market: Scope }) {
         disabled={count < MIN_SEEDS || count > MAX_SEEDS}
         onClick={() => back(true)}
       >
-        Done
+        Use in Evolution Lab
       </Button>
     </div>
   )

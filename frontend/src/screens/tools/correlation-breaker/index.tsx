@@ -17,7 +17,7 @@ import { useCores } from '@/lib/preferences'
 import { AddTaskButtons, useAddTask } from '@/screens/research-labs/add-task'
 import { CoresSetting } from '@/screens/research-labs/task-settings'
 import { AlphaPanel, HeldMetrics } from '@/screens/tools/one-alpha'
-import { Empty, LINK, Notice, Page, PageHeader, Panel, Skeleton } from '@/ui/kit'
+import { Checkbox, Empty, LINK, Notice, Page, PageHeader, Panel, Skeleton } from '@/ui/kit'
 import { correlationBreaker } from './api'
 
 export function CorrelationBreakerScreen() {
@@ -71,9 +71,16 @@ export function CorrelationBreakerScreen() {
   return (
     <Page>
       <PageHeader
+        sticky
         title="Correlation Breaker"
         description="Re-shape an Alpha that is already in the Production Pool"
-        actions={<AddTaskButtons add={add} disabled={chosen.size === 0 || !analysed} />}
+        actions={
+          <AddTaskButtons
+            add={add}
+            disabled={chosen.size === 0 || !analysed}
+            blocked={!analysed ? 'Analyse an Alpha first.' : 'Tick a recipe to run.'}
+          />
+        }
       />
 
       <AlphaPanel
@@ -167,15 +174,12 @@ export function CorrelationBreakerScreen() {
                     >
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="flex min-w-0 flex-col gap-1">
-                          <label className="flex items-center gap-2 text-body font-medium text-ink">
-                            <input
-                              type="checkbox"
-                              checked={on}
-                              disabled={Boolean(recipe.blocked)}
-                              onChange={() => toggle(recipe.id)}
-                            />
-                            {recipe.name}
-                          </label>
+                          <Checkbox
+                            checked={on}
+                            disabled={Boolean(recipe.blocked)}
+                            onChange={() => toggle(recipe.id)}
+                            label={<span className="font-medium text-ink">{recipe.name}</span>}
+                          />
                           {recipe.why && (
                             <p className="max-w-3xl text-body-compact text-pretty text-ink-subtle">
                               {recipe.why}

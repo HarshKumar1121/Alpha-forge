@@ -1,6 +1,7 @@
 /** Every field in the market: server-sorted, offset-paged, filtered; a row opens its detail. */
 
 import { keepPreviousData, skipToken, useMutation, useQuery } from '@tanstack/react-query'
+import { useNavigate } from '@tanstack/react-router'
 import { CopyIcon, MaximizeIcon, MinimizeIcon, SparklesIcon } from 'lucide-react'
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -17,6 +18,7 @@ import { cn } from '@/lib/cn'
 import { DASH, fmt } from '@/lib/format'
 import { useDebounced } from '@/lib/use-debounced'
 import { useDatasetPick } from '@/screens/data/dataset-pick'
+import { LAB_TABS } from '@/shell/nav'
 import {
   Badge,
   Button,
@@ -26,15 +28,17 @@ import {
   Fieldset,
   Input,
   KV,
+  Metric,
   Panel,
   Skeleton,
 } from '@/ui/kit'
-import { Select, Sheet } from '@/ui/overlay'
+import { Select, Sheet, SheetSteps } from '@/ui/overlay'
 import { useMediaQuery } from '@/ui/panels'
 import { type Column, DataTable, Pager, type Sort } from '@/ui/table'
 import { AvailabilityFilters } from './availability'
 import { datasetNames } from './dataset-tree'
 import {
+  endDatasetPick,
   type FieldFilterState,
   isActive,
   multiplier,
@@ -279,17 +283,17 @@ export function FieldsTab({ scope }: { scope: Scope }) {
   const active: FieldFilterState = { ...filter, dataset_ids: datasetIds }
   const [openId, setOpenId] = useState<string | null>(null)
   const [picked, setPicked] = useState<ReadonlySet<string>>(() => new Set())
-  const pick = (id: string, on: boolean) => {
-    if (on && picked.size >= MAX_PICKED) {
+  const pick = (ids: string[], on: boolean) => {
+    const next = new Set(picked)
+    for (const id of ids) {
+      if (on) next.add(id)
+      else next.delete(id)
+    }
+    if (next.size > MAX_PICKED) {
       toast.error(`Select at most ${MAX_PICKED} fields at once`)
       return
     }
-    setPicked((prev) => {
-      const next = new Set(prev)
-      if (on) next.add(id)
-      else next.delete(id)
-      return next
-    })
+    setPicked(next)
   }
   const copy = useMutation({
     mutationFn: async () => {
@@ -330,75 +334,111 @@ export function FieldsTab({ scope }: { scope: Scope }) {
     placeholderData: keepPreviousData,
   })
   const filtered = Object.values(active).some(isActive)
+  const picking = useDatasetPick((s) => s.active)
 
   return (
-    // The fullscreen element paints its own ground: the page behind it is gone, and an
-    // unpainted one shows through as the browser's default black.
-    <div ref={full.ref} className={cn(full.on && 'h-full overflow-auto bg-canvas p-4')}>
-      <Panel
-        className={cn(full.on && 'rounded-none border-0')}
-        title="Fields"
-        actions={
-          <>
-            {picked.size > 0 && (
-              <>
-                <Button variant="ghost" size="sm" onClick={() => setPicked(new Set())}>
-                  Clear
-                </Button>
-                <Button size="sm" onClick={() => copy.mutate()} disabled={copy.isPending}>
-                  <CopyIcon aria-hidden />
-                  Copy Selected Data Fields ({fmt.int(picked.size)})
-                </Button>
-              </>
+    <>
+      {picking && <PickBar matching={query.data?.total} />}
+      {/* The fullscreen element paints its own ground: the page behind it is gone, and an
+        unpainted one shows through as the browser's default black. */}
+      <div ref={full.ref} className={cn(full.on && 'h-full overflow-auto bg-canvas p-4')}>
+        <Panel
+          className={cn(full.on && 'rounded-none border-0')}
+          title="Fields"
+          actions={
+            <>
+              {picked.size > 0 && (
+                <>
+                  <Button variant="ghost" size="sm" onClick={() => setPicked(new Set())}>
+                    Clear
+                  </Button>
+                  <Button size="sm" onClick={() => copy.mutate()} disabled={copy.isPending}>
+                    <CopyIcon aria-hidden />
+                    Copy Selected Data Fields ({fmt.int(picked.size)})
+                  </Button>
+                </>
+              )}
+              <Button variant="ghost" size="sm" onClick={full.toggle}>
+                {full.on ? <MinimizeIcon /> : <MaximizeIcon />}
+                {full.on ? 'Exit Full Screen' : 'Full Screen'}
+              </Button>
+              {query.data && (
+                <span className={STAT}>
+                  <span className="num text-ink">{fmt.int(query.data.total)}</span>
+                  fields
+                </span>
+              )}
+            </>
+          }
+        >
+          <div className="flex flex-col gap-4">
+            <FieldFilters scope={scope} />
+            {query.isError && (query.data?.results.length ?? 0) > 0 && (
+              <ErrorNotice error={query.error} title="Could not load fields" />
             )}
-            <Button variant="ghost" size="sm" onClick={full.toggle}>
-              {full.on ? <MinimizeIcon /> : <MaximizeIcon />}
-              {full.on ? 'Exit Full Screen' : 'Full Screen'}
-            </Button>
+            <DataTable
+              label="Data fields"
+              rows={query.data?.results ?? []}
+              columns={columns}
+              rowKey={(r) => r.field_id}
+              sort={sort}
+              onSort={setSort}
+              onRowClick={(r) => setOpenId(r.field_id)}
+              page={offset}
+              // While a lab picks datasets, its ticks are the only ones on the page.
+              {...(picking ? {} : { selected: picked, onSelect: pick })}
+              loading={query.isPending}
+              error={query.error}
+              maxHeight={full.on ? 'calc(100vh - 17rem)' : undefined}
+              empty={
+                filtered
+                  ? 'No fields match these filters.'
+                  : 'No fields in this market yet. Download it in BRAIN › Sync.'
+              }
+            />
             {query.data && (
-              <span className={STAT}>
-                <span className="num text-ink">{fmt.int(query.data.total)}</span>
-                fields
-              </span>
+              <Pager total={query.data.total} offset={offset} limit={LIMIT} onChange={page} />
             )}
-          </>
-        }
-      >
-        <div className="flex flex-col gap-4">
-          <FieldFilters scope={scope} />
-          {query.isError && (query.data?.results.length ?? 0) > 0 && (
-            <ErrorNotice error={query.error} title="Could not load fields" />
-          )}
-          <DataTable
-            label="Data fields"
-            rows={query.data?.results ?? []}
-            columns={columns}
-            rowKey={(r) => r.field_id}
-            sort={sort}
-            onSort={setSort}
-            onRowClick={(r) => setOpenId(r.field_id)}
-            selected={picked}
-            onSelect={pick}
-            loading={query.isPending}
-            error={query.error}
-            maxHeight={full.on ? 'calc(100vh - 17rem)' : undefined}
-            empty={
-              filtered
-                ? 'No fields match these filters.'
-                : 'No fields in this market yet. Download it in BRAIN › Sync.'
-            }
+          </div>
+          <FieldSheet
+            scope={scope}
+            id={openId}
+            ids={(query.data?.results ?? []).map((r) => r.field_id)}
+            onStep={setOpenId}
+            onClose={() => setOpenId(null)}
+            container={full.on ? full.ref : undefined}
           />
-          {query.data && (
-            <Pager total={query.data.total} offset={offset} limit={LIMIT} onChange={page} />
-          )}
-        </div>
-        <FieldSheet
-          scope={scope}
-          id={openId}
-          onClose={() => setOpenId(null)}
-          container={full.on ? full.ref : undefined}
-        />
-      </Panel>
+        </Panel>
+      </div>
+    </>
+  )
+}
+
+/** While a lab picks datasets: what is ticked, what it leaves, and the way back to the lab. */
+function PickBar({ matching }: { matching: number | undefined }) {
+  const navigate = useNavigate()
+  const count = useDatasetPick((s) => s.ids.length)
+  const from = useDatasetPick((s) => s.from)
+  const back = (done: boolean) => {
+    // The filter goes with the datasets: the lab searches only the fields it shows.
+    endDatasetPick(done)
+    void navigate({ to: from })
+  }
+
+  return (
+    <div className="sticky top-0 z-10 flex flex-wrap items-center gap-3 rounded-lg border border-hairline bg-surface-1 p-3">
+      <Metric boxed size="sm" label="Datasets Selected" value={fmt.int(count)} />
+      <Metric boxed size="sm" label="Matching Fields" value={fmt.int(count ? matching : null)} />
+      <span className="min-w-0 flex-1 text-body-compact text-pretty text-ink-subtle">
+        Tick whole categories, whole subcategories or single datasets in More Filters. The lab uses
+        only the fields your filters show.
+      </span>
+      <Button variant="ghost" onClick={() => back(false)}>
+        Cancel
+      </Button>
+      <Button variant="primary" disabled={count === 0} onClick={() => back(true)}>
+        Use in {LAB_TABS.find((lab) => lab.to === from)?.label ?? 'the Lab'}
+      </Button>
     </div>
   )
 }
@@ -873,11 +913,16 @@ const AVAILABILITY_COLUMNS: Column<FieldAvailabilityRow>[] = [
 function FieldSheet({
   scope,
   id,
+  ids,
+  onStep,
   onClose,
   container,
 }: {
   scope: Scope
   id: string | null
+  /** The fields on this page, in the order shown, to step through. */
+  ids: string[]
+  onStep: (id: string) => void
   onClose: () => void
   /** While the panel is fullscreen, the sheet has to live inside it to be drawn at all. */
   container?: RefObject<HTMLElement | null> | undefined
@@ -907,6 +952,7 @@ function FieldSheet({
       onOpenChange={(open) => !open && onClose()}
       container={container}
       title={<span className="num">{id}</span>}
+      actions={<SheetSteps ids={ids} id={id} onStep={onStep} noun="Field" />}
       description={d?.description ?? (detail.isPending ? 'Loading…' : 'No description.')}
     >
       <div className="flex flex-col gap-4">

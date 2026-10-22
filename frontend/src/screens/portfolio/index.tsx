@@ -24,7 +24,7 @@ import {
   useNetBps,
 } from '@/screens/alpha-table'
 import { INVESTABILITY } from '@/screens/alpha-table/columns'
-import { DetailSheet } from '@/screens/pool/detail'
+import { alphaIds, useDetailSheet } from '@/screens/pool/detail'
 import {
   Button,
   Chips,
@@ -187,7 +187,7 @@ export function PortfolioScreen() {
   const quietSelection = useDebounced(selection, 300)
   /** Ticked or unticked by hand, over what the filters pick. A filter change clears it. */
   const [overrides, setOverrides] = useState<ReadonlyMap<string, boolean>>(new Map())
-  const [openAlpha, setOpenAlpha] = useState<string | null>(null)
+  const detail = useDetailSheet()
   const costNow = useCostBps(VIEW)
   const cost = useDebounced(costNow, 400)
 
@@ -373,13 +373,15 @@ export function PortfolioScreen() {
           <MembersTable
             rows={rows}
             selected={new Set(included)}
-            onSelect={(id, on) => setOverrides((prev) => new Map(prev).set(id, on))}
-            onOpen={setOpenAlpha}
+            onSelect={(ids, on) =>
+              setOverrides((prev) => new Map([...prev, ...ids.map((id) => [id, on] as const)]))
+            }
+            onOpen={detail.open}
             loading={members.isPending}
           />
         </div>
       </Panel>
-      <DetailSheet alphaId={openAlpha} onClose={() => setOpenAlpha(null)} />
+      {detail.sheet}
 
       {ids.length > 0 && !result ? (
         computed.error ? null : (
@@ -708,9 +710,9 @@ function MembersTable({
 }: {
   rows: PortfolioMember[]
   selected: ReadonlySet<string>
-  onSelect: (id: string, on: boolean) => void
+  onSelect: (ids: string[], on: boolean) => void
   /** Show the row's Alpha in the side pane. */
-  onOpen: (alphaId: string) => void
+  onOpen: (alphaId: string, ids?: string[]) => void
   loading: boolean
 }) {
   const shaped = rows.map(fromMember)
@@ -724,7 +726,7 @@ function MembersTable({
       afterCost="screen"
       selected={selected}
       onSelect={onSelect}
-      onRowClick={(m) => m.alphaId && onOpen(m.alphaId)}
+      onRowClick={(m, _event, shown) => m.alphaId && onOpen(m.alphaId, alphaIds(shown))}
       rowClass={(shown) => {
         const families = familyShapes(shown)
         return (m) => familyRow(families.get(m.key))

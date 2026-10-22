@@ -5,16 +5,11 @@
  */
 
 import { useQuery } from '@tanstack/react-query'
-import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
 import { today } from '@/api/core'
 import { useCores } from '@/lib/preferences'
 import { useScopeOptions } from '@/lib/scope'
-import { followOtherTabs } from '@/lib/tabs'
 import { AddTaskButtons, useAddTask } from '@/screens/research-labs/add-task'
 import {
-  LAB_DEFAULTS,
-  type LabDraft,
   labBody,
   MAX_SIMULATIONS,
   simulationsValid,
@@ -23,19 +18,9 @@ import {
   vectorOperatorsOf,
 } from '@/screens/research-labs/lab-task'
 import { type SearchLabRequest, searchLab } from '@/screens/research-labs/search/api'
+import { useSearchLab } from '@/screens/research-labs/search/state'
 import { DatasetsPanel, SettingsPanel } from '@/screens/research-labs/task-settings'
 import { ErrorNotice, Page, PageHeader } from '@/ui/kit'
-
-/** The Search Lab's choices, kept between visits. */
-const useSearchLab = create<LabDraft>()(
-  persist(() => LAB_DEFAULTS, {
-    name: 'alpha-harness-search-lab',
-    // Version 1 leaves cores unchosen, so Settings' default for new tasks applies.
-    version: 1,
-    migrate: (stored) => ({ ...(stored as LabDraft), cores: null }),
-  }),
-)
-followOtherTabs(useSearchLab)
 
 export function SearchLabScreen() {
   const stored = useSearchLab()
@@ -85,21 +70,9 @@ export function SearchLabScreen() {
   return (
     <Page>
       <PageHeader
+        sticky
         title="Search Lab"
-        actions={
-          <>
-            {blocked && (
-              <span id="run-task-blocked" className="text-body-compact text-ink-subtle">
-                {blocked}
-              </span>
-            )}
-            <AddTaskButtons
-              add={add}
-              disabled={!ready}
-              describedBy={blocked ? 'run-task-blocked' : undefined}
-            />
-          </>
-        }
+        actions={<AddTaskButtons add={add} disabled={!ready} blocked={blocked} />}
       />
       {options.isError && (
         <ErrorNotice error={options.error} title="Could not read your operators" />

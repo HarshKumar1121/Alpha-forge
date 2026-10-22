@@ -10,6 +10,7 @@ import {
   lazyRouteComponent,
   redirect,
 } from '@tanstack/react-router'
+import { MOD } from '@/shell/desktop'
 import { Shell } from '@/shell/shell'
 import { Button, Empty, ErrorNotice, Page, Panel } from '@/ui/kit'
 
@@ -132,6 +133,11 @@ const tasks = createRoute({ getParentRoute: () => root, path: '/tasks' })
 const tasksIndex = createRoute({
   getParentRoute: () => tasks,
   path: '/',
+  // In the address, so a reload or the way back from a task's results lands where it was.
+  validateSearch: (search: Record<string, unknown>): { view?: 'submittable'; task?: number } => ({
+    ...(search['view'] === 'submittable' ? { view: 'submittable' as const } : {}),
+    ...(typeof search['task'] === 'number' ? { task: search['task'] } : {}),
+  }),
   component: lazyRouteComponent(() => import('@/screens/tasks'), 'TasksScreen'),
 })
 /** One task's whole result set, with room for the statistics the card cannot hold. */
@@ -236,7 +242,7 @@ function NotFound() {
     <Page>
       <Panel>
         <Empty title="There is no screen here">
-          Use the sidebar, or press ⌘K to go to a screen or lab.
+          Use the sidebar, or press {MOD}K to go to a screen or lab.
         </Empty>
       </Panel>
     </Page>

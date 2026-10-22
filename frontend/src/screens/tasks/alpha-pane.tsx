@@ -28,6 +28,7 @@ import {
 } from '@/screens/alpha-table'
 import { Correlation } from '@/screens/alpha-table/columns'
 import { BRAIN_ALPHA_URL } from '@/screens/pool/api'
+import { alphaIds } from '@/screens/pool/detail'
 import { labTasks, type RankedAlpha } from '@/screens/tasks/api'
 import { type PowerPoolRow, powerPoolTone, usePowerPool } from '@/screens/tasks/power-pool'
 import { Button, ErrorNotice, LINK, Notice, Panel, Progress } from '@/ui/kit'
@@ -105,13 +106,13 @@ function useJob(kind: string) {
  * somewhere else".
  */
 const openRow =
-  (onOpen: ((alphaId: string) => void) | undefined) =>
-  (r: AlphaTableRow, event: React.MouseEvent | React.KeyboardEvent) => {
+  (onOpen: ((alphaId: string, ids?: string[]) => void) | undefined) =>
+  (r: AlphaTableRow, event: React.MouseEvent | React.KeyboardEvent, shown: AlphaTableRow[]) => {
     if (!r.alphaId) return
     if (event.ctrlKey || event.metaKey) {
       event.preventDefault()
       window.open(BRAIN_ALPHA_URL(r.alphaId), '_blank', 'noopener,noreferrer')
-    } else onOpen?.(r.alphaId)
+    } else onOpen?.(r.alphaId, alphaIds(shown))
   }
 
 export function AlphaPane({
@@ -140,7 +141,7 @@ export function AlphaPane({
   /** Re-read the rows themselves: submitting an Alpha changes a flag that lives on the row. */
   onRefresh?: () => Promise<unknown>
   /** Show a row's Alpha in the detail sheet, as the task detail's own table does. */
-  onOpenAlpha?: (alphaId: string) => void
+  onOpenAlpha?: (alphaId: string, ids?: string[]) => void
 }) {
   const [showAll, setShowAll] = useState(false)
   const [refreshing, setRefreshing] = useState(false)

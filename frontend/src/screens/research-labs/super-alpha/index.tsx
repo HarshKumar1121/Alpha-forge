@@ -84,6 +84,7 @@ export function SuperAlphaLabScreen() {
   return (
     <Page>
       <PageHeader
+        sticky
         title="Super Alpha Lab"
         description="Combines your submitted Alphas into SuperAlphas, ready to submit"
         actions={<AddTaskButtons add={add} disabled={!ready} />}
