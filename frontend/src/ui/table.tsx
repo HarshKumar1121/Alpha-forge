@@ -5,7 +5,15 @@
 
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ArrowDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon } from 'lucide-react'
-import { Children, cloneElement, isValidElement, type ReactNode, useEffect, useRef } from 'react'
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from 'react'
 import { cn } from '@/lib/cn'
 import { DASH, fmt } from '@/lib/format'
 import { Button, Checkbox, Empty, ErrorNotice, Skeleton } from './kit'
@@ -29,6 +37,7 @@ export function DataTable<T>({
   rows,
   columns,
   rowKey,
+  activeKey,
   onRowClick,
   rowClass,
   sort,
@@ -46,6 +55,8 @@ export function DataTable<T>({
   rows: T[]
   columns: Column<T>[]
   rowKey: (row: T) => string
+  /** The row open beside the table, in a sheet or a pane: marked, and kept in view as it moves. */
+  activeKey?: string | null | undefined
   /** The event comes too, so a table can treat a modified click as its own action, and the
    *  rows in the order shown, for stepping through them from what the click opened. */
   onRowClick?: (row: T, event: React.MouseEvent | React.KeyboardEvent, shown: T[]) => void
@@ -83,6 +94,21 @@ export function DataTable<T>({
     overscan: 12,
   })
   const selectable = selected !== undefined && onSelect !== undefined
+  const activeIndex = activeKey == null ? -1 : rows.findIndex((row) => rowKey(row) === activeKey)
+  // Stepping through rows in a sheet scrolls the table along, so closing it lands on the row.
+  useEffect(() => {
+    if (activeIndex >= 0) virtual.scrollToIndex(activeIndex, { align: 'auto' })
+  }, [activeIndex, virtual])
+  // The rows are one stop for Tab, moved between with the arrow keys: the last one focused,
+  // else the open one, else the first.
+  const [focused, setFocused] = useState<number | null>(null)
+  const stop = focused !== null && focused < rows.length ? focused : Math.max(activeIndex, 0)
+  const focusRow = (index: number) => {
+    virtual.scrollToIndex(index, { align: 'auto' })
+    requestAnimationFrame(() =>
+      scroller.current?.querySelector<HTMLElement>(`[data-row-index="${index}"]`)?.focus(),
+    )
+  }
   const template = [
     selectable ? '36px' : null,
     ...columns.map((c) => c.width ?? 'minmax(96px,1fr)'),
@@ -198,17 +224,29 @@ export function DataTable<T>({
               if (row === undefined) return null
               const key = rowKey(row)
               const isSelected = selectable && selected.has(key)
+              const isActive = item.index === activeIndex
               return (
                 <div
                   key={key}
                   role="row"
                   aria-rowindex={item.index + 2}
                   aria-selected={selectable ? isSelected : undefined}
-                  tabIndex={onRowClick ? 0 : undefined}
+                  aria-current={isActive || undefined}
+                  data-row-index={item.index}
+                  tabIndex={onRowClick ? (item.index === stop ? 0 : -1) : undefined}
+                  onFocus={onRowClick ? () => setFocused(item.index) : undefined}
                   onClick={onRowClick ? (e) => onRowClick(row, e, rows) : undefined}
                   onKeyDown={
                     onRowClick
                       ? (e) => {
+                          // A key meant for a button or menu inside the row is not the row's.
+                          if (e.target !== e.currentTarget) return
+                          if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                            e.preventDefault()
+                            const step = e.key === 'ArrowDown' ? 1 : -1
+                            focusRow(Math.max(0, Math.min(rows.length - 1, item.index + step)))
+                            return
+                          }
                           if (e.key !== 'Enter' && e.key !== ' ') return
                           e.preventDefault()
                           onRowClick(row, e, rows)
@@ -220,6 +258,8 @@ export function DataTable<T>({
                     onRowClick &&
                       'cursor-pointer hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:-outline-offset-2',
                     isSelected && 'bg-surface-2',
+                    // Held through hover, which otherwise repaints the row as if it were not open.
+                    isActive && 'bg-primary-subtle hover:bg-primary-subtle',
                     rowClass?.(row),
                   )}
                   style={{

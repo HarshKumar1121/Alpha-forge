@@ -624,6 +624,12 @@ async def check_prod_correlation(body: AlphaIds, state: State) -> WorkflowStarte
     return WorkflowStarted(task_id=started)
 
 
+@router.post("/power-pool-workflow/stop", status_code=204)
+async def stop_power_pool_workflow(state: State) -> None:
+    """Stop the workflow. PnL and turnover already downloaded stay."""
+    state.backfill.cancel_job("power-pool-workflow")
+
+
 @router.post("/prod-correlation/stop", status_code=204)
 async def stop_prod_correlation(state: State) -> None:
     """Stop asking BRAIN. Every answer already back is kept."""

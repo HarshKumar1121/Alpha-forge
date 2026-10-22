@@ -31,7 +31,8 @@ import { BRAIN_ALPHA_URL } from '@/screens/pool/api'
 import { alphaIds } from '@/screens/pool/detail'
 import { labTasks, type RankedAlpha } from '@/screens/tasks/api'
 import { type PowerPoolRow, powerPoolTone, usePowerPool } from '@/screens/tasks/power-pool'
-import { Button, ErrorNotice, LINK, Notice, Panel, Progress, Segmented } from '@/ui/kit'
+import { MOD } from '@/shell/desktop'
+import { Button, ErrorNotice, Kbd, LINK, Notice, Panel, Progress, Segmented } from '@/ui/kit'
 import type { Sort } from '@/ui/table'
 
 const WORKFLOW = 'power-pool-workflow'
@@ -135,6 +136,7 @@ export function AlphaPane({
   error,
   onRefresh,
   onOpenAlpha,
+  openAlpha,
   initial = 'pool',
 }: {
   title: string
@@ -151,6 +153,8 @@ export function AlphaPane({
   onRefresh?: () => Promise<unknown>
   /** Show a row's Alpha in the detail sheet, as the task detail's own table does. */
   onOpenAlpha?: (alphaId: string, ids?: string[]) => void
+  /** The Alpha open in the detail sheet, marked in the table. */
+  openAlpha?: string | null
   /** The step of the funnel shown first. */
   initial?: Stage
 }) {
@@ -219,6 +223,10 @@ export function AlphaPane({
     mutationFn: labTasks.stopProdCorrelation,
     onError: (e) => toast.error('Could not stop the check', { description: errorMessage(e) }),
   })
+  const stopWorkflow = useMutation({
+    mutationFn: labTasks.stopPowerPoolWorkflow,
+    onError: (e) => toast.error('Could not stop the workflow', { description: errorMessage(e) }),
+  })
   const start = useMutation({
     // Every Alpha here: the server runs the three steps itself rather than trusting ours.
     mutationFn: () => labTasks.powerPoolWorkflow(rows.flatMap((r) => r.alphaId ?? [])),
@@ -282,10 +290,22 @@ export function AlphaPane({
             </Button>
           )}
           {running ? (
-            <div className="flex w-52 flex-col gap-1">
-              <span className="num text-caption text-ink-muted">{job.detail || job.label}</span>
-              <Progress value={job.progress ?? null} label="Power Pool Workflow progress" />
-            </div>
+            <>
+              <div className="flex w-52 flex-col gap-1">
+                <span className="num text-caption text-ink-muted">{job.detail || job.label}</span>
+                <Progress value={job.progress ?? null} label="Power Pool Workflow progress" />
+              </div>
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={stopWorkflow.isPending}
+                onClick={() => stopWorkflow.mutate()}
+                title="Stop the workflow. Every PnL and turnover already downloaded is kept."
+              >
+                <SquareIcon />
+                Stop
+              </Button>
+            </>
           ) : (
             <Button
               size="sm"
@@ -333,6 +353,9 @@ export function AlphaPane({
               .join(' · ')}
           </span>
         )}
+        <span className="ml-auto hidden items-center gap-1 text-caption text-ink-subtle xl:inline-flex">
+          <Kbd>{MOD}Click</Kbd> a row opens it on BRAIN
+        </span>
       </div>
       {job?.state === 'failed' && (
         <Notice tone="error" className="mb-3" title="The Power Pool Workflow stopped">
@@ -361,6 +384,7 @@ export function AlphaPane({
         defaults={defaults}
         overrides={overrides}
         onRowClick={openRow(onOpenAlpha)}
+        openAlpha={openAlpha}
         sort={sort}
         onSort={onSort}
         loading={(loading ?? false) || (stage === 'pool' && cleanIds.length > 0 && pool.pending)}

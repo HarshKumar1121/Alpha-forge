@@ -92,7 +92,13 @@ const SELECTION_ACTION = 'border-hairline-strong bg-surface-2 text-ink hover:bg-
 
 const unique = <T,>(values: (T | null)[]) => [...new Set(values.filter((v): v is T => v != null))]
 
-export function Stored({ onOpen }: { onOpen: (alphaId: string, ids?: string[]) => void }) {
+export function Stored({
+  onOpen,
+  openId,
+}: {
+  onOpen: (alphaId: string, ids?: string[]) => void
+  openId: string | null
+}) {
   const overview = useQuery({
     queryKey: ['pool', 'overview'],
     queryFn: pool.overview,
@@ -338,6 +344,7 @@ export function Stored({ onOpen }: { onOpen: (alphaId: string, ids?: string[]) =
           defaults={DEFAULTS}
           serverSort
           page={offset}
+          openAlpha={openId}
           onRowClick={(r, _event, shown) => r.alphaId && onOpen(r.alphaId, alphaIds(shown))}
           sort={sort}
           onSort={(s) => {

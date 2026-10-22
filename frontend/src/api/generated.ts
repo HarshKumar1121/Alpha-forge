@@ -927,6 +927,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/lab-tasks/power-pool-workflow/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop Power Pool Workflow
+         * @description Stop the workflow. PnL and turnover already downloaded stay.
+         */
+        post: operations["stop_power_pool_workflow_api_lab_tasks_power_pool_workflow_stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/lab-tasks/prod-correlation": {
         parameters: {
             query?: never;
@@ -7071,6 +7091,24 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    stop_power_pool_workflow_api_lab_tasks_power_pool_workflow_stop_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

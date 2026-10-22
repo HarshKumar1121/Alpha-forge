@@ -17,7 +17,7 @@ export function PoolScreen() {
 
   const body =
     tab === 'stored' ? (
-      <Stored onOpen={detail.open} />
+      <Stored onOpen={detail.open} openId={detail.openId} />
     ) : tab === 'submittable' ? (
       <Submittable onOpen={detail.open} />
     ) : (

@@ -38,8 +38,10 @@ const DEFAULTS = [
 
 export function SubmittableAlphas({
   onOpenAlpha,
+  openAlpha,
 }: {
   onOpenAlpha: (alphaId: string, ids?: string[]) => void
+  openAlpha: string | null
 }) {
   const query = useQuery({ queryKey: ['submittable-alphas'], queryFn: labTasks.submittable })
   // Its own key, refreshed at most every 30s: reading every task's Alphas takes seconds on a
@@ -62,8 +64,13 @@ export function SubmittableAlphas({
         error={query.error}
         onRefresh={() => query.refetch()}
         onOpenAlpha={onOpenAlpha}
+        openAlpha={openAlpha}
       />
-      <SubmissionOrder alphaIds={rows.flatMap((r) => r.alphaId ?? [])} onOpenAlpha={onOpenAlpha} />
+      <SubmissionOrder
+        alphaIds={rows.flatMap((r) => r.alphaId ?? [])}
+        onOpenAlpha={onOpenAlpha}
+        openAlpha={openAlpha}
+      />
     </div>
   )
 }
@@ -115,9 +122,11 @@ const PICK_COLUMNS: Column<SubmissionPick & { turn: number }>[] = [
 function SubmissionOrder({
   alphaIds,
   onOpenAlpha,
+  openAlpha,
 }: {
   alphaIds: string[]
   onOpenAlpha: (alphaId: string, ids?: string[]) => void
+  openAlpha: string | null
 }) {
   const order = useMutation({ mutationFn: () => labTasks.powerPoolOrder(alphaIds) })
   const found = order.data
@@ -157,6 +166,7 @@ function SubmissionOrder({
             rows={picks}
             columns={PICK_COLUMNS}
             rowKey={(r) => r.alphaId}
+            activeKey={openAlpha}
             onRowClick={(r, _event, shown) =>
               onOpenAlpha(
                 r.alphaId,

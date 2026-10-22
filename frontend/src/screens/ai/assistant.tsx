@@ -279,8 +279,23 @@ export function Assistant({ threadId }: { threadId: number | null }) {
                 <Skeleton className="h-24" />
               ) : (
                 <Empty title="Start with an idea" className="m-auto">
-                  For example: “companies whose analysts keep raising their earnings estimates”.
-                  Each message uses one request from your assistant budget.
+                  <p>
+                    About <span className="num text-ink">{scopeLabel(scope)}</span>: the market is
+                    set when the conversation starts, so choose it above first. Each message uses
+                    one request from your assistant budget.
+                  </p>
+                  <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+                    {EXAMPLES.map((example) => (
+                      <button
+                        key={example}
+                        type="button"
+                        onClick={() => setText(example)}
+                        className="rounded-sm border border-hairline-strong bg-surface-2 px-2.5 py-1 text-body-compact text-ink-muted transition-colors hover:bg-surface-3 hover:text-ink"
+                      >
+                        {example}
+                      </button>
+                    ))}
+                  </div>
                 </Empty>
               ))}
             {messages.map((m) => (
@@ -429,6 +444,13 @@ function ReplyDatasets({ scope, ids }: { scope: Scope; ids: string[] }) {
     </div>
   )
 }
+
+/** Ideas to start from, put in the box to edit rather than sent. */
+const EXAMPLES = [
+  'Companies whose analysts keep raising their earnings estimates',
+  'Stocks with high operating cash flow relative to enterprise value',
+  'Short-term reversal after a spike in trading volume',
+]
 
 function UserBubble({ text }: { text: string }) {
   return (

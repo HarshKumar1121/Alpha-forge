@@ -94,7 +94,13 @@ export function CorrelationBreakerScreen() {
       {alphaId && query.isPending && <Skeleton className="h-64" label="Reading the Alpha" />}
 
       {plan?.expression && (
-        <>
+        // Read for the Alpha last analysed: faded once another ID is typed, until it is analysed.
+        <div
+          className={cn(
+            'flex flex-col gap-4 transition-opacity',
+            !analysed && 'pointer-events-none opacity-50',
+          )}
+        >
           <Panel
             title="Held Fixed"
             description="Every re-shape runs at the Alpha's own settings. Nothing here changes."
@@ -220,7 +226,7 @@ export function CorrelationBreakerScreen() {
               </ul>
             )}
           </Panel>
-        </>
+        </div>
       )}
 
       {!alphaId && !query.isPending && (

@@ -389,6 +389,7 @@ export function TaskResultsScreen() {
         error={top.error}
         onRefresh={() => top.refetch()}
         onOpenAlpha={detail.open}
+        openAlpha={detail.openId}
       />
 
       <CheckSets rows={rows} />

@@ -377,6 +377,7 @@ export function PortfolioScreen() {
               setOverrides((prev) => new Map([...prev, ...ids.map((id) => [id, on] as const)]))
             }
             onOpen={detail.open}
+            openId={detail.openId}
             loading={members.isPending}
           />
         </div>
@@ -480,7 +481,7 @@ export function PortfolioScreen() {
                 </div>
               }
             >
-              <CorrelationMatrix result={result} />
+              <CorrelationMatrix result={result} onOpen={detail.open} />
             </Panel>
           )}
         </div>
@@ -706,6 +707,7 @@ function MembersTable({
   selected,
   onSelect,
   onOpen,
+  openId,
   loading,
 }: {
   rows: PortfolioMember[]
@@ -713,6 +715,7 @@ function MembersTable({
   onSelect: (ids: string[], on: boolean) => void
   /** Show the row's Alpha in the side pane. */
   onOpen: (alphaId: string, ids?: string[]) => void
+  openId: string | null
   loading: boolean
 }) {
   const shaped = rows.map(fromMember)
@@ -727,6 +730,7 @@ function MembersTable({
       selected={selected}
       onSelect={onSelect}
       onRowClick={(m, _event, shown) => m.alphaId && onOpen(m.alphaId, alphaIds(shown))}
+      openAlpha={openId}
       rowClass={(shown) => {
         const families = familyShapes(shown)
         return (m) => familyRow(families.get(m.key))

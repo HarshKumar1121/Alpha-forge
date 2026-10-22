@@ -12,8 +12,9 @@ import {
   SquareIcon,
   Trash2Icon,
   TriangleAlertIcon,
+  XIcon,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { errorMessage } from '@/api/http'
 import { SUPER_ALPHA_SLOTS } from '@/api/platform'
@@ -112,14 +113,21 @@ export function TasksScreen() {
       search: ({ view: _, ...s }) => (next === 'submittable' ? { ...s, view: next } : s),
       replace: true,
     })
-  const setSelectedId = (task: number) =>
-    void navigate({ search: (s) => ({ ...s, task }), replace: true })
+  // Once the reader has opened or closed a task, it stays their choice.
+  const chose = useRef(search.task !== undefined)
+  const setSelectedId = (task: number | null) => {
+    chose.current = true
+    void navigate({
+      search: ({ task: _, ...s }) => (task === null ? s : { ...s, task }),
+      replace: true,
+    })
+  }
 
   // Nothing picked yet: open on what is running, then stay there. Re-deriving this every render
   // would move the pane out from under the reader the moment that task finished.
   const running = list.data?.tasks.find((t) => t.status === 'RUNNING')?.id ?? null
   useEffect(() => {
-    if (running != null && selectedId === null)
+    if (running != null && selectedId === null && !chose.current)
       void navigate({ search: (s) => ({ ...s, task: running }), replace: true })
   }, [running, selectedId, navigate])
 
@@ -331,7 +339,7 @@ export function TasksScreen() {
       {act.isError && confirming === null && <ErrorNotice error={act.error} />}
 
       {view === 'submittable' ? (
-        <SubmittableAlphas onOpenAlpha={detail.open} />
+        <SubmittableAlphas onOpenAlpha={detail.open} openAlpha={detail.openId} />
       ) : (
         <Panel>
           {list.data && all.length === 0 ? (
@@ -346,7 +354,13 @@ export function TasksScreen() {
               rows={all}
               columns={columns}
               rowKey={(t) => String(t.id)}
+              activeKey={selectedId === null ? null : String(selectedId)}
               onRowClick={(t) => {
+                // A second click closes it, giving the list its height back.
+                if (t.id === selectedId) {
+                  setSelectedId(null)
+                  return
+                }
                 setSelectedId(t.id)
                 // The detail is below the table: bring it up, or the click seems to do nothing.
                 requestAnimationFrame(() =>
@@ -355,10 +369,6 @@ export function TasksScreen() {
                     ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }),
                 )
               }}
-              // Held through hover, which otherwise repaints the row as if nothing were picked.
-              rowClass={(t) =>
-                t.id === selectedId ? 'bg-primary-subtle hover:bg-primary-subtle' : undefined
-              }
               // Short while a task is open below, so the list and the task share the screen.
               {...(selected ? { maxHeight: '36vh' } : {})}
               loading={list.isPending}
@@ -369,7 +379,12 @@ export function TasksScreen() {
       )}
       {view === 'tasks' && selected && (
         <div id={TASK_DETAIL} className="scroll-mt-4">
-          <TaskDetail task={selected} onOpenAlpha={detail.open} />
+          <TaskDetail
+            task={selected}
+            onOpenAlpha={detail.open}
+            openAlpha={detail.openId}
+            onClose={() => setSelectedId(null)}
+          />
         </div>
       )}
 
@@ -549,9 +564,13 @@ function TaskActionsMenu({ task, onRename }: { task: LabTask; onRename: () => vo
 function TaskDetail({
   task,
   onOpenAlpha,
+  openAlpha,
+  onClose,
 }: {
   task: LabTask
   onOpenAlpha: (alphaId: string, ids?: string[]) => void
+  openAlpha: string | null
+  onClose: () => void
 }) {
   const top = useQuery({
     // Its own key, refreshed at most every 10s: the whole sweep is a megabyte or more on a
@@ -621,6 +640,15 @@ function TaskDetail({
             Copy Results
           </Button>
           <TaskBadge task={task} />
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label="Close this task"
+            title="Close this task"
+            onClick={onClose}
+          >
+            <XIcon />
+          </Button>
         </>
       }
     >
@@ -719,6 +747,7 @@ function TaskDetail({
           offer={task.objectiveLabel === 'Sharpe' ? TASK_OFFER : ['value', ...TASK_OFFER]}
           overrides={[objective(task)]}
           onRowClick={(r, _event, shown) => r.alphaId && onOpenAlpha(r.alphaId, alphaIds(shown))}
+          openAlpha={openAlpha}
           rowClass={() => verdict}
           loading={top.isPending}
           error={top.error}

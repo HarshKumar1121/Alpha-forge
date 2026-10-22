@@ -38,6 +38,7 @@ export const alphaIds = (rows: { alphaId?: string | null | undefined }[]): strin
 export function useDetailSheet() {
   const [at, setAt] = useState<{ id: string; ids: string[] } | null>(null)
   return {
+    openId: at?.id ?? null,
     open: (id: string, ids: string[] = []) => setAt({ id, ids }),
     sheet: (
       <DetailSheet

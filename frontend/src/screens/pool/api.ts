@@ -72,6 +72,10 @@ export interface BrainCorrelation {
  */
 export const BRAIN_ALPHA_URL = (alphaId: string) => `${PLATFORM_ALPHA_URL}${alphaId}`
 
+/** An Alpha ID, also from a BRAIN Alpha link pasted whole. */
+export const alphaIdOf = (text: string) =>
+  /worldquantbrain\.com\/alphas?\/([A-Za-z0-9]+)/.exec(text)?.[1] ?? text
+
 export const pool = {
   overview: () => http.get<VaultOverview>('/api/vault'),
   /** Raw BRAIN counts by stage and status. One BRAIN read. */

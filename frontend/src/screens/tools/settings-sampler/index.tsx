@@ -10,6 +10,7 @@
 
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useNavigate, useSearch } from '@tanstack/react-router'
+import { PencilIcon } from 'lucide-react'
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import { today } from '@/api/core'
 import {
@@ -25,6 +26,8 @@ import { neutralizationLabel, splitNeutralizations } from '@/lib/neutralization'
 import { useCores } from '@/lib/preferences'
 import { DEFAULT_SCOPE, marketKey, regionLabel, useScopeOptions } from '@/lib/scope'
 import { useDebounced } from '@/lib/use-debounced'
+import { alphaIdOf } from '@/screens/pool/api'
+import { AstInspector } from '@/screens/pool/shared'
 import { AddTaskButtons, useAddTask } from '@/screens/research-labs/add-task'
 import {
   SimulationSettingsFields,
@@ -498,7 +501,6 @@ export function SettingsSamplerScreen() {
     setTestYears(period?.[1] ?? String(TEST_PERIOD_YEARS))
     setTestMonths(period?.[2] ?? '0')
     setTyped({ alphaId: plan.alphaId })
-    setMode('expression')
   }, [plan])
 
   const reset = (from: SettingsPlan) => {
@@ -708,7 +710,7 @@ export function SettingsSamplerScreen() {
             <Field label="Alpha ID" className="min-w-48 flex-1">
               <Input
                 value={draft}
-                onChange={(e) => setDraft(e.target.value)}
+                onChange={(e) => setDraft(alphaIdOf(e.target.value))}
                 spellCheck={false}
                 className="num"
               />
@@ -716,6 +718,20 @@ export function SettingsSamplerScreen() {
             <Button type="submit" variant="primary" disabled={!draft.trim()}>
               Analyse
             </Button>
+            {plan?.alphaId && plan.expression && (
+              <div className="flex w-full flex-col gap-2">
+                <AstInspector expression={plan.expression} />
+                <Button
+                  type="button"
+                  size="sm"
+                  className="self-start"
+                  onClick={() => setMode('expression')}
+                >
+                  <PencilIcon />
+                  Edit Expression
+                </Button>
+              </div>
+            )}
           </form>
         ) : (
           <form onSubmit={analyse} className="flex flex-col gap-3">

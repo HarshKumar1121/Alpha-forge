@@ -384,6 +384,7 @@ export function FieldsTab({ scope }: { scope: Scope }) {
               sort={sort}
               onSort={setSort}
               onRowClick={(r) => setOpenId(r.field_id)}
+              activeKey={openId}
               page={offset}
               // While a lab picks datasets, its ticks are the only ones on the page.
               {...(picking ? {} : { selected: picked, onSelect: pick })}
@@ -945,6 +946,11 @@ function FieldSheet({
   )
   const d = detail.data
   const themes = parseThemes(d?.themes ?? null)
+  // While a lab picks datasets, a field read here can bring its dataset into the pick.
+  const picking = useDatasetPick((s) => s.active)
+  const [chosen, choose] = useDatasetChoice()
+  const dataset = d?.dataset_id
+  const ticked = dataset != null && chosen.includes(dataset)
 
   return (
     <Sheet
@@ -962,6 +968,18 @@ function FieldSheet({
           <Skeleton className="h-56" />
         ) : (
           <div className="flex flex-col gap-3">
+            {picking && dataset && (
+              <Button
+                size="sm"
+                variant={ticked ? 'secondary' : 'primary'}
+                className="self-start"
+                onClick={() =>
+                  choose(ticked ? chosen.filter((x) => x !== dataset) : [...chosen, dataset])
+                }
+              >
+                {ticked ? `Untick Dataset ${dataset}` : `Tick Dataset ${dataset}`}
+              </Button>
+            )}
             <KV
               items={[
                 ['Dataset', d.dataset_id ?? DASH],

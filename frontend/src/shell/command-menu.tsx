@@ -11,6 +11,7 @@ import { SearchIcon } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { create } from 'zustand'
 import { useFieldFilter } from '@/screens/data/state'
+import { alphaIdOf } from '@/screens/pool/api'
 import { labTasks } from '@/screens/tasks/api'
 import { BACKDROP } from '@/ui/overlay'
 import { NAV } from './nav'
@@ -67,27 +68,28 @@ export function CommandMenu() {
     if (!open) setQuery('')
   }, [open])
   const typed = query.trim()
+  const id = alphaIdOf(typed)
   // The Tasks screen's own list, read when the menu opens, so a task is found by its name.
   const tasks = useQuery({ queryKey: ['lab-tasks'], queryFn: labTasks.list, enabled: open })
   const groups = useMemo<[string, Destination[]][]>(
     () => [
-      ...(ALPHA_ID.test(typed)
+      ...(ALPHA_ID.test(id)
         ? [
             [
               'Alpha',
               [
-                { label: `Open Alpha ${typed}`, href: `/alpha/${typed}` },
+                { label: `Open Alpha ${id}`, href: `/alpha/${id}` },
                 {
-                  label: `Settings Sampler on ${typed}`,
-                  href: `/tools/settings-sampler?alpha=${typed}`,
+                  label: `Settings Sampler on ${id}`,
+                  href: `/tools/settings-sampler?alpha=${id}`,
                 },
                 {
-                  label: `Fields Sampler on ${typed}`,
-                  href: `/tools/fields-sampler?alpha=${typed}`,
+                  label: `Fields Sampler on ${id}`,
+                  href: `/tools/fields-sampler?alpha=${id}`,
                 },
                 {
-                  label: `Correlation Breaker on ${typed}`,
-                  href: `/tools/correlation-breaker?alpha=${typed}`,
+                  label: `Correlation Breaker on ${id}`,
+                  href: `/tools/correlation-breaker?alpha=${id}`,
                 },
               ],
             ] as [string, Destination[]],
@@ -128,7 +130,7 @@ export function CommandMenu() {
         ]),
       ],
     ],
-    [typed, tasks.data, router],
+    [typed, id, tasks.data, router],
   )
 
   const go = (destination: Destination) => {

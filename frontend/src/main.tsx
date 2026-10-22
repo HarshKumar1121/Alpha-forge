@@ -11,7 +11,7 @@ import { useLive } from '@/lib/live'
 import { telemetry } from '@/lib/ws'
 import { router } from '@/router'
 import { useDatasetPick } from '@/screens/data/dataset-pick'
-import { endDatasetPick } from '@/screens/data/state'
+import { endDatasetPick, startDatasetPick, useFieldFilter } from '@/screens/data/state'
 import { useSeedPick } from '@/screens/research-labs/evolution/seed-pick'
 
 /** Any call BRAIN answers with a verification demand raises the global banner. */
@@ -53,11 +53,42 @@ telemetry.connect()
 // does not stay a picker for a lab the user walked away from.
 const within = (path: string, places: string[]) =>
   places.some((place) => path === place || path.startsWith(`${place}/`))
+// What was ticked is offered back once, so a wrong click costs nothing.
 router.subscribe('onResolved', ({ toLocation: { pathname } }) => {
-  if (useDatasetPick.getState().active && !within(pathname, ['/data', '/sync']))
+  const datasets = useDatasetPick.getState()
+  if (datasets.active && !within(pathname, ['/data', '/sync', '/pyramids'])) {
+    const { scope, ids, byMarket, from } = datasets
+    const { filter } = useFieldFilter.getState()
     endDatasetPick(false)
-  if (useSeedPick.getState().active && !within(pathname, ['/pool', '/alpha']))
-    useSeedPick.getState().cancel()
+    if (scope && ids.length)
+      toast('Dataset pick closed', {
+        description: `${ids.length} dataset${ids.length === 1 ? '' : 's'} ticked, not yet used.`,
+        action: {
+          label: 'Resume',
+          onClick: () => {
+            startDatasetPick(scope, ids, from, filter)
+            useDatasetPick.setState({ byMarket })
+            void router.navigate({ to: '/data' })
+          },
+        },
+      })
+  }
+  const seeds = useSeedPick.getState()
+  if (seeds.active && !within(pathname, ['/pool', '/alpha'])) {
+    const { scope, ids, from } = seeds
+    seeds.cancel()
+    if (scope && ids.length)
+      toast('Seed pick closed', {
+        description: `${ids.length} seed${ids.length === 1 ? '' : 's'} ticked, not yet used.`,
+        action: {
+          label: 'Resume',
+          onClick: () => {
+            useSeedPick.getState().start(scope, ids, from)
+            void router.navigate({ to: '/pool/$tab', params: { tab: 'stored' } })
+          },
+        },
+      })
+  }
 })
 
 createRoot(root).render(

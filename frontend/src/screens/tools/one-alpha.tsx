@@ -4,6 +4,7 @@
  */
 
 import { DASH } from '@/lib/format'
+import { alphaIdOf } from '@/screens/pool/api'
 import { Button, ErrorNotice, Field, Input, Metric, Notice, Panel } from '@/ui/kit'
 
 /** The settings every variant runs at, and cannot change. */
@@ -52,7 +53,7 @@ export function AlphaPanel({
         <Field label="Alpha ID" className="min-w-48 flex-1">
           <Input
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => setDraft(alphaIdOf(e.target.value))}
             spellCheck={false}
             className="num"
           />

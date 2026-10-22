@@ -180,6 +180,7 @@ export function AlphaTable({
   empty,
   maxHeight,
   page,
+  openAlpha,
 }: {
   /** Where this screen's choice of columns is kept. */
   view: string
@@ -213,6 +214,8 @@ export function AlphaTable({
   maxHeight?: string
   /** The page shown, when paged: see the table's own. */
   page?: number
+  /** The Alpha open in the detail sheet, marked in the table. */
+  openAlpha?: string | null | undefined
 }) {
   const saved = useViews((s) => s.views[view])
   const shown = new Set(saved?.shown ?? defaults)
@@ -259,6 +262,7 @@ export function AlphaTable({
         label={label}
         rows={sorted}
         rowKey={(r) => r.key}
+        activeKey={openAlpha ? sorted.find((r) => r.alphaId === openAlpha)?.key : null}
         columns={columns}
         {...(current ? { sort: current } : {})}
         onSort={onSort ?? setOwnSort}

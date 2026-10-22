@@ -7,11 +7,12 @@
 import { Popover } from '@base-ui/react/popover'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { Command } from 'cmdk'
-import { CodeIcon, EraserIcon, SearchIcon, Undo2Icon } from 'lucide-react'
+import { CodeIcon, EraserIcon, PlusIcon, Redo2Icon, SearchIcon, Undo2Icon } from 'lucide-react'
 import { createContext, type ReactNode, use, useState } from 'react'
 import { catalog } from '@/api/catalog'
 import type { Scope } from '@/api/types'
 import { cn } from '@/lib/cn'
+import { MOD } from '@/shell/desktop'
 import { Button, Notice, Segmented, Skeleton } from '@/ui/kit'
 import { type TreeNode, templateLab } from './api'
 import { GROUPS, inputsOf, type OperatorDoc, WORDS } from './fast-expression'
@@ -252,7 +253,12 @@ export function TemplateBlocks({
   // The tree just built here, shown at once rather than after the text is read back.
   const [mine, setMine] = useState<{ text: string; tree: TreeNode } | null>(null)
   const [history, setHistory] = useState<{ before: string; after: string }[]>([])
+  const [undone, setUndone] = useState<{ before: string; after: string }[]>([])
   const last = history.at(-1)
+  const next = undone.at(-1)
+  // Only while the text is still what the step left: an edit in Code since makes it stale.
+  const canUndo = last?.after === text
+  const canRedo = next?.before === text
 
   const fresh = read.data && !read.isPlaceholderData ? read.data : undefined
   const root = mine?.text === text ? mine.tree : blank ? hole() : fresh?.tree
@@ -263,7 +269,20 @@ export function TemplateBlocks({
     if (written === text) return
     setMine({ text: written, tree: next })
     setHistory((h) => [...h.slice(-49), { before: text, after: written }])
+    setUndone([])
     onChange(written)
+  }
+  const undo = () => {
+    if (!last || !canUndo) return
+    setHistory((h) => h.slice(0, -1))
+    setUndone((u) => [...u, last])
+    onChange(last.before)
+  }
+  const redo = () => {
+    if (!next || !canRedo) return
+    setUndone((u) => u.slice(0, -1))
+    setHistory((h) => [...h, next])
+    onChange(next.after)
   }
 
   if (!root) {
@@ -287,30 +306,63 @@ export function TemplateBlocks({
   }
 
   const statements = root.kind === 'seq' ? root.args : [root]
+  // A named step before the last line, which stays the Alpha: `step1 = …;`.
+  const addStep = () => {
+    const taken = new Set(namesOf(root, 'assign', () => true))
+    let n = 1
+    while (taken.has(`step${n}`)) n += 1
+    const step: TreeNode = { kind: 'assign', value: `step${n}`, args: [hole()], kwargs: [] }
+    const alpha = statements.at(-1) ?? hole()
+    change({ kind: 'seq', value: '', args: [...statements.slice(0, -1), step, alpha], kwargs: [] })
+  }
   // Strings may hold `#`; only code outside them counts.
   const commented = COMMENT.test(text.replace(/"[^"]*"|'[^']*'/g, ''))
 
   return (
     <BlocksContext value={{ root, change, operators, variables, scope }}>
-      <div className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-center justify-end gap-1">
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={last?.after !== text}
-            onClick={() => {
-              if (!last) return
-              setHistory((h) => h.slice(0, -1))
-              onChange(last.before)
-            }}
-          >
-            <Undo2Icon />
-            Undo
+      {/* ⌘Z and ⇧⌘Z (Ctrl on Windows) while working in the blocks; a text box keeps its own. */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: listens for keys from the blocks inside */}
+      <div
+        className="flex flex-col gap-2"
+        onKeyDown={(e) => {
+          if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return
+          if ((e.target as HTMLElement).closest('input, textarea')) return
+          e.preventDefault()
+          if (e.shiftKey) redo()
+          else undo()
+        }}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-1">
+          <Button size="sm" variant="secondary" onClick={addStep}>
+            <PlusIcon />
+            Add Step
           </Button>
-          <Button size="sm" variant="ghost" disabled={blank} onClick={() => change(hole())}>
-            <EraserIcon />
-            Clear
-          </Button>
+          <span className="flex flex-wrap items-center gap-1">
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={!canUndo}
+              title={`Undo (${MOD}Z)`}
+              onClick={undo}
+            >
+              <Undo2Icon />
+              Undo
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={!canRedo}
+              title={`Redo (⇧${MOD}Z)`}
+              onClick={redo}
+            >
+              <Redo2Icon />
+              Redo
+            </Button>
+            <Button size="sm" variant="ghost" disabled={blank} onClick={() => change(hole())}>
+              <EraserIcon />
+              Clear
+            </Button>
+          </span>
         </div>
         {commented && (
           <Notice tone="info" title="A change here drops this template's comments">

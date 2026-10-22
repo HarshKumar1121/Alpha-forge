@@ -213,7 +213,13 @@ export function FieldsSamplerScreen() {
       )}
 
       {plan?.expression && (
-        <>
+        // Read for the Alpha last analysed: faded once another ID is typed, until it is analysed.
+        <div
+          className={cn(
+            'flex flex-col gap-4 transition-opacity',
+            !analysed && 'pointer-events-none opacity-50',
+          )}
+        >
           <Panel title="Alpha" bodyClassName="flex flex-col gap-4">
             <TemplateEditor
               readOnly
@@ -333,7 +339,7 @@ export function FieldsSamplerScreen() {
               </p>
             )}
           </Panel>
-        </>
+        </div>
       )}
 
       {!alphaId && !query.isPending && (

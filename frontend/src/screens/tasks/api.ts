@@ -56,4 +56,5 @@ export const labTasks = {
     http.post<Schemas['WorkflowStarted']>(`${B}/prod-correlation`, { alphaIds }),
   /** Stops that check; the answers already back stay. */
   stopProdCorrelation: () => http.post<void>(`${B}/prod-correlation/stop`),
+  stopPowerPoolWorkflow: () => http.post<void>(`${B}/power-pool-workflow/stop`),
 }
