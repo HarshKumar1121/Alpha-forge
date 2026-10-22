@@ -370,10 +370,15 @@ def _daily_traded(table: pa.Table) -> dict[str, dict[date, tuple[float, float]]]
 def _grid(table: pa.Table) -> PnlGrid:
     """``alpha_id, date, pnl`` rows as a calendar of dates by Alphas, NaN where one has none."""
     ids = table.column("alpha_id").combine_chunks().dictionary_encode()
-    days, row = np.unique(table.column("date").to_numpy(), return_inverse=True)
-    grid = np.full((len(days), len(ids.dictionary)), np.nan)
-    grid[row, ids.indices.to_numpy()] = table.column("pnl").to_numpy()
-    return ids.dictionary.to_pylist(), days.tolist(), grid
+    # The few thousand distinct days sorted, not every row's: measured, a third of the time.
+    dates = table.column("date").combine_chunks().dictionary_encode()
+    distinct = dates.dictionary.to_numpy(zero_copy_only=False)
+    order = np.argsort(distinct)
+    rank = np.empty_like(order)
+    rank[order] = np.arange(len(order))
+    grid = np.full((len(distinct), len(ids.dictionary)), np.nan)
+    grid[rank[dates.indices.to_numpy()], ids.indices.to_numpy()] = table.column("pnl").to_numpy()
+    return ids.dictionary.to_pylist(), distinct[order].tolist(), grid
 
 
 def json_list(raw: Any) -> list[str]:

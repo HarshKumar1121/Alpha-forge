@@ -45,6 +45,9 @@ export const labTasks = {
   /** Measured locally against the submitted Power Pool, from the PnL already stored. */
   powerPoolFor: (alphaIds: string[]) =>
     http.post<PowerPoolCorrelation>(`${B}/power-pool-correlation`, { alphaIds }),
+  /** Greedy submission, best After-Cost Sharpe first, worked out without submitting. */
+  powerPoolOrder: (alphaIds: string[]) =>
+    http.post<Schemas['SubmissionOrder']>(`${B}/power-pool-order`, { alphaIds }),
   /** Downloads PnL, then turnover for the Alphas that satisfy Power Pool Correlation. */
   powerPoolWorkflow: (alphaIds: string[]) =>
     http.post<Schemas['WorkflowStarted']>(`${B}/power-pool-workflow`, { alphaIds }),

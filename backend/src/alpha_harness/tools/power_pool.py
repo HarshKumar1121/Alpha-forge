@@ -75,51 +75,172 @@ def correlate(
     PnL stored still counts in ``against``, and while any has none the answer is
     ``unmeasured`` unless a collision already refuses it: the missing one could hide another.
     """
-    ids, dates, pnl = grid
-    at = {a: i for i, a in enumerate(ids)}
+    at = {a: i for i, a in enumerate(grid[0])}
     left = [a for a in dict.fromkeys(candidates) if a in at]
     right = [p for p in dict.fromkeys(pool) if p in at]
     rho = np.full((len(left), len(right)), np.nan)
     if left and right:
-        cols = [at[a] for a in (*left, *right)]
-        traded = ~np.isnan(pnl[:, cols])
-        stored_last = [dates[i] for i in len(dates) - 1 - traded[::-1].argmax(axis=0)]
-        # Closing days move where BRAIN's window ends, as ``portfolio.frame`` counts them, but
-        # are never correlated: that is what makes these match BRAIN's own figures.
-        ends = [
-            metrics.with_closing([(day, 0.0, 0.0)], meta.get(a, {}))[-1][0]
-            for a, day in zip((*left, *right), stored_last, strict=True)
-        ]
-        pool_end = max(ends[len(left) :])
-        # Each candidate's own window, ending with its series or the pool's, whichever is later:
-        # one end for the whole batch made a figure depend on what else was asked with it.
-        by_start: dict[date, list[int]] = {}
-        for k, end in enumerate(ends[: len(left)]):
-            by_start.setdefault(metrics.window_start(max(end, pool_end)), []).append(k)
-        pooled = pnl[:, cols[len(left) :]]
-        for start, picked in by_start.items():
-            since = bisect_left(dates, start)
-            measured = pnl[since:, [cols[k] for k in picked]]
-            rho[picked] = metrics.correlations(measured, pooled[since:])
-
+        ends = _ends(grid, meta, at, [*left, *right])
+        rho = _rho(grid, at, left, right, ends[: len(left)], max(ends[len(left) :]))
     row_of = {a: i for i, a in enumerate(left)}
-    col_of = {p: j for j, p in enumerate(right)}
-    rows: list[dict[str, Any]] = []
-    for alpha_id in candidates:
-        against = [p for p in pool if p != alpha_id]
-        # Only pairs both sides of which have a stored series can be measured; the rest are
-        # counted in ``against`` so the row can say what it was judged against.
-        values = [
-            (p, float(rho[row_of[alpha_id], col_of[p]]))
-            for p in against
-            if alpha_id in row_of and p in col_of
-        ]
-        usable = [(p, v) for p, v in values if not np.isnan(v)]
-        found = _verdict(alpha_id, meta, usable, len(against), ceiling)
-        if found["verdict"] != "blocked" and any(p not in col_of for p in against):
-            found["verdict"] = "unmeasured"
-        rows.append(found)
-    return rows
+    return [
+        _judge(
+            alpha_id,
+            meta,
+            [p for p in pool if p != alpha_id],
+            {p: float(rho[row_of[alpha_id], j]) for j, p in enumerate(right)}
+            if alpha_id in row_of
+            else {},
+            at,
+            ceiling,
+        )
+        for alpha_id in candidates
+    ]
+
+
+def _ends(
+    grid: PnlGrid, meta: dict[str, dict[str, Any]], at: dict[str, int], alpha_ids: list[str]
+) -> list[date]:
+    """The last day BRAIN counts for each Alpha: its stored series' last, plus closing days."""
+    _, dates, pnl = grid
+    traded = ~np.isnan(pnl[:, [at[a] for a in alpha_ids]])
+    stored_last = [dates[i] for i in len(dates) - 1 - traded[::-1].argmax(axis=0)]
+    # Closing days move where BRAIN's window ends, as ``portfolio.frame`` counts them, but are
+    # never correlated: that is what makes these match BRAIN's own figures.
+    return [
+        metrics.with_closing([(day, 0.0, 0.0)], meta.get(a, {}))[-1][0]
+        for a, day in zip(alpha_ids, stored_last, strict=True)
+    ]
+
+
+def _rho(
+    grid: PnlGrid,
+    at: dict[str, int],
+    left: list[str],
+    right: list[str],
+    left_ends: list[date],
+    pool_end: date,
+) -> metrics.Floats:
+    """``left`` against ``right``, each candidate over its own window: ending with its series
+    or the pool's, whichever is later. One end for the whole batch made a figure depend on what
+    else was asked with it."""
+    _, dates, pnl = grid
+    rho = np.full((len(left), len(right)), np.nan)
+    if not (left and right):
+        return rho
+    by_start: dict[date, list[int]] = {}
+    for k, end in enumerate(left_ends):
+        by_start.setdefault(metrics.window_start(max(end, pool_end)), []).append(k)
+    pooled = pnl[:, [at[p] for p in right]]
+    for start, picked in by_start.items():
+        since = bisect_left(dates, start)
+        measured = pnl[since:, [at[left[k]] for k in picked]]
+        rho[picked] = metrics.correlations(measured, pooled[since:])
+    return rho
+
+
+def _judge(
+    alpha_id: str,
+    meta: dict[str, dict[str, Any]],
+    against: list[str],
+    values: dict[str, float],
+    stored: dict[str, int],
+    ceiling: float,
+) -> dict[str, Any]:
+    """The verdict from the pairs measured, ``values`` by pool member. Only pairs both sides of
+    which have a stored series can be measured; the rest still count in ``against``, so the row
+    says what it was judged against."""
+    usable = [(p, v) for p in against if (v := values.get(p)) is not None and not np.isnan(v)]
+    found = _verdict(alpha_id, meta, usable, len(against), ceiling)
+    if found["verdict"] != "blocked" and any(p not in stored for p in against):
+        found["verdict"] = "unmeasured"
+    return found
+
+
+#: Verdicts an Alpha can be submitted on.
+PASSING = frozenset({"clear", "beats"})
+
+
+def submission_order(
+    grid: PnlGrid,
+    meta: dict[str, dict[str, Any]],
+    candidates: Sequence[str],
+    pools: dict[str, list[str]],
+    ceiling: float = POWER_POOL_CORRELATION_CEILING,
+) -> tuple[list[dict[str, Any]], dict[str, str], list[str]]:
+    """Submit greedily, best After-Cost Sharpe first, without submitting anything: each pick
+    joins its region's pool, and the region's other candidates are judged again against it.
+
+    Returns the picks in order, each with its :func:`correlate` row at its turn; the
+    candidates an earlier pick blocked, each with that pick; and those that could not be
+    measured against a pick, having no stored series. ``pools`` is the submitted Power Pool
+    by region.
+
+    Each pick is measured against the rivals alone, their earlier pairs kept: the same answer
+    as judging them against the whole pool again, unless the pick ends later than the pool,
+    which moves every window and so measures the region afresh.
+    """
+
+    def rank(alpha_id: str) -> float:
+        value = (meta.get(alpha_id) or {}).get("after_cost_5bps")
+        return float(value) if value is not None else float("-inf")
+
+    at = {a: i for i, a in enumerate(grid[0])}
+    remaining = sorted(dict.fromkeys(candidates), key=lambda a: (-rank(a), a))
+    region_of = {a: scope_of(meta.get(a) or {}) for a in remaining}
+    pool = {region: list(ids) for region, ids in pools.items()}
+    everyone = dict.fromkeys([*remaining, *(p for ids in pool.values() for p in ids)])
+    stored = [a for a in everyone if a in at]
+    end_of = dict(zip(stored, _ends(grid, meta, at, stored) if stored else [], strict=True))
+    pool_end: dict[str, date] = {}
+    values: dict[str, dict[str, float]] = {a: {} for a in remaining}
+
+    def measure(region: str, rivals: list[str], members: list[str]) -> None:
+        left = [a for a in rivals if a in at]
+        right = [p for p in members if p in at]
+        rho = _rho(grid, at, left, right, [end_of[a] for a in left], pool_end[region])
+        for i, a in enumerate(left):
+            values[a].update((p, float(rho[i, j])) for j, p in enumerate(right))
+
+    def judge(alpha_id: str, region: str) -> dict[str, Any]:
+        against = [p for p in pool.get(region, []) if p != alpha_id]
+        return _judge(alpha_id, meta, against, values[alpha_id], at, ceiling)
+
+    for region in {r for r in region_of.values() if r}:
+        members = [p for p in pool.get(region, []) if p in at]
+        if members:
+            pool_end[region] = max(end_of[p] for p in members)
+            measure(region, [a for a in remaining if region_of[a] == region], members)
+    # Each candidate's row as last judged, so a pick reports the correlation it was taken at.
+    judged = {a: judge(a, region) for a in remaining if (region := region_of[a])}
+    # Only what could be submitted today starts out in the running.
+    remaining = [a for a in remaining if judged.get(a, {}).get("verdict") in PASSING]
+    picks: list[dict[str, Any]] = []
+    blocked: dict[str, str] = {}
+    unmeasured: list[str] = []
+    while remaining:
+        pick = remaining.pop(0)
+        region = region_of[pick]
+        picks.append(judged.get(pick, _row(pick, meta, _sharpe(meta.get(pick)))))
+        if region is None:
+            continue
+        pool.setdefault(region, []).append(pick)
+        rivals = [a for a in remaining if region_of[a] == region]
+        if pick in at:
+            if region not in pool_end or end_of[pick] > pool_end[region]:
+                pool_end[region] = end_of[pick]
+                measure(region, rivals, pool[region])
+            else:
+                measure(region, rivals, [pick])
+        for alpha_id in rivals:
+            row = judged[alpha_id] = judge(alpha_id, region)
+            if row["verdict"] == "blocked":
+                blocked[alpha_id] = pick
+            elif row["verdict"] not in PASSING:
+                unmeasured.append(alpha_id)
+        out = set(blocked) | set(unmeasured)
+        remaining = [a for a in remaining if a not in out]
+    return picks, blocked, unmeasured
 
 
 def self_pools(members: Sequence[dict[str, Any]]) -> dict[str, list[str]]:

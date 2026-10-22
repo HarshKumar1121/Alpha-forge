@@ -356,6 +356,31 @@ def node_at(node: Node, path: Path) -> Node:
     return node
 
 
+def relabel(node: Node, values: dict[Path, str]) -> Node:
+    """``node`` with the value at each of ``values``' paths replaced, in one pass. The shape
+    never changes, so this is :func:`replace_at` once per path, without rebuilding the way down
+    from the root again for each."""
+    if not values:
+        return node
+    own = values.get(())
+    below: dict[int, dict[Path, str]] = {}
+    for path, value in values.items():
+        if path:
+            below.setdefault(path[0], {})[path[1:]] = value
+    if not below:
+        return replace(node, value=own) if own is not None else node
+    count = len(node.args)
+    return replace(
+        node,
+        value=node.value if own is None else own,
+        args=tuple(relabel(a, below[i]) if i in below else a for i, a in enumerate(node.args)),
+        kwargs=tuple(
+            (key, relabel(v, below[count + i])) if count + i in below else (key, v)
+            for i, (key, v) in enumerate(node.kwargs)
+        ),
+    )
+
+
 def replace_at(node: Node, path: Path, new: Node) -> Node:
     if not path:
         return new
@@ -431,13 +456,27 @@ def crossover(rng: random.Random, left: Node, right: Node) -> Node | None:
     The left root is never replaced (that would just be the other parent), and grouping
     and keyword slots are never exchanged.
     """
-    mine = [
-        p for p, n, up in walk_with_parents(left) if p and n.kind == "call" and not guarded(up, p)
+    return graft(rng, left, graft_sites(left), grafts(right))
+
+
+def graft_sites(tree: Node) -> list[Path]:
+    """Where :func:`crossover` may graft into ``tree``: any call but the root, outside the
+    grouping and keyword slots."""
+    return [
+        p for p, n, up in walk_with_parents(tree) if p and n.kind == "call" and not guarded(up, p)
     ]
-    theirs = [n for p, n, up in walk_with_parents(right) if n.kind == "call" and not guarded(up, p)]
-    if not mine or not theirs:
+
+
+def grafts(tree: Node) -> list[Node]:
+    """The calls :func:`crossover` may take from ``tree``."""
+    return [n for p, n, up in walk_with_parents(tree) if n.kind == "call" and not guarded(up, p)]
+
+
+def graft(rng: random.Random, left: Node, sites: list[Path], taken: list[Node]) -> Node | None:
+    """:func:`crossover` with both lists already read off the parents."""
+    if not sites or not taken:
         return None
-    child = replace_at(left, rng.choice(mine), rng.choice(theirs))
+    child = replace_at(left, rng.choice(sites), rng.choice(taken))
     return None if child == left else child
 
 

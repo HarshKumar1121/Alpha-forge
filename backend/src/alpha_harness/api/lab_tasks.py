@@ -10,6 +10,7 @@ import contextlib
 import itertools
 import json
 import math
+from collections import Counter
 from typing import Annotated, Any, Literal
 
 import structlog
@@ -295,18 +296,30 @@ async def _one(state: Any, task_id: int) -> Study:
     return row
 
 
-async def _progress(state: Any, ids: list[int]) -> dict[int, dict[str, Any]]:
+#: Progress of complete tasks, which nothing changes once complete: by task, with the status,
+#: target and update time it was counted at, so a task extended or edited is counted again.
+_COMPLETE_PROGRESS: dict[int, tuple[tuple[Any, ...], dict[str, Any]]] = {}
+
+
+async def _progress(state: Any, rows: list[Study]) -> dict[int, dict[str, Any]]:
     """Trials by state, trials answered for free, and the best value per task, counted in SQL.
 
     A long task holds tens of thousands of trials; reading them all to count them would
-    slow the list down with every day the task runs.
+    slow the list down with every day the task runs. A complete task is counted once.
     """
-    out: dict[int, dict[str, Any]] = {
-        i: {"states": {}, "free": 0, "fullRuns": 0, "best": None, "failures": {}} for i in ids
-    }
+    out: dict[int, dict[str, Any]] = {}
+    ids: list[int] = []
+    for row in rows:
+        kept = _COMPLETE_PROGRESS.get(row.id)
+        if kept is not None and kept[0] == _settled_key(row):
+            out[row.id] = kept[1]
+        else:
+            out[row.id] = {"states": {}, "free": 0, "fullRuns": 0, "best": None, "failures": {}}
+            ids.append(row.id)
     if not ids:
         return out
     value = func.json_extract(Trial.values, "$[0]")
+    answered = Trial.state.in_([TrialState.COMPLETE, TrialState.FAIL])
     async with state.db.session() as session:
         states = await session.execute(
             select(Trial.study_id, Trial.state, func.count())
@@ -315,17 +328,31 @@ async def _progress(state: Any, ids: list[int]) -> dict[int, dict[str, Any]]:
         )
         for study_id, trial_state, n in states.all():
             out[study_id]["states"][str(trial_state)] = int(n)
-        free = await session.execute(
-            select(Trial.study_id, func.count())
-            .where(
-                Trial.study_id.in_(ids),
-                Trial.state.in_([TrialState.COMPLETE, TrialState.FAIL]),
-                Trial.message == scheduler.FREE,
+        # Three counts in one pass over the trials rather than one pass each.
+        counted = await session.execute(
+            select(
+                Trial.study_id,
+                func.count().filter(answered, Trial.message == scheduler.FREE),
+                func.count().filter(
+                    answered,
+                    or_(Trial.message.is_(None), Trial.message != scheduler.FREE),
+                    scheduler.full_run(),
+                ),
+                # An Alpha that returned no value is scored at the failure value, so it is not
+                # a best; nor is a seed, which was scored before the task began.
+                func.max(value).filter(
+                    Trial.state == TrialState.COMPLETE,
+                    value > FAILURE,
+                    or_(Trial.generation.is_(None), Trial.generation != 0),
+                ),
             )
+            .where(Trial.study_id.in_(ids))
             .group_by(Trial.study_id)
         )
-        for study_id, n in free.all():
-            out[study_id]["free"] = int(n)
+        for study_id, free, full_runs, best in counted.all():
+            out[study_id]["free"] = int(free or 0)
+            out[study_id]["fullRuns"] = int(full_runs or 0)
+            out[study_id]["best"] = None if best is None else float(best)
         failures = await session.execute(
             select(Trial.study_id, Trial.message, func.count())
             .where(Trial.study_id.in_(ids), Trial.state == TrialState.FAIL)
@@ -334,33 +361,14 @@ async def _progress(state: Any, ids: list[int]) -> dict[int, dict[str, Any]]:
         for study_id, message, n in failures.all():
             found = out[study_id]["failures"]
             found[_reason(message)] = found.get(_reason(message), 0) + int(n)
-        full_runs = await session.execute(
-            select(Trial.study_id, func.count())
-            .where(
-                Trial.study_id.in_(ids),
-                Trial.state.in_([TrialState.COMPLETE, TrialState.FAIL]),
-                or_(Trial.message.is_(None), Trial.message != scheduler.FREE),
-                scheduler.full_run(),
-            )
-            .group_by(Trial.study_id)
-        )
-        for study_id, n in full_runs.all():
-            out[study_id]["fullRuns"] = int(n)
-        # An Alpha that returned no value is scored at the failure value, so it is not a best;
-        # nor is a seed, which was scored before the task began.
-        best = await session.execute(
-            select(Trial.study_id, func.max(value))
-            .where(
-                Trial.study_id.in_(ids),
-                Trial.state == TrialState.COMPLETE,
-                value > FAILURE,
-                or_(Trial.generation.is_(None), Trial.generation != 0),
-            )
-            .group_by(Trial.study_id)
-        )
-        for study_id, value in best.all():
-            out[study_id]["best"] = None if value is None else float(value)
+    for row in rows:
+        if row.id in ids and row.status == StudyStatus.COMPLETE:
+            _COMPLETE_PROGRESS[row.id] = (_settled_key(row), out[row.id])
     return out
+
+
+def _settled_key(row: Study) -> tuple[Any, ...]:
+    return (row.status, row.max_trials, row.updated_at)
 
 
 def _fields(space: Any) -> int:
@@ -437,14 +445,14 @@ def _task(row: Study, progress: dict[str, Any]) -> LabTask:
 
 async def _payload(state: Any, task_id: int) -> LabTask:
     row = await _one(state, task_id)
-    return _task(row, (await _progress(state, [row.id]))[row.id])
+    return _task(row, (await _progress(state, [row]))[row.id])
 
 
 @router.get("")
 async def list_tasks(state: State) -> LabTasks:
     """Every task, newest first, and the slots they share."""
     rows = await _rows(state)
-    progress = await _progress(state, [r.id for r in rows])
+    progress = await _progress(state, rows)
     return LabTasks(slots=state.engine.slots, tasks=[_task(r, progress[r.id]) for r in rows])
 
 
@@ -628,6 +636,77 @@ async def power_pool_correlation_for(body: AlphaIds, state: State) -> PowerPoolC
     return await _power_pool(state, body.alpha_ids)
 
 
+class SubmissionPick(Out):
+    """One Alpha of the simulated order, as it stood when its turn came."""
+
+    alpha_id: str
+    region: str | None
+    sharpe: float | None
+    after_cost_sharpe: float | None
+    #: Its highest Power Pool Correlation with the pool and every earlier pick.
+    correlation: float | None
+    closest: str | None
+    verdict: str
+    #: Candidates its submission would block.
+    blocks: int
+
+
+class Blocked(Out):
+    alpha_id: str
+    #: The pick whose submission blocks it.
+    by: str
+
+
+class SubmissionOrder(Out):
+    """Greedy submission, best After-Cost Sharpe first, worked out without submitting."""
+
+    candidates: int
+    picks: list[SubmissionPick]
+    blocked: list[Blocked]
+    #: Could not be measured against an earlier pick: no stored daily PnL.
+    unmeasured: list[str]
+
+
+@router.post("/power-pool-order")
+async def power_pool_order(body: AlphaIds, state: State) -> SubmissionOrder:
+    """How many of these Alphas could be submitted one after another: each pick joins its
+    region's Power Pool, and the rest are judged again against it, as BRAIN would after a
+    submission and a Portfolio sync. Nothing is submitted and nothing is downloaded."""
+    pool_meta = await _pool_members(state)
+    stored = await state.alphas.by_ids(list(dict.fromkeys(body.alpha_ids)))
+    candidates = {
+        a: r for a, r in stored.items() if power_pool.is_power_pool(r) and not is_submitted(r)
+    }
+    grid = await state.alphas.pnl_grid([*candidates, *pool_meta])
+    pools: dict[str, list[str]] = {}
+    for alpha_id, row in pool_meta.items():
+        if (region := power_pool.scope_of(row)) is not None:
+            pools.setdefault(region, []).append(alpha_id)
+    meta = candidates | pool_meta
+    picks, blocked, unmeasured = await asyncio.to_thread(
+        power_pool.submission_order, grid, meta, list(candidates), pools
+    )
+    blocks = Counter(blocked.values())
+    return SubmissionOrder(
+        candidates=len(candidates),
+        picks=[
+            SubmissionPick(
+                alpha_id=row["alphaId"],
+                region=power_pool.scope_of(meta[row["alphaId"]]),
+                sharpe=row.get("sharpe"),
+                after_cost_sharpe=meta[row["alphaId"]].get("after_cost_5bps"),
+                correlation=row.get("correlation"),
+                closest=row.get("closest"),
+                verdict=row.get("verdict", "clear"),
+                blocks=blocks[row["alphaId"]],
+            )
+            for row in picks
+        ],
+        blocked=[Blocked(alpha_id=a, by=by) for a, by in blocked.items()],
+        unmeasured=unmeasured,
+    )
+
+
 @router.post("/{task_id}/run")
 async def run(task_id: int, state: State) -> LabTask:
     """Run a task, resume a paused one, or retry a failed one. It starts once its cores fit."""
@@ -717,6 +796,7 @@ async def remove(task_id: int, state: State) -> TaskRemoved:
         await state.engine.drop_queued(row.task)
         await state.optimizer.delete(task_id)
         await state.engine.set_quota(row.task, 0, enabled=False)
+    _COMPLETE_PROGRESS.pop(task_id, None)
     await state.optimizer.notify()
     return TaskRemoved(removed=task_id)
 

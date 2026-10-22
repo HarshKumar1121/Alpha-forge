@@ -877,6 +877,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/lab-tasks/power-pool-order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Power Pool Order
+         * @description How many of these Alphas could be submitted one after another: each pick joins its
+         *     region's Power Pool, and the rest are judged again against it, as BRAIN would after a
+         *     submission and a Portfolio sync. Nothing is submitted and nothing is downloaded.
+         */
+        post: operations["power_pool_order_api_lab_tasks_power_pool_order_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/lab-tasks/power-pool-workflow": {
         parameters: {
             query?: never;
@@ -2630,6 +2652,13 @@ export interface components {
             queued: number;
             /** Remaining */
             remaining: number;
+        };
+        /** Blocked */
+        Blocked: {
+            /** Alphaid */
+            alphaId: string;
+            /** By */
+            by: string;
         };
         /**
          * BrainPayload
@@ -4855,6 +4884,42 @@ export interface components {
             /** Name */
             name: string | null;
         };
+        /**
+         * SubmissionOrder
+         * @description Greedy submission, best After-Cost Sharpe first, worked out without submitting.
+         */
+        SubmissionOrder: {
+            /** Blocked */
+            blocked: components["schemas"]["Blocked"][];
+            /** Candidates */
+            candidates: number;
+            /** Picks */
+            picks: components["schemas"]["SubmissionPick"][];
+            /** Unmeasured */
+            unmeasured: string[];
+        };
+        /**
+         * SubmissionPick
+         * @description One Alpha of the simulated order, as it stood when its turn came.
+         */
+        SubmissionPick: {
+            /** Aftercostsharpe */
+            afterCostSharpe: number | null;
+            /** Alphaid */
+            alphaId: string;
+            /** Blocks */
+            blocks: number;
+            /** Closest */
+            closest: string | null;
+            /** Correlation */
+            correlation: number | null;
+            /** Region */
+            region: string | null;
+            /** Sharpe */
+            sharpe: number | null;
+            /** Verdict */
+            verdict: string;
+        };
         /** SubmittableAlpha */
         SubmittableAlpha: {
             /** Alphaid */
@@ -6930,6 +6995,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PowerPoolCorrelation"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    power_pool_order_api_lab_tasks_power_pool_order_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AlphaIds"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmissionOrder"];
                 };
             };
             /** @description Validation Error */

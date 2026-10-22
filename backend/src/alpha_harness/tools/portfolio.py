@@ -23,11 +23,11 @@ import numpy as np
 from ..vault import metrics
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Iterable, Iterator, Sequence
     from datetime import date
 
     from ..vault.metrics import Bools, Floats, Stats
-    from ..vault.store import AlphaVault
+    from ..vault.store import AlphaVault, PnlGrid
 
     type Framed = tuple[list[date], Floats, Floats, Bools]
 
@@ -150,19 +150,64 @@ def net_figures(
             continue
         turnover = np.array([t for _, _, t in rows])
         pnl = metrics.after_cost(np.array([p for _, p, _ in rows]), turnover, bps)
-        blocks = metrics.windows([d for d, _, _ in rows], pnl, turnover, info.get("test_start"))
-        whole, train, test = blocks["in_sample"], blocks["train"], blocks["test"]
-        found[alpha_id] = {
-            "sharpe": whole.sharpe if whole else None,
-            "fitness": whole.fitness if whole else None,
-            "returns": whole.returns if whole else None,
-            "drawdown": whole.drawdown if whole else None,
-            "margin": whole.margin if whole else None,
-            "train_sharpe": train.sharpe if train else None,
-            "test_sharpe": test.sharpe if test else None,
-            "k_ratio": metrics.k_ratio(pnl, turnover),
-        }
+        found[alpha_id] = _figures([d for d, _, _ in rows], pnl, turnover, info)
     return found
+
+
+def framed_grid(ids: list[str], framed: Framed, current: set[str], extra: PnlGrid) -> PnlGrid:
+    """:meth:`AlphaVault.pnl_grid` from these Alphas' :func:`frame` at no cost, without
+    reading their PnL again: the columns of those whose stored series is ``current``, with
+    ``extra`` beside them, the Alphas holding a PnL and no turnover, which a frame leaves out."""
+    dates, pnl, _ = exported(*framed)
+    kept = [col for col, a in enumerate(ids) if a in current]
+    names = [ids[col] for col in kept]
+    pnl = pnl[:, kept]
+    extra_ids, extra_dates, extra_pnl = extra
+    if extra_ids:
+        calendar = sorted(set(dates) | set(extra_dates))
+        at = {d: i for i, d in enumerate(calendar)}
+        merged = np.full((len(calendar), len(names) + len(extra_ids)), np.nan)
+        merged[[at[d] for d in dates], : len(names)] = pnl
+        merged[[at[d] for d in extra_dates], len(names) :] = extra_pnl
+        dates, pnl, names = calendar, merged, [*names, *extra_ids]
+    # Only days one of them traded, as the read would have them.
+    traded = ~np.isnan(pnl).all(axis=1)
+    return names, [d for d, t in zip(dates, traded, strict=True) if t], pnl[traded]
+
+
+def framed_figures(
+    ids: list[str], framed: Framed, meta: dict[str, dict[str, Any]]
+) -> dict[str, dict[str, float | None]]:
+    """:func:`net_figures` from these Alphas' :func:`frame`, whose columns already hold each
+    one's days, closing ones included, net of the frame's cost: read off as slices, rather
+    than rebuilt day by day from Python lists. Measured, a fraction of the time."""
+    dates, pnl, turnover, _ = framed
+    stamps = np.array(dates, dtype="datetime64[D]")
+    found: dict[str, dict[str, float | None]] = {}
+    for col, alpha_id in enumerate(ids):
+        held = ~np.isnan(pnl[:, col])
+        if held.any():
+            found[alpha_id] = _figures(
+                stamps[held], pnl[held, col], turnover[held, col], meta.get(alpha_id, {})
+            )
+    return found
+
+
+def _figures(
+    dates: Sequence[date] | np.ndarray, pnl: Floats, turnover: Floats, info: dict[str, Any]
+) -> dict[str, float | None]:
+    blocks = metrics.windows(dates, pnl, turnover, info.get("test_start"))
+    whole, train, test = blocks["in_sample"], blocks["train"], blocks["test"]
+    return {
+        "sharpe": whole.sharpe if whole else None,
+        "fitness": whole.fitness if whole else None,
+        "returns": whole.returns if whole else None,
+        "drawdown": whole.drawdown if whole else None,
+        "margin": whole.margin if whole else None,
+        "train_sharpe": train.sharpe if train else None,
+        "test_sharpe": test.sharpe if test else None,
+        "k_ratio": metrics.k_ratio(pnl, turnover),
+    }
 
 
 #: Alphas the leave-one-out figures work through at once: one array operation per block

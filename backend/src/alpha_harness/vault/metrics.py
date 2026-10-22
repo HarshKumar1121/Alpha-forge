@@ -271,7 +271,7 @@ def k_ratio(pnl: Floats, turnover: Floats) -> float | None:
 
 
 def windows(
-    dates: Sequence[date], pnl: Floats, turnover: Floats, split: date | None
+    dates: Sequence[date] | np.ndarray, pnl: Floats, turnover: Floats, split: date | None
 ) -> dict[str, Stats | None]:
     """IS, train and test blocks. Train and test both include the split day, as BRAIN's do."""
     stamps = np.array(dates, dtype="datetime64[D]")

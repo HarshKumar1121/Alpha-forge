@@ -70,7 +70,8 @@ HOLE = "..."
 _LIST = "values"
 
 
-@functools.lru_cache(maxsize=256)
+# Above the 2,000 templates a stats request may carry, so one request never evicts its own.
+@functools.lru_cache(maxsize=4096)
 def program(text: str) -> Node:
     """The template as a tree. Raises :class:`ParseError`."""
     return parse(text)

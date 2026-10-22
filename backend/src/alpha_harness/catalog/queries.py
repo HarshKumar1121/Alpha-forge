@@ -346,7 +346,8 @@ class CatalogQueries:
         """One field from whichever market covers it best. What a field is, its type, dataset
         and description, is the same in every market it is read in."""
         rows = await self.catalog.query(
-            "SELECT * FROM data_field WHERE field_id = ? ORDER BY coverage DESC NULLS LAST LIMIT 1",
+            "SELECT * FROM data_field WHERE field_id = ? "
+            "ORDER BY coverage DESC NULLS LAST, region, delay, universe LIMIT 1",
             [field_id],
         )
         return rows[0] if rows else None
@@ -358,7 +359,9 @@ class CatalogQueries:
         return await self.catalog.query(
             f"""
             SELECT * FROM data_field WHERE {NAMED_OR_DESCRIBED}
-            QUALIFY row_number() OVER (PARTITION BY field_id ORDER BY coverage DESC NULLS LAST) = 1
+            QUALIFY row_number() OVER (
+                PARTITION BY field_id ORDER BY coverage DESC NULLS LAST, region, delay, universe
+            ) = 1
             ORDER BY alpha_count DESC NULLS LAST, field_id
             LIMIT ?
             """,  # noqa: S608 - a constant clause and placeholders only
@@ -411,7 +414,7 @@ class CatalogQueries:
                    category_name, subcategory_name
             FROM data_field
             WHERE field_id IN ({", ".join("?" for _ in field_ids)})
-            ORDER BY field_id, region = ? DESC
+            ORDER BY field_id, region = ? DESC, region, delay, universe
             """,  # noqa: S608 - placeholders only
             [*field_ids, region],
         )
@@ -425,7 +428,7 @@ class CatalogQueries:
             f"""
             SELECT DISTINCT ON (dataset_id) dataset_id, name, description FROM data_set
             WHERE dataset_id IN ({", ".join("?" for _ in dataset_ids)})
-            ORDER BY dataset_id, description IS NULL
+            ORDER BY dataset_id, description IS NULL, region, delay, universe
             """,  # noqa: S608 - placeholders only
             dataset_ids,
         )
@@ -524,7 +527,7 @@ class CatalogQueries:
                 SELECT {column} AS id{select_extra}, count(*) AS n
                 FROM {table}
                 WHERE {where} AND {column} IS NOT NULL
-                GROUP BY {column} ORDER BY n DESC
+                GROUP BY {column} ORDER BY n DESC, id
                 """,  # noqa: S608
                 [*head, *params],
             )
@@ -588,21 +591,33 @@ class CatalogQueries:
         what pressing it would make it. Region Agnostic and Region Exclusive cannot both hold
         (a field in region ALL is in another region), so pressing one lets go of the other.
         """
-        pressed = {
-            "region_agnostic": {"region_agnostic": True, "region_exclusive": False},
-            "region_exclusive": {"region_exclusive": True, "region_agnostic": False},
-        }
-
-        async def count(update: dict[str, bool]) -> int:
-            where, params = active.model_copy(update=update).where(scope, search=not ranked)
-            n = await self.catalog.scalar(
-                f"SELECT count(*) FROM {table} WHERE {where}",  # noqa: S608
-                [*head, *params],
+        # Both counted in one pass over the scope, each with its own clause as ``where`` writes
+        # it: the same counts as one query per toggle, measured.
+        base = active.model_copy(update={"region_agnostic": False, "region_exclusive": False})
+        where, params = base.where(scope, search=not ranked)
+        if scope.region == REGION_AGNOSTIC_REGION:
+            agnostic, agnostic_params = "true", []
+        else:
+            agnostic = (
+                "field_id IN (SELECT field_id FROM data_field "
+                "WHERE instrument_type = ? AND region = ?)"
             )
-            return int(n or 0)
-
-        found = await asyncio.gather(*(count(update) for update in pressed.values()))
-        return dict(zip(pressed, found, strict=True))
+            agnostic_params = [scope.instrument_type, REGION_AGNOSTIC_REGION]
+        rows = await self.catalog.query(
+            f"""
+            SELECT count(*) FILTER (WHERE {agnostic}) AS region_agnostic,
+                   count(*) FILTER (WHERE field_id NOT IN (
+                       SELECT field_id FROM data_field WHERE instrument_type = ? AND region <> ?
+                   )) AS region_exclusive
+            FROM {table} WHERE {where}
+            """,  # noqa: S608
+            [*agnostic_params, scope.instrument_type, scope.region, *head, *params],
+        )
+        row = rows[0] if rows else {}
+        return {
+            "region_agnostic": int(row.get("region_agnostic") or 0),
+            "region_exclusive": int(row.get("region_exclusive") or 0),
+        }
 
     async def stats(self, scope: Tuple4) -> dict[str, Any]:
         """Distribution summary — lets the UI set sensible filter ranges."""

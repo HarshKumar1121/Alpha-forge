@@ -12,7 +12,7 @@ from ..brain.settings_schema import chosen_labels
 from ..labs.fastexpr import ParseError, data_fields, parse
 from ..schemas import Out
 from ..tools import portfolio, power_pool
-from ..vault.store import json_list
+from ..vault.store import SERIES_VERSION, json_list
 from .deps import State, refuse
 
 router = APIRouter(prefix="/api/portfolio", tags=["portfolio"])
@@ -292,6 +292,13 @@ def _fields_in(expression: str) -> list[str]:
         return []
 
 
+def _pnl_version(row: dict[str, Any]) -> Any:
+    """The version of the PnL :meth:`AlphaVault.pnl_grid` reads: ``pnl_version`` when only a PnL
+    is stored, else the series'."""
+    version = row.get("pnl_version")
+    return row.get("series_version") if version is None else version
+
+
 @router.get("/members")
 async def members(
     state: State,
@@ -303,13 +310,18 @@ async def members(
     ids = [str(r["alpha_id"]) for r in rows]
     series = await state.alphas.series(ids)
     meta = await state.alphas.by_ids(ids)
-    # Worked out even at no cost: some figures, like the K-ratio, BRAIN does not report.
-    net = await asyncio.to_thread(portfolio.net_figures, series, meta, cost_bps or 0.0)
-    # Laid out once for all three: it was each one's slowest step.
+    # Laid out once for everything below: it was each one's slowest step.
     with_series = [a for a in dict.fromkeys(ids) if series.get(a)]
     framed = await asyncio.to_thread(portfolio.frame, series, meta, with_series, cost_bps or 0.0)
+    # Worked out even at no cost: some figures, like the K-ratio, BRAIN does not report.
+    net = await asyncio.to_thread(portfolio.framed_figures, with_series, framed, meta)
     if cost_bps is None:
-        grid = await state.alphas.pnl_grid(list(meta))
+        # The PnL the grid reads, from the frame: only an Alpha holding a PnL without turnover
+        # is read again, as a frame has no column for it.
+        current = {a for a, row in meta.items() if _pnl_version(row) == SERIES_VERSION}
+        framed_ids = set(with_series)
+        extra = await state.alphas.pnl_grid([a for a in current if a not in framed_ids])
+        grid = await asyncio.to_thread(portfolio.framed_grid, with_series, framed, current, extra)
     else:
         # Net of cost, the grid is the frame cut to the days BRAIN exported: measured, the
         # same to the cell as reading the PnL again and costing it, at a fifth of the time.

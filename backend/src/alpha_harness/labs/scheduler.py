@@ -157,6 +157,56 @@ def to_ask(batch_size: int, in_flight: int, left: int) -> int:
     return max(0, min(room - room % 10, left))
 
 
+async def _still_sending(optimizer: Optimizer, rows: list[Study]) -> set[int]:
+    """The running tasks with simulations left to send: short of their target, holding parked
+    work, or with work queued in the engine. The rest only wait on what is out."""
+    ids = [r.id for r in rows]
+    tasks = [r.task for r in rows]
+    async with optimizer.db.session() as session:
+        spent = dict(
+            (
+                await session.execute(
+                    select(
+                        Trial.study_id,
+                        func.count().filter(
+                            Trial.state != TrialState.PRUNED, _not_free(), not_(full_run())
+                        ),
+                    )
+                    .where(Trial.study_id.in_(ids))
+                    .group_by(Trial.study_id)
+                )
+            )
+            .tuples()
+            .all()
+        )
+        parked = set(
+            await session.scalars(
+                select(Trial.study_id)
+                .where(
+                    Trial.study_id.in_(ids),
+                    Trial.state == TrialState.PRUNED,
+                    Trial.message.in_([PENDING_SEND, PENDING_FULL]),
+                )
+                .distinct()
+            )
+        )
+        queued = set(
+            await session.scalars(
+                select(SimulationRecord.task)
+                .where(
+                    SimulationRecord.task.in_(tasks), SimulationRecord.status == SimStatus.QUEUED
+                )
+                .distinct()
+            )
+        )
+    return {
+        r.id
+        for r in rows
+        if not task_params(r).stopping
+        and (spent.get(r.id, 0) < r.max_trials or r.id in parked or r.task in queued)
+    }
+
+
 async def start_waiting(optimizer: Optimizer) -> int:
     """Start queued tasks while their cores fit in the engine's slots. Returns how many."""
     async with scheduling:
@@ -171,7 +221,14 @@ async def start_waiting(optimizer: Optimizer) -> int:
                     )
                 ).all()
             )
-        used = sum(cores_of(r) for r in rows if r.status == StudyStatus.RUNNING)
+        running = [r for r in rows if r.status == StudyStatus.RUNNING]
+        if optimizer.engine.lend_idle_cores and running:
+            # Lending: a task that has sent everything holds no cores, only the batches still
+            # out, which the engine never takes back. Otherwise a task waiting for its cores
+            # stands idle beside them until the last of those batches returns.
+            sending = await _still_sending(optimizer, running)
+            running = [r for r in running if r.id in sending]
+        used = sum(cores_of(r) for r in running)
         waiting = sorted(
             (r for r in rows if r.status == StudyStatus.QUEUED),
             key=lambda r: (task_params(r).queued_at or "", r.id),

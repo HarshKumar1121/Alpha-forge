@@ -23,7 +23,7 @@ import json
 import math
 import random
 from collections import defaultdict
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -47,14 +47,16 @@ from .fastexpr import (
     OperatorInfo,
     ParseError,
     Path,
-    crossover,
+    graft,
+    graft_sites,
+    grafts,
     guarded,
     node_at,
     operator_count,
     operator_table,
     parse,
+    relabel,
     render,
-    replace_at,
     validate,
     walk_with_parents,
 )
@@ -362,20 +364,13 @@ class Parent:
 
 def skeleton(tree: Node, genes: list[tuple[Path, str]]) -> Node:
     """The tree with its genes blanked: parents sharing one cross gene by gene."""
-    for path, kind in genes:
-        tree = replace_at(tree, path, replace(node_at(tree, path), value=f"?{kind}"))
-    return tree
+    return relabel(tree, {path: f"?{kind}" for path, kind in genes})
 
 
 def uniform(rng: random.Random, a: Node, b: Node, genes: list[tuple[Path, str]]) -> Node:
     """Each gene from either parent with equal chance; the parents share a skeleton."""
-    child = a
-    for path, _ in genes:
-        if rng.random() < 0.5:
-            child = replace_at(
-                child, path, replace(node_at(child, path), value=node_at(b, path).value)
-            )
-    return child
+    taken = {path: node_at(b, path).value for path, _ in genes if rng.random() < 0.5}
+    return relabel(a, taken)
 
 
 def _mutated(rng: random.Random, node: Node, kind: str, market: Market) -> str:
@@ -413,6 +408,9 @@ def mutate(
     if force and not chosen:
         chosen = [rng.choice(moves)]
     settings = dict(settings)
+    # Every new value is drawn in the order chosen, then written in one pass: a value depends
+    # only on its own node, which no other edit here changes.
+    values: dict[Path, str] = {}
     for path, kind in chosen:
         if kind == "neutralization":
             current = settings["neutralization"]
@@ -420,9 +418,8 @@ def mutate(
         elif kind == "decay":
             settings[kind] = rng.choice([d for d in search.DECAYS if d != settings["decay"]])
         else:
-            node = node_at(tree, path)
-            tree = replace_at(tree, path, replace(node, value=_mutated(rng, node, kind, market)))
-    return tree, settings
+            values[path] = _mutated(rng, node_at(tree, path), kind, market)
+    return relabel(tree, values), settings
 
 
 @dataclass(frozen=True, slots=True)
@@ -432,11 +429,16 @@ class Shape:
     genes: list[tuple[Path, str]]
     skeleton: Node
     operators: int
+    #: Where crossover may graft into this tree, and the calls it may take from it.
+    sites: list[Path]
+    grafts: list[Node]
 
     @classmethod
     def of(cls, tree: Node, market: Market) -> Shape:
         genes = market.genes(tree)
-        return cls(genes, skeleton(tree, genes), operator_count(tree))
+        return cls(
+            genes, skeleton(tree, genes), operator_count(tree), graft_sites(tree), grafts(tree)
+        )
 
 
 def child(
@@ -464,7 +466,10 @@ def child(
         if same:
             tree = uniform(rng, a.tree, b.tree, genes)
         else:
-            tree = crossover(rng, left.tree, right.tree) or left.tree
+            tree = (
+                graft(rng, left.tree, shapes[left.tree].sites, shapes[right.tree].grafts)
+                or left.tree
+            )
             if operator_count(tree) > limit:
                 continue
         settings = {
