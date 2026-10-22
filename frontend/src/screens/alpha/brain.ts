@@ -300,7 +300,8 @@ export function checkMessage(check: AlphaCheck, stage: 'IS' | 'OS'): Part[] {
     c[k] = measure && isNum(v) ? brainValue(v, measure, true) : MATCHES.has(name) ? String(v) : v
   }
   for (const k of ['startDate', 'endDate', 'date']) {
-    if (typeof c[k] === 'string') c[k] = new Date(c[k])
+    // An unreadable date stays as BRAIN wrote it: formatting an Invalid Date throws.
+    if (typeof c[k] === 'string') c[k] = moment(c[k]) ?? c[k]
   }
   const said = (parts: Part[]) => (parts.length ? parts : [{ text: `${name} ${result}` }])
 
@@ -396,15 +397,33 @@ export const POWER_POOL_TEMPLATE = POWER_POOL_DESCRIPTION_HEADINGS.map((h) => `$
 const TEMPLATE =
   /^\s*idea:(\s+(.+?)\n)\s*rationale for data used:\s+((.+?)\n)\s*rationale for operators used:(\s+(.+?))/is
 
-/** What BRAIN says is wrong with a Power Pool description, in its words. */
+/** The first of the template's headings missing, out of order or with nothing after it. */
+function templateGap(text: string): string | undefined {
+  const lower = text.toLowerCase()
+  const starts: number[] = []
+  for (const heading of POWER_POOL_DESCRIPTION_HEADINGS) {
+    const at = lower.indexOf(`${heading.toLowerCase()}:`, starts.at(-1) ?? 0)
+    if (at === -1) return heading
+    starts.push(at)
+  }
+  return POWER_POOL_DESCRIPTION_HEADINGS.find(
+    (heading, i) => !text.slice((starts[i] ?? 0) + heading.length + 1, starts[i + 1]).trim(),
+  )
+}
+
+/** What BRAIN says is wrong with a Power Pool description, in its words, and which heading. */
 export function descriptionProblems(text: string): string[] {
   const found = TEMPLATE.exec(text)
+  const gap = templateGap(text)
   return [
     ...(text.trim().length < POWER_POOL_DESCRIPTION_MIN_LENGTH
       ? [`Ensure this field has at least ${POWER_POOL_DESCRIPTION_MIN_LENGTH} characters.`]
       : []),
     ...(found && [found[1], found[3], found[5]].every((part) => part?.trim())
       ? []
-      : ['Ensure the description is following the provided template.']),
+      : [
+          'Ensure the description is following the provided template.' +
+            (gap ? ` "${gap}:" is missing, out of order or empty.` : ''),
+        ]),
   ]
 }

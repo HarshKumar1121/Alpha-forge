@@ -7,7 +7,7 @@ import type { Scope } from '@/api/types'
 import { DEFAULT_SCOPE, useScope } from '@/lib/scope'
 import { useDebounced } from '@/lib/use-debounced'
 import { type PickFrom, useDatasetPick } from '@/screens/data/dataset-pick'
-import { type FieldFilterState, useFieldFilter } from '@/screens/data/state'
+import { type FieldFilterState, startDatasetPick } from '@/screens/data/state'
 
 export interface LabDraft {
   region: string
@@ -75,9 +75,8 @@ export function useLabMarket(
   }, [from, set])
 
   const choose = () => {
-    // Back to the filter this lab applies, so the Explorer shows the fields it will use.
-    if (draft.fieldFilter) useFieldFilter.getState().replace({ ...draft.fieldFilter })
-    useDatasetPick.getState().start(scope, draft.datasetIds, from)
+    // On the filter this lab applies, so the Explorer shows the fields it will use.
+    startDatasetPick(scope, draft.datasetIds, from, draft.fieldFilter)
     setDataScope(scope)
     void navigate({ to: '/data' })
   }

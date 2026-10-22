@@ -6,7 +6,7 @@ import type { Scope } from '@/api/types'
 import { cn } from '@/lib/cn'
 import { DASH, fmt, isNum } from '@/lib/format'
 import { regionLabel } from '@/lib/scope'
-import { useDatasetPick } from '@/screens/data/dataset-pick'
+import { type PickFrom, useDatasetPick } from '@/screens/data/dataset-pick'
 import { STATUS } from '@/ui/kit'
 import type { Sort } from '@/ui/table'
 
@@ -80,6 +80,35 @@ export const useFieldFilter = create<FieldFilterStore>()((set) => ({
   rank: () => set({ sort: { key: RELEVANCE, desc: true }, chosen: false, offset: 0 }),
   page: (offset) => set({ offset }),
 }))
+
+/** The reader's own filter while a lab picks under its own, given back when the pick ends. */
+let browsing: Pick<FieldFilterStore, 'filter' | 'sort' | 'chosen'> | null = null
+
+/** Opens a dataset pick for a lab, the Explorer showing the fields `filter` leaves. */
+export function startDatasetPick(
+  scope: Scope,
+  ids: string[],
+  from: PickFrom,
+  filter: FieldFilterState | null,
+) {
+  const { filter: own, sort, chosen } = useFieldFilter.getState()
+  browsing ??= { filter: own, sort, chosen }
+  useFieldFilter.getState().replace({ ...(filter ?? {}) })
+  useDatasetPick.getState().start(scope, ids, from)
+}
+
+/** Done hands the lab its datasets and the filter they were chosen under; either way the
+ *  reader's own filter comes back. */
+export function endDatasetPick(done: boolean) {
+  const pick = useDatasetPick.getState()
+  if (done) pick.finish(labFilter(useFieldFilter.getState().filter))
+  else pick.cancel()
+  useFieldFilter.setState({
+    ...(browsing ?? { filter: {}, sort: DEFAULT_SORT, chosen: false }),
+    offset: 0,
+  })
+  browsing = null
+}
 
 const NONE: string[] = []
 

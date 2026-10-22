@@ -16,7 +16,7 @@ import { DASH, fmt } from '@/lib/format'
 import { useCores } from '@/lib/preferences'
 import { isRegionAgnostic, regionLabel, useScope, useScopeOptions } from '@/lib/scope'
 import { useDatasetPick } from '@/screens/data/dataset-pick'
-import { useFieldFilter } from '@/screens/data/state'
+import { startDatasetPick } from '@/screens/data/state'
 import { AddTaskButtons, useAddTask } from '@/screens/research-labs/add-task'
 import { MAX_SIMULATIONS, simulationsValid, useLabPreview } from '@/screens/research-labs/lab-task'
 import { NeutralizationPicker } from '@/screens/research-labs/neutralization'
@@ -216,8 +216,7 @@ export function TemplateLabScreen() {
     if (!scope) return
     set({ picking: name, variables: { ...draft.variables, [name]: variable }, dirty: true })
     // The Explorer opens on this variable's own filter, so it shows the fields it will use.
-    useFieldFilter.getState().replace({ ...(variable.filter ?? {}) })
-    useDatasetPick.getState().start(scope, variable.dataset_ids, '/labs/template')
+    startDatasetPick(scope, variable.dataset_ids, '/labs/template', variable.filter ?? null)
     setDataScope(scope)
     void navigate({ to: '/data' })
   }

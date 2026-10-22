@@ -56,6 +56,11 @@ export function assignCores(
     const start = taken.findIndex((_, i) => fits(i, cost))
     if (start !== -1) take(id, start, cost)
   }
+  // BRAIN's slots are a count, not places: when the kept cores leave a wide run no free cores
+  // side by side, everyone moves up rather than a running simulation going undrawn.
+  const fitsAll = holders.reduce((n, h) => n + h.cost, 0) <= slots
+  if (next.size < holders.length && previous.size > 0 && fitsAll)
+    return assignCores(holders, new Map(), slots)
   return next
 }
 

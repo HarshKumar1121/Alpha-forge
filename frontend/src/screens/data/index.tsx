@@ -11,7 +11,7 @@ import { useDatasetPick } from '@/screens/data/dataset-pick'
 import { Button, Metric, Page, PageHeader } from '@/ui/kit'
 import { FieldsTab } from './fields'
 import { MarketBar } from './market'
-import { labFilter, useFieldFilter } from './state'
+import { endDatasetPick } from './state'
 
 export function DataScreen() {
   const [scope, update] = useScope('data')
@@ -40,11 +40,9 @@ function PickBar() {
   const navigate = useNavigate()
   const count = useDatasetPick((s) => s.ids.length)
   const back = (done: boolean) => {
-    const pick = useDatasetPick.getState()
-    const to = pick.from
+    const to = useDatasetPick.getState().from
     // The filter goes with the datasets: the lab searches only the fields it shows.
-    if (done) pick.finish(labFilter(useFieldFilter.getState().filter))
-    else pick.cancel()
+    endDatasetPick(done)
     void navigate({ to })
   }
 

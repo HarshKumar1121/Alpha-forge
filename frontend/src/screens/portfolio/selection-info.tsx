@@ -29,13 +29,23 @@ export function SelectionInfo({ metrics }: { metrics: string[] }) {
         <p>
           <code className="num text-ink">name = …</code> names a value for the lines after it.
         </p>
+        <p>
+          <code className="num text-ink">&amp;&amp;</code>, <code className="num text-ink">||</code>{' '}
+          and <code className="num text-ink">!</code> are <code className="num text-ink">and</code>,{' '}
+          <code className="num text-ink">or</code> and <code className="num text-ink">not</code>.{' '}
+          <code className="num text-ink">#</code> or <code className="num text-ink">{'//'}</code>{' '}
+          starts a comment.
+        </p>
         <pre className="num rounded-md bg-surface-2 p-3 text-ink">{EXAMPLE}</pre>
       </InfoSection>
 
       <InfoSection title="Metrics">
         <p>
           BRAIN's own figures for each Alpha, as BRAIN reports them, whatever the cost set on this
-          page. In BRAIN's units: Returns of 10% is <span className="num text-ink">0.10</span>.
+          page. In BRAIN's units: Returns of 10% is <span className="num text-ink">0.10</span>, or
+          write <span className="num text-ink">10%</span>; a Margin of{' '}
+          <span className="num text-ink">5bps</span> is <span className="num text-ink">0.0005</span>
+          .
         </p>
         <p>
           <span className="num text-ink">information_ratio</span> is Sharpe /{' '}

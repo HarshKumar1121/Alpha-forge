@@ -43,17 +43,23 @@ export function moment(iso: string | null | undefined): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed
 }
 
+/** `toFixed` without the `-0.00` a tiny negative rounds to. */
+const fixed = (v: number, digits: number) => {
+  const text = v.toFixed(digits)
+  return /^-[0.]+$/.test(text) ? text.slice(1) : text
+}
+
 export const fmt = {
   /** 5,000 */
   int: (v: number | null | undefined) => (isNum(v) ? INT.format(Math.round(v)) : DASH),
   /** 1.58 — Sharpe and Fitness. */
-  ratio: (v: number | null | undefined, digits = 2) => (isNum(v) ? v.toFixed(digits) : DASH),
+  ratio: (v: number | null | undefined, digits = 2) => (isNum(v) ? fixed(v, digits) : DASH),
   /** A fraction as a percent: 0.643 → 64.3% */
   pct: (v: number | null | undefined, digits = 1) =>
-    isNum(v) ? `${(v * 100).toFixed(digits)}%` : DASH,
+    isNum(v) ? `${fixed(v * 100, digits)}%` : DASH,
   /** A fraction as basis points: 0.0005 → 5.0 bps */
   bps: (v: number | null | undefined, digits = 1) =>
-    isNum(v) ? `${(v * 10_000).toFixed(digits)} bps` : DASH,
+    isNum(v) ? `${fixed(v * 10_000, digits)} bps` : DASH,
   /** 12.4K */
   compact: (v: number | null | undefined) => (isNum(v) ? COMPACT.format(v) : DASH),
   /** 2h 05m, 4m 12s, 9s */

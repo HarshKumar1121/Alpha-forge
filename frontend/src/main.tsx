@@ -10,6 +10,9 @@ import { ApiError, errorMessage } from '@/api/http'
 import { useLive } from '@/lib/live'
 import { telemetry } from '@/lib/ws'
 import { router } from '@/router'
+import { useDatasetPick } from '@/screens/data/dataset-pick'
+import { endDatasetPick } from '@/screens/data/state'
+import { useSeedPick } from '@/screens/research-labs/evolution/seed-pick'
 
 /** Any call BRAIN answers with a verification demand raises the global banner. */
 const noteVerification = (error: unknown) => {
@@ -45,6 +48,17 @@ const root = document.getElementById('root')
 if (!root) throw new Error('index.html has no #root element')
 
 telemetry.connect()
+
+// A pick left for anywhere but a detour its screen links to is cancelled, so that screen
+// does not stay a picker for a lab the user walked away from.
+const within = (path: string, places: string[]) =>
+  places.some((place) => path === place || path.startsWith(`${place}/`))
+router.subscribe('onResolved', ({ toLocation: { pathname } }) => {
+  if (useDatasetPick.getState().active && !within(pathname, ['/data', '/sync']))
+    endDatasetPick(false)
+  if (useSeedPick.getState().active && !within(pathname, ['/pool/stored', '/alpha']))
+    useSeedPick.getState().cancel()
+})
 
 createRoot(root).render(
   <StrictMode>
