@@ -97,6 +97,8 @@ class FieldFilter(BaseModel):
 
     search: str | None = None
     dataset_ids: list[str] = Field(default_factory=list)
+    #: Only these fields: the ones ticked one by one, e.g. the promising few of a dataset.
+    field_ids: list[str] = Field(default_factory=list)
     category_ids: list[str] = Field(default_factory=list)
     field_types: list[str] = Field(default_factory=list)
 
@@ -170,6 +172,7 @@ class FieldFilter(BaseModel):
 
         for column, values in (
             ("dataset_id", self.dataset_ids),
+            ("field_id", self.field_ids),
             ("category_id", self.category_ids),
             ("field_type", self.field_types),
         ):

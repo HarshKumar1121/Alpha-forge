@@ -99,6 +99,7 @@ fn main() {
         ))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(Status::default())
         .invoke_handler(tauri::generate_handler![startup_status])
         .setup(|app| {
@@ -107,8 +108,11 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Closing the window keeps Alpha Harness in the tray, so tasks keep simulating.
-            if let WindowEvent::CloseRequested { api, .. } = event {
+            // Closing the window keeps Alpha Harness in the tray, so tasks keep simulating. Only
+            // the app's own: the identity check's window closes for good.
+            if let WindowEvent::CloseRequested { api, .. } = event
+                && window.label() == "main"
+            {
                 api.prevent_close();
                 let _ = window.hide();
             }

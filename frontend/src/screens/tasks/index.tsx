@@ -244,15 +244,26 @@ export function TasksScreen() {
       key: 'simulations',
       header: 'Simulations',
       width: 'minmax(220px,1.5fr)',
+      // Reused Alphas count towards the target as simulated ones do: without them, a task that
+      // reran settings it had run before read as finished early, e.g. "28 / 88, Complete".
       cell: (t) => (
         <span className="flex w-full min-w-0 items-center gap-2">
           <Progress
             className="flex-1"
-            value={t.target > 0 ? t.simulated / t.target : 0}
+            value={t.target > 0 ? (t.simulated + t.cached) / t.target : 0}
             label="Simulated"
           />
           <span className="num shrink-0 text-body-compact">
-            {fmt.int(t.simulated)} / {fmt.int(t.target)}
+            {fmt.int(t.simulated + t.cached)} / {fmt.int(t.target)}
+            {t.cached > 0 && (
+              <span
+                className="text-ink-subtle"
+                title="Simulated before, so read back from BRAIN's earlier result without spending quota or adding a new Alpha on BRAIN"
+              >
+                {' '}
+                · {fmt.int(t.cached)} reused
+              </span>
+            )}
           </span>
         </span>
       ),

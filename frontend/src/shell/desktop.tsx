@@ -5,9 +5,9 @@
  */
 
 import { useQuery } from '@tanstack/react-query'
+import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { CopyIcon, MinusIcon, SquareIcon, XIcon } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { simulations } from '@/api/core'
 import { cn } from '@/lib/cn'
 import { useRefetchOn } from '@/lib/ws'
@@ -21,8 +21,76 @@ export const onMac = typeof navigator !== 'undefined' && navigator.userAgent.inc
 /** The shortcut modifier as this keyboard writes it: most consultants are on Windows. */
 export const MOD = onMac ? '⌘' : 'Ctrl+'
 
+// Windows' own caption buttons: 46px wide, a 10px glyph drawn in hairline strokes. Icon-set
+// glyphs at 16px with round caps read as app buttons, not as the window's.
+/** BRAIN's identity check, in a small window over the app's own; a second ask brings it back. */
+async function identityCheck(url: string): Promise<WebviewWindow> {
+  const open = await WebviewWindow.getByLabel(IDENTITY)
+  if (open) {
+    await open.setFocus()
+    return open
+  }
+  return new WebviewWindow(IDENTITY, {
+    url,
+    title: 'BRAIN identity check',
+    width: 520,
+    height: 760,
+    center: true,
+    parent: 'main',
+  })
+}
+const IDENTITY = 'identity-check'
+
+/**
+ * A web page belongs in the default browser, as it does when the app runs in one: the window
+ * shows the app alone, and a link it opened in a popup of its own had no browser behind it.
+ * BRAIN's identity check opens in a window of the app's, which sign-in watches and closes.
+ */
+if (inDesktop) {
+  const external = (url: string | URL | undefined) => /^https:\/\//.test(String(url ?? ''))
+  const browse = (url: string) =>
+    void import('@tauri-apps/plugin-opener').then(({ openUrl }) => openUrl(url))
+  const open = window.open.bind(window)
+  window.open = (url, target, features) => {
+    if (target === 'brain-identity-check' && url) {
+      const check = identityCheck(String(url))
+      // All sign-in asks of the window it opened is to close it once BRAIN has said yes.
+      return { close: () => void check.then((w) => w.close()) } as Window
+    }
+    if (!external(url)) return open(url, target, features)
+    browse(String(url))
+    return null
+  }
+  document.addEventListener(
+    'click',
+    (event) => {
+      const link = (event.target as Element | null)?.closest?.('a[target="_blank"]')
+      if (!(link instanceof HTMLAnchorElement) || !external(link.href)) return
+      event.preventDefault()
+      browse(link.href)
+    },
+    true,
+  )
+}
+
 const CONTROL =
-  'flex h-12 w-11 items-center justify-center text-ink-subtle transition-colors hover:bg-surface-2 hover:text-ink [&_svg]:size-4'
+  'flex h-12 w-[46px] items-center justify-center text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink'
+
+/** A 10px caption glyph, crisp on the pixel grid at 1x. */
+const Glyph = ({ children }: { children: ReactNode }) => (
+  <svg
+    width="10"
+    height="10"
+    viewBox="0 0 10 10"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1"
+    shapeRendering="crispEdges"
+    aria-hidden
+  >
+    {children}
+  </svg>
+)
 
 /** Minimise, maximise and close, for Windows and Linux, where the window has no title bar. */
 export function WindowControls() {
@@ -43,7 +111,9 @@ export function WindowControls() {
         className={CONTROL}
         onClick={() => void appWindow.minimize()}
       >
-        <MinusIcon strokeWidth={1.5} aria-hidden />
+        <Glyph>
+          <path d="M0 5.5h10" />
+        </Glyph>
       </button>
       <button
         type="button"
@@ -51,20 +121,25 @@ export function WindowControls() {
         className={CONTROL}
         onClick={() => void appWindow.toggleMaximize()}
       >
-        {maximized ? (
-          <CopyIcon strokeWidth={1.5} className="-scale-x-100" aria-hidden />
-        ) : (
-          <SquareIcon strokeWidth={1.5} aria-hidden />
-        )}
+        <Glyph>
+          {maximized ? (
+            <path d="M0.5 2.5h7v7h-7zM2.5 2.5v-2h7v7h-2" />
+          ) : (
+            <path d="M0.5 0.5h9v9h-9z" />
+          )}
+        </Glyph>
       </button>
       {/* Closing keeps Alpha Harness in the tray, as the window's own close did. */}
       <button
         type="button"
         aria-label="Close to the tray"
-        className={cn(CONTROL, 'hover:bg-pnl-negative hover:text-ink')}
+        className={cn(CONTROL, 'hover:bg-pnl-negative hover:text-white')}
         onClick={() => void appWindow.close()}
       >
-        <XIcon strokeWidth={1.5} aria-hidden />
+        <Glyph>
+          {/* Diagonals are antialiased, or they stair-step. */}
+          <path d="M0 0l10 10M10 0L0 10" shapeRendering="geometricPrecision" />
+        </Glyph>
       </button>
     </div>
   )

@@ -3282,6 +3282,8 @@ export interface components {
             date_created_from?: string | null;
             /** Date Created To */
             date_created_to?: string | null;
+            /** Field Ids */
+            field_ids?: string[];
             /** Field Types */
             field_types?: string[];
             /**

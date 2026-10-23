@@ -247,7 +247,7 @@ function Clocks() {
   const session =
     bar.data.expiresInSeconds == null ? null : Math.max(0, bar.data.expiresInSeconds - elapsed)
   // `exact` flips true once today's first simulation POST returns BRAIN's own quota headers.
-  const { remaining, queued, exact } = bar.data.simulations
+  const { remaining, exact } = bar.data.simulations
 
   return (
     // Below 1024px the two clocks hide; below 640px the quota figures drop their visible labels.
@@ -276,13 +276,6 @@ function Clocks() {
         <span className="num font-medium text-ink">
           {exact ? '' : '~'}
           {fmt.int(remaining)}
-          {/* Already spoken for: what is left after them is what is free to start. */}
-          {queued > 0 && (
-            <span className="hidden font-normal text-ink-subtle sm:inline">
-              {' '}
-              · {fmt.int(queued)} queued
-            </span>
-          )}
         </span>
       </Clock>
       <Clock
