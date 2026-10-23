@@ -5,7 +5,6 @@
  */
 
 import { useQuery } from '@tanstack/react-query'
-import { WebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { simulations } from '@/api/core'
@@ -23,28 +22,11 @@ export const MOD = onMac ? '⌘' : 'Ctrl+'
 
 // Windows' own caption buttons: 46px wide, a 10px glyph drawn in hairline strokes. Icon-set
 // glyphs at 16px with round caps read as app buttons, not as the window's.
-/** BRAIN's identity check, in a small window over the app's own; a second ask brings it back. */
-async function identityCheck(url: string): Promise<WebviewWindow> {
-  const open = await WebviewWindow.getByLabel(IDENTITY)
-  if (open) {
-    await open.setFocus()
-    return open
-  }
-  return new WebviewWindow(IDENTITY, {
-    url,
-    title: 'BRAIN identity check',
-    width: 520,
-    height: 760,
-    center: true,
-    parent: 'main',
-  })
-}
-const IDENTITY = 'identity-check'
-
 /**
  * A web page belongs in the default browser, as it does when the app runs in one: the window
  * shows the app alone, and a link it opened in a popup of its own had no browser behind it.
- * BRAIN's identity check opens in a window of the app's, which sign-in watches and closes.
+ * BRAIN's identity check is the exception: the desktop app opens it in a window of its own (see
+ * `main_window` in `main.rs`), which sign-in watches and closes once BRAIN accepts it.
  */
 if (inDesktop) {
   const external = (url: string | URL | undefined) => /^https:\/\//.test(String(url ?? ''))
@@ -53,9 +35,12 @@ if (inDesktop) {
   const open = window.open.bind(window)
   window.open = (url, target, features) => {
     if (target === 'brain-identity-check' && url) {
-      const check = identityCheck(String(url))
-      // All sign-in asks of the window it opened is to close it once BRAIN has said yes.
-      return { close: () => void check.then((w) => w.close()) } as Window
+      // Should the window still not open, the check is finished in the browser instead: BRAIN
+      // is asked whether it is done either way, so sign-in completes all the same.
+      const opened = open(url, target, features)
+      if (opened) return opened
+      browse(String(url))
+      return { close: () => {} } as Window
     }
     if (!external(url)) return open(url, target, features)
     browse(String(url))

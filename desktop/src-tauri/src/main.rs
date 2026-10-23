@@ -7,10 +7,12 @@
 mod supervisor;
 
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
+use tauri::webview::NewWindowResponse;
+use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 /// The step the supervisor is on, for a start-up page that loads after it was announced.
@@ -23,6 +25,65 @@ fn startup_status(window: tauri::WebviewWindow, status: tauri::State<'_, Status>
         supervisor::remember_splash(url);
     }
     status.0.lock().map(|s| s.clone()).unwrap_or_default()
+}
+
+/// Labels for the windows the page opens, each its own: two may be open at once.
+static OPENED: AtomicU32 = AtomicU32::new(0);
+
+/// BRAIN's own pages, its identity check above all: the domain itself or one under it, never a
+/// name that merely ends the same way.
+fn on_brain(url: &Url) -> bool {
+    let under = url
+        .host_str()
+        .unwrap_or_default()
+        .strip_suffix("worldquantbrain.com");
+    url.scheme() == "https" && under.is_some_and(|rest| rest.is_empty() || rest.ends_with('.'))
+}
+
+/// The main window, built here rather than by the config so that it can answer `window.open`.
+///
+/// With no handler the webview refuses every new window and `window.open` returns `null`, so
+/// BRAIN's identity check never opened and a sign-in that needed one could not finish. BRAIN's
+/// pages open in a window of their own, kept as the page's opener so the sign-in can close it
+/// once BRAIN accepts the check. Every other page goes to the default browser from the page
+/// itself, so anything else asked of this is refused.
+fn main_window(app: &AppHandle) -> tauri::Result<()> {
+    let config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|window| window.label == "main")
+        .cloned()
+        .expect("tauri.conf.json defines the main window");
+    let handle = app.clone();
+    WebviewWindowBuilder::from_config(app, &config)?
+        .on_new_window(move |url, features| {
+            if !on_brain(&url) {
+                return NewWindowResponse::Deny;
+            }
+            let label = format!("brain-{}", OPENED.fetch_add(1, Ordering::Relaxed));
+            let built = WebviewWindowBuilder::new(
+                &handle,
+                label,
+                WebviewUrl::External("about:blank".parse().expect("a valid URL")),
+            )
+            .window_features(features)
+            .on_document_title_changed(|window, title| {
+                let _ = window.set_title(&title);
+            })
+            .title("BRAIN")
+            .build();
+            match built {
+                Ok(window) => NewWindowResponse::Create { window },
+                Err(error) => {
+                    supervisor::note(&format!("could not open {url}: {error}"));
+                    NewWindowResponse::Deny
+                }
+            }
+        })
+        .build()?;
+    Ok(())
 }
 
 /// Bring the window forward: from the tray, a second launch, or the Dock.
@@ -103,6 +164,7 @@ fn main() {
         .manage(Status::default())
         .invoke_handler(tauri::generate_handler![startup_status])
         .setup(|app| {
+            main_window(app.handle())?;
             tray(app.handle())?;
             supervisor::spawn(app.handle().clone());
             Ok(())
