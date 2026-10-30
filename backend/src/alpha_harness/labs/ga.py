@@ -12,45 +12,55 @@ Every child is simulated holding the last two years out as a test and scored on 
 over the first eight, which BRAIN reports in the ``train`` block. Parents are the best of
 everything scored so far, kept apart by the correlation of their daily PnL over the train
 years.
-"""
 
-from __future__ import annotations
+In the all-regions market every child is a region-agnostic simulation, and each result is
+scored as its second-best region (see :func:`..vault.store.family_row`): BRAIN submits one
+only when two regions pass.
+"""
 
 import asyncio
 import json
 import math
 import random
 from collections import defaultdict
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import structlog
 from sqlalchemy import String, func, select, type_coerce
 
-from ..brain.schemas import TEST_PERIOD, SimulationRequest, SimulationSettings
+from ..brain.platform import (
+    IGNORED_CHECKS,
+    REGION_AGNOSTIC_REGION,
+    TEST_PERIOD,
+    UNCOUNTED_OPERATORS,
+)
+from ..brain.schemas import SimulationRequest, SimulationSettings
 from ..db.models import Study, Trial, TrialState
-from ..vault.store import EVOLVABLE, EVOLVABLE_TYPES, SUBMITTED
-from ..vault.yields import IGNORED_CHECKS
-from . import search, template
+from ..vault.metrics import MIN_OVERLAP
+from ..vault.store import EVOLVABLE_TYPES, SEEDABLE
+from ..vault.yields import SUBMITTED, checks_of, is_submitted, limits_of
+from . import search
 from .fastexpr import (
-    UNCOUNTED,
     Node,
     OperatorInfo,
     ParseError,
     Path,
-    crossover,
+    graft,
+    graft_sites,
+    grafts,
+    guarded,
     node_at,
     operator_count,
     operator_table,
     parse,
-    protected,
+    relabel,
     render,
-    replace_at,
     validate,
-    walk,
+    walk_with_parents,
 )
-from .objectives import OBJECTIVES
+from .objectives import FAILURE
 from .params import EvolutionParams, params_of
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -70,8 +80,11 @@ MUTATION_RATE = 0.05
 PATIENCE = 1_000
 #: Candidates Auto Select examines at most, so a weak market cannot cost hundreds of downloads.
 MAX_EXAMINED = 200
-FAILURE = OBJECTIVES["train_fitness"].failure_value
 STALLED = "Stopped early: no new best Train Fitness in the last 1,000 simulations."
+#: Never swapped in: ``ts_step`` takes no input a seed can give, vector operators prepare a
+#: field rather than make a signal, and the other two categories are not for Alphas.
+NOT_SWAPPED = frozenset({"ts_step"})
+NOT_SWAPPED_CATEGORIES = frozenset({"Vector", "Special", "Reduce"})
 
 
 # --- seed scores ------------------------------------------------------------
@@ -115,11 +128,17 @@ UTILITY: dict[str, tuple[float, Callable[[float, float, float], float], float, f
 TEST_YEAR_CHECKS = frozenset({"LOW_2Y_SHARPE", "IS_LADDER_SHARPE"})
 
 
+def train_figure(row: dict[str, Any], key: str) -> Any:
+    """``key`` over the train years where the Alpha has it, so the held-out years pick nothing."""
+    train = row.get(f"train_{key}")
+    return row.get(key) if train is None else train
+
+
 def utility(row: dict[str, Any]) -> float:
     """The weighted utility of an Alpha's stored metrics. A missing metric leaves the weights."""
     total = weight = 0.0
     for key, (share, curve, low, high) in UTILITY.items():
-        value = row.get(key)
+        value = train_figure(row, key)
         if value is not None:
             total += share * curve(float(value), low, high)
             weight += share
@@ -144,11 +163,7 @@ def seed_score(row: dict[str, Any]) -> float:
     A negative score is divided instead, so passing more checks always ranks higher.
     """
     score = utility(row)
-    try:
-        checks = json.loads(row.get("checks") or "[]")
-    except ValueError:
-        checks = []
-    rate = pass_rate(checks if isinstance(checks, list) else [])
+    rate = pass_rate(checks_of(row.get("checks")))
     if rate is None or not math.isfinite(score):
         return score
     return score * (1 + rate) if score >= 0 else score / (1 + rate)
@@ -160,16 +175,16 @@ def population_for(simulations: int, chosen: int | None = None) -> int:
     return chosen or min(100, max(20, 10 * (simulations // 200)))
 
 
-def stalled(values: list[float | None], patience: int = PATIENCE) -> bool:
-    """True when the last ``patience`` spent children found nothing better than those before.
+def stalled(values: list[float | None]) -> bool:
+    """True when the last :data:`PATIENCE` spent children found nothing better than those before.
 
     ``values`` are the spent children's scores in the order they were asked, ``None`` for one
     that failed.
     """
-    if len(values) <= patience:
+    if len(values) <= PATIENCE:
         return False
-    before = [v for v in values[:-patience] if v is not None]
-    recent = [v for v in values[-patience:] if v is not None]
+    before = [v for v in values[:-PATIENCE] if v is not None]
+    recent = [v for v in values[-PATIENCE:] if v is not None]
     return bool(before) and (not recent or max(recent) <= max(before))
 
 
@@ -198,7 +213,7 @@ class Market:
     def peers(self, node: Node) -> list[str]:
         """Operators that can stand in for this call: same category, the same inputs."""
         info = self.table.get(node.value)
-        if info is None or node.kwargs or node.value in UNCOUNTED:
+        if info is None or node.kwargs or node.value in UNCOUNTED_OPERATORS:
             return []
         count = len(node.args)
         inputs = _inputs(info, count)
@@ -214,21 +229,20 @@ class Market:
     def genes(self, tree: Node) -> list[tuple[Path, str]]:
         """Where a mutation may change this tree, and what kind of change each is."""
         found: list[tuple[Path, str]] = []
-        for path, node in walk(tree):
+        for path, node, parent in walk_with_parents(tree):
             if node.kind == "binary" and node.value in ARITHMETIC:
                 found.append((path, "op"))
             elif node.kind == "call":
                 if self.peers(node):
                     found.append((path, "op"))
                 info = self.table.get(node.value)
-                if info is None or node.value in UNCOUNTED:
+                if info is None or node.value in UNCOUNTED_OPERATORS:
                     continue
                 names = _inputs(info, len(node.args))
                 for index, (arg, name) in enumerate(zip(node.args, names, strict=False)):
                     if name == "d" and arg.kind == "num" and arg.value.isdigit():
                         found.append(((*path, index), "window"))
             elif node.kind == "name":
-                parent = node_at(tree, path[:-1]) if path else None
                 grouping = (
                     parent is not None
                     and parent.kind == "call"
@@ -238,7 +252,7 @@ class Market:
                 dataset = self.dataset_of.get(node.value)
                 if grouping and node.value in search.GROUPS:
                     found.append((path, "group"))
-                elif dataset and not protected(tree, path) and len(self.by_dataset[dataset]) > 1:
+                elif dataset and not guarded(parent, path) and len(self.by_dataset[dataset]) > 1:
                     found.append((path, "field"))
         return found
 
@@ -254,10 +268,10 @@ def build_market(
     swappable: dict[str, list[OperatorInfo]] = defaultdict(list)
     for info in table.values():
         if (
-            info.name in UNCOUNTED
+            info.name in UNCOUNTED_OPERATORS
             or info.name in search.EXCLUDED
-            or info.name in template.EXCLUDED
-            or info.category in template.EXCLUDED_CATEGORIES
+            or info.name in NOT_SWAPPED
+            or info.category in NOT_SWAPPED_CATEGORIES
             or (leveled and levels.get(info.name) != "ALL")
         ):
             continue
@@ -350,20 +364,13 @@ class Parent:
 
 def skeleton(tree: Node, genes: list[tuple[Path, str]]) -> Node:
     """The tree with its genes blanked: parents sharing one cross gene by gene."""
-    for path, kind in genes:
-        tree = replace_at(tree, path, replace(node_at(tree, path), value=f"?{kind}"))
-    return tree
+    return relabel(tree, {path: f"?{kind}" for path, kind in genes})
 
 
 def uniform(rng: random.Random, a: Node, b: Node, genes: list[tuple[Path, str]]) -> Node:
     """Each gene from either parent with equal chance; the parents share a skeleton."""
-    child = a
-    for path, _ in genes:
-        if rng.random() < 0.5:
-            child = replace_at(
-                child, path, replace(node_at(child, path), value=node_at(b, path).value)
-            )
-    return child
+    taken = {path: node_at(b, path).value for path, _ in genes if rng.random() < 0.5}
+    return relabel(a, taken)
 
 
 def _mutated(rng: random.Random, node: Node, kind: str, market: Market) -> str:
@@ -401,6 +408,9 @@ def mutate(
     if force and not chosen:
         chosen = [rng.choice(moves)]
     settings = dict(settings)
+    # Every new value is drawn in the order chosen, then written in one pass: a value depends
+    # only on its own node, which no other edit here changes.
+    values: dict[Path, str] = {}
     for path, kind in chosen:
         if kind == "neutralization":
             current = settings["neutralization"]
@@ -408,30 +418,58 @@ def mutate(
         elif kind == "decay":
             settings[kind] = rng.choice([d for d in search.DECAYS if d != settings["decay"]])
         else:
-            node = node_at(tree, path)
-            tree = replace_at(tree, path, replace(node, value=_mutated(rng, node, kind, market)))
-    return tree, settings
+            values[path] = _mutated(rng, node_at(tree, path), kind, market)
+    return relabel(tree, values), settings
+
+
+@dataclass(frozen=True, slots=True)
+class Shape:
+    """What breeding reads of a parent on every attempt, worked out once per parent."""
+
+    genes: list[tuple[Path, str]]
+    skeleton: Node
+    operators: int
+    #: Where crossover may graft into this tree, and the calls it may take from it.
+    sites: list[Path]
+    grafts: list[Node]
+
+    @classmethod
+    def of(cls, tree: Node, market: Market) -> Shape:
+        genes = market.genes(tree)
+        return cls(
+            genes, skeleton(tree, genes), operator_count(tree), graft_sites(tree), grafts(tree)
+        )
 
 
 def child(
-    rng: random.Random, a: Parent, b: Parent, market: Market, rate: float, tries: int = 10
+    rng: random.Random,
+    a: Parent,
+    b: Parent,
+    market: Market,
+    rate: float,
+    shapes: dict[Node, Shape],
 ) -> tuple[Node, dict[str, Any]] | None:
-    """A valid child of ``a`` and ``b`` that is neither of them, or ``None`` after ``tries``."""
-    genes = market.genes(a.tree)
-    same = skeleton(a.tree, genes) == skeleton(b.tree, market.genes(b.tree))
-    limit = max(operator_count(a.tree), operator_count(b.tree))
+    """A valid child of ``a`` and ``b`` that is neither of them, or ``None`` after ten tries.
+    ``shapes`` holds each parent tree's :class:`Shape`."""
+    shape_a, shape_b = shapes[a.tree], shapes[b.tree]
+    genes = shape_a.genes
+    same = shape_a.skeleton == shape_b.skeleton
+    limit = max(shape_a.operators, shape_b.operators)
     parents = {a.key, b.key}
 
     def clone(tree: Node, settings: dict[str, Any]) -> bool:
         key = (tree, settings["neutralization"], settings["decay"], settings["truncation"])
         return key in parents
 
-    for _ in range(tries):
+    for _ in range(10):
         left, right = (a, b) if rng.random() < 0.5 else (b, a)
         if same:
             tree = uniform(rng, a.tree, b.tree, genes)
         else:
-            tree = crossover(rng, left.tree, right.tree) or left.tree
+            tree = (
+                graft(rng, left.tree, shapes[left.tree].sites, shapes[right.tree].grafts)
+                or left.tree
+            )
             if operator_count(tree) > limit:
                 continue
         settings = {
@@ -473,8 +511,6 @@ def ga_key(expression: str | None, settings: dict[str, Any] | None) -> tuple[str
 
 #: Two Alphas moving together at |correlation| of this or more are one idea, not two.
 DEFAULT_MAX_CORRELATION = 0.5
-#: Days both series must share before a correlation between them means anything.
-MIN_OVERLAP = 250
 
 
 @dataclass(frozen=True, slots=True)
@@ -495,6 +531,16 @@ def series_of(days: dict[date, float]) -> Series | None:
     )
 
 
+#: An Alpha's daily PnL by region: its one region, or each scored region of a family.
+Profile = dict[str, Series]
+
+
+def profile_of(regions: dict[str, str], days: dict[str, dict[date, float]]) -> Profile | None:
+    """The usable series among ``regions`` (region to the Alpha whose PnL stands there)."""
+    found = {r: s for r, alpha_id in regions.items() if (s := series_of(days.get(alpha_id) or {}))}
+    return found or None
+
+
 def correlation(a: Series, b: Series) -> float | None:
     """Pearson correlation over the days both have; ``None`` below the minimum overlap."""
     _, left, right = np.intersect1d(a.dates, b.dates, assume_unique=True, return_indices=True)
@@ -506,47 +552,130 @@ def correlation(a: Series, b: Series) -> float | None:
     return float(np.corrcoef(x, y)[0, 1])
 
 
+def kinship(a: Profile, b: Profile) -> float | None:
+    """The strongest correlation two Alphas show in any region both trade.
+
+    Region by region, because one idea read in USA and in EUR can look unrelated: the two
+    markets move apart even when the idea does not. ``None`` with no region in common.
+    """
+    found = [rho for r in a.keys() & b.keys() if (rho := correlation(a[r], b[r])) is not None]
+    return max(found, key=abs) if found else None
+
+
 def collision(
-    candidate: Series, kept: dict[str, Series], threshold: float = DEFAULT_MAX_CORRELATION
+    candidate: Profile, kept: dict[str, Profile], threshold: float = DEFAULT_MAX_CORRELATION
 ) -> tuple[str, float] | None:
     """The first kept Alpha this one moves with, at |correlation| of ``threshold`` or more."""
     for alpha_id, other in kept.items():
-        rho = correlation(candidate, other)
+        rho = kinship(candidate, other)
         if rho is not None and abs(rho) >= threshold:
             return alpha_id, rho
     return None
 
 
+class _Kept:
+    """One region's kept series on a shared day-by-day calendar, so a candidate is measured
+    against all of them in one array operation rather than one :func:`correlation` per pair.
+
+    The calendar spans only the series placed on it, widening when one reaches past it:
+    measured, setting it up from every candidate made a five-pick shortlist of a thousand
+    twice as slow. Column-major, so the kept columns are one contiguous block.
+    """
+
+    def __init__(self) -> None:
+        self.origin: np.datetime64 | None = None
+        self.days = 0
+        self.columns = np.empty((0, 0), order="F")
+        self.count = 0
+
+    def place(self, series: Series) -> np.ndarray:
+        """``series`` on the calendar: its values on its days, NaN on the rest."""
+        first, last = series.dates[0], series.dates[-1]
+        origin = self.origin
+        if origin is None or first < origin or last >= origin + self.days:
+            origin = self._widen(first, last)
+        placed = np.full(self.days, np.nan)
+        placed[(series.dates - origin).astype(int)] = series.values
+        return placed
+
+    def _widen(self, first: np.datetime64, last: np.datetime64) -> np.datetime64:
+        origin = first if self.origin is None else min(first, self.origin)
+        end = last if self.origin is None else max(last, self.origin + self.days - 1)
+        days = int((end - origin).astype(int)) + 1
+        columns = np.full((days, max(self.columns.shape[1], 8)), np.nan, order="F")
+        if self.origin is not None and self.count:
+            shift = int((self.origin - origin).astype(int))
+            columns[shift : shift + self.days, : self.count] = self.columns[:, : self.count]
+        self.origin, self.days, self.columns = origin, days, columns
+        return origin
+
+    def add(self, placed: np.ndarray) -> None:
+        if self.count == self.columns.shape[1]:
+            wider = np.full((self.days, 2 * self.count), np.nan, order="F")
+            wider[:, : self.count] = self.columns
+            self.columns = wider
+        self.columns[:, self.count] = placed
+        self.count += 1
+
+    def moves_with(self, placed: np.ndarray, threshold: float) -> bool:
+        """Whether ``placed`` correlates with any kept series at |correlation| of
+        ``threshold`` or more: :func:`correlation`'s arithmetic, pair by pair at once."""
+        if not self.count:
+            return False
+        x, y = placed[:, None], self.columns[:, : self.count]
+        both = ~np.isnan(x) & ~np.isnan(y)
+        days = both.sum(axis=0)
+        x, y = np.where(both, x, 0.0), np.where(both, y, 0.0)
+        dx = np.where(both, x - x.sum(axis=0) / np.maximum(days, 1), 0.0)
+        dy = np.where(both, y - y.sum(axis=0) / np.maximum(days, 1), 0.0)
+        xx, yy = (dx * dx).sum(axis=0), (dy * dy).sum(axis=0)
+        usable = (days >= MIN_OVERLAP) & (xx > 0) & (yy > 0)
+        rho = np.clip((dx * dy).sum(axis=0) / np.sqrt(np.where(usable, xx * yy, 1.0)), -1, 1)
+        return bool((usable & (np.abs(rho) >= threshold)).any())
+
+
 def independent(
     order: list[str],
-    series: dict[str, Series | None],
+    series: dict[str, Profile | None],
     limit: int,
     threshold: float = DEFAULT_MAX_CORRELATION,
 ) -> list[str]:
     """The notes' between-correlation selection: best first, each kept unless it moves with
-    one already kept. An Alpha without a usable series counts as independent."""
+    one already kept. An Alpha without a usable series counts as independent.
+
+    :func:`collision`'s test, region by region: one region at the threshold is a collision,
+    as the strongest of them is in :func:`kinship`. Measured on a hundred candidates, a third
+    of the time, keeping the same Alphas.
+    """
+    regions: dict[str, _Kept] = {}
     kept: list[str] = []
-    kept_series: dict[str, Series] = {}
     for alpha_id in order:
         if len(kept) >= limit:
             break
         own = series.get(alpha_id)
         if own is not None:
-            if collision(own, kept_series, threshold):
+            placed = {r: regions.setdefault(r, _Kept()).place(s) for r, s in own.items()}
+            if any(regions[r].moves_with(p, threshold) for r, p in placed.items()):
                 continue
-            kept_series[alpha_id] = own
+            for r, p in placed.items():
+                regions[r].add(p)
         kept.append(alpha_id)
     return kept
 
 
 async def _parents(optimizer: Optimizer, ranked: list[Trial], limit: int) -> list[Trial]:
-    """The ranked trials kept apart by daily PnL. Missing PnL downloads in the background."""
+    """The ranked trials kept apart by daily PnL. Missing PnL downloads in the background.
+
+    A region-agnostic result has no series of its own; each scored region's child stands in.
+    """
     ids = [t.alpha_id for t in ranked if t.alpha_id]
-    days = await optimizer.alphas.train_pnl(ids)
-    missing = [alpha_id for alpha_id in ids if alpha_id not in days]
+    where = await optimizer.alphas.region_series(ids)
+    wanted = [alpha_id for regions in where.values() for alpha_id in regions.values()]
+    days = await optimizer.alphas.train_pnl(wanted)
+    missing = [alpha_id for alpha_id in wanted if alpha_id not in days]
     if missing and optimizer.backfill is not None:
         optimizer.backfill.schedule_returns(missing)
-    series = {alpha_id: series_of(rows) for alpha_id, rows in days.items()}
+    series = {a: profile_of(regions, days) for a, regions in where.items()}
     kept = set(await asyncio.to_thread(independent, ids, series, limit))
     return [t for t in ranked if t.alpha_id in kept]
 
@@ -607,13 +736,14 @@ async def breed(
         lambda: {ga_key(e, json.loads(s or "null")) for e, s in identities}
     )
     rate = run.mutation_rate or MUTATION_RATE
+    shapes = {p.tree: Shape.of(p.tree, market) for p in parents}
     rng = random.Random()
     out: list[tuple[dict[str, Any], SimulationRequest]] = []
     for _ in range(want * 10):
         if len(out) >= want:
             break
         a, b = rng.choice(parents), rng.choice(parents)
-        made = child(rng, a, b, market, rate)
+        made = child(rng, a, b, market, rate, shapes)
         if made is None:
             continue
         request = request_for(*made, run)
@@ -635,18 +765,22 @@ def seed_problem(
     """Why a stored Alpha cannot be a seed in this market, or ``None``."""
     if row is None or not row.get("expression"):
         return "Not stored here. Sync from BRAIN first."
-    if row.get("status") and str(row["status"]).upper() != "UNSUBMITTED":
+    if is_submitted(row):
         return "Already submitted."
     kind = str(row.get("sim_type") or "REGULAR").upper()
-    if kind not in EVOLVABLE_TYPES:
-        if kind == "RA_PARENT":
-            # It summarises its children and has no Sharpe or Fitness of its own; the
-            # children are seeds like any other Alpha.
+    if kind == "RA_PARENT":
+        if region != REGION_AGNOSTIC_REGION:
             return (
-                "A region-agnostic parent has no metrics of its own. Seed from one of its children."
+                "A region-agnostic Alpha breeds in All Regions. Here, seed from one of its regions."
             )
+        if row.get("series_id") is None:
+            # Not stood in for by a family: fewer than two regions have a Fitness.
+            return "Fewer than two of its regions have a Fitness, and BRAIN needs two to submit it."
+    elif kind not in EVOLVABLE_TYPES:
         # A SuperAlpha, say: its expression is a combo, not a regular expression.
         return f"A {kind} Alpha cannot be a seed: its expression is not a regular expression."
+    elif region == REGION_AGNOSTIC_REGION:
+        return "One region's Alpha breeds in its own market. Here, seed from region-agnostic ones."
     if (row.get("region"), row.get("delay"), row.get("universe")) != (region, delay, universe):
         return f"It ran in {row.get('region')} D{row.get('delay')} {row.get('universe')}."
     if row.get("fitness") is None:
@@ -664,7 +798,16 @@ def seed_row(row: dict[str, Any]) -> dict[str, Any]:
             for k in ("sharpe", "fitness", "turnover", "returns", "drawdown", "margin")
         },
         "score": round(score, 4) if math.isfinite(score) else None,
+        "limits": limits_of(checks_of(row.get("checks"))),
     }
+
+
+async def _download(state: Any, alpha_id: str) -> None:
+    """One Alpha's daily PnL, a failure logged rather than raised: it only costs a seed."""
+    try:
+        await state.backfill.fetch_pnl(alpha_id)
+    except Exception:
+        log.warning("ga.seed_pnl_failed", alpha_id=alpha_id, exc_info=True)
 
 
 async def auto_seeds(
@@ -678,36 +821,44 @@ async def auto_seeds(
 ) -> dict[str, Any]:
     """The best, mutually uncorrelated unsubmitted Alphas of a market, and why the rest were
     not chosen. Downloads daily PnL where missing; simulates nothing."""
-    rows = await state.catalog.query(
+    found = await state.catalog.query(
         f"""
         SELECT a.* FROM alpha a
         WHERE coalesce(a.instrument_type, 'EQUITY') = 'EQUITY'
           AND a.region = ? AND a.delay = ? AND a.universe = ?
-          AND NOT {SUBMITTED} AND {EVOLVABLE}
-          AND a.expression IS NOT NULL AND a.fitness IS NOT NULL AND a.sharpe > 0
+          AND NOT {SUBMITTED} AND {SEEDABLE} AND a.expression IS NOT NULL
         """,  # noqa: S608
         [region, delay, universe],
     )
+    # Region-agnostic parents stand as their families, which is where their Sharpe is.
+    stood = await state.alphas.with_families({str(r["alpha_id"]): r for r in found})
+    rows = [
+        r
+        for r in stood.values()
+        if (train_figure(r, "sharpe") or 0) > 0 and train_figure(r, "fitness") is not None
+    ]
     kept: list[dict[str, Any]] = []
-    kept_series: dict[str, Series] = {}
+    kept_series: dict[str, Profile] = {}
     reasons: list[dict[str, str]] = []
     examined = 0
-    for row in sorted(rows, key=seed_score, reverse=True):
+    # Off the event loop: a market holds tens of thousands, and each score parses its checks.
+    ranked = await asyncio.to_thread(lambda: sorted(rows, key=seed_score, reverse=True))
+    for row in ranked:
         if len(kept) >= want or examined >= MAX_EXAMINED:
             break
         examined += 1
         alpha_id = str(row["alpha_id"])
         problem = unreadable(row["expression"], market)
-        own: Series | None = None
+        own: Profile | None = None
         if problem is None:
-            days = (await state.alphas.train_pnl([alpha_id])).get(alpha_id)
-            if days is None:
-                try:
-                    await state.backfill.fetch_returns(alpha_id)
-                except Exception:
-                    log.warning("ga.seed_pnl_failed", alpha_id=alpha_id, exc_info=True)
-                days = (await state.alphas.train_pnl([alpha_id])).get(alpha_id)
-            own = series_of(days or {})
+            regions: dict[str, str] = row.get("region_series") or {str(row["region"]): alpha_id}
+            days = await state.alphas.train_pnl(list(regions.values()))
+            missing = [s for s in regions.values() if s not in days]
+            # A family's regions together: four at most, the width every BRAIN read here uses.
+            await asyncio.gather(*(_download(state, s) for s in missing))
+            if missing:
+                days = await state.alphas.train_pnl(list(regions.values()))
+            own = profile_of(regions, days)
             hit = await asyncio.to_thread(collision, own, kept_series) if own else None
             if own is None:
                 problem = "No usable daily PnL."

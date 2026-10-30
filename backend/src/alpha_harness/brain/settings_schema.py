@@ -9,12 +9,9 @@ or a dependency node keyed by the field it depends on::
 
     {"choices": {"instrumentType": {"EQUITY": {"region": {"USA": [ ...universes... ]}}}}}
 
-So the legal universes depend on the region, which depends on the instrument type
-(``docs/wqb-api/endpoints/simulations.md``). Hardcoding any of it would show users options
-their account cannot run.
+So the legal universes depend on the region, which depends on the instrument type.
+Hardcoding any of it would show users options their account cannot run.
 """
-
-from __future__ import annotations
 
 from typing import Any
 
@@ -95,6 +92,16 @@ def resolve_options(
             "max": node.get("maxValue"),
         }
     return resolved
+
+
+def chosen_labels(schema: dict[str, Any] | None, settings: dict[str, Any]) -> dict[str, str]:
+    """Each setting BRAIN offers as a choice, by the label of the value chosen."""
+    return {
+        name: str(choice["label"])
+        for name, field in resolve_options(schema or {}, settings).items()
+        for choice in field["choices"] or []
+        if choice.get("value") == settings.get(name) and choice.get("label") is not None
+    }
 
 
 def valid_values(schema: dict[str, Any], field: str, settings: dict[str, Any]) -> list[Any]:

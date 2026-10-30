@@ -4,8 +4,6 @@ Every BRAIN failure becomes an HTTP response in exactly one place, so business l
 raise typed exceptions and never touch ``HTTPException``.
 """
 
-from __future__ import annotations
-
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Any
 
@@ -26,7 +24,6 @@ from ..brain.errors import (
     BrainValidationError,
     BrainVerificationRequired,
 )
-from ..engine.lifecycle import SubmissionFailed
 from ..labs.objectives import StudyError, StudyNotFoundError
 from ..llm.keys import BudgetExhaustedError, LLMError, NoKeysError
 from ..state import AppState
@@ -57,7 +54,7 @@ def _problem(
     """
     return JSONResponse(
         status_code=status,
-        content={"error": {"code": code, "message": message, **extra}},
+        content={"detail": {"code": code, "message": message, **extra}},
     )
 
 
@@ -168,16 +165,6 @@ def install_exception_handlers(app: FastAPI) -> None:
             retryAfter=exc.retry_after,
         )
 
-    @app.exception_handler(SubmissionFailed)
-    async def _submission(_r: Request, exc: SubmissionFailed) -> JSONResponse:
-        return _problem(
-            422,
-            "submission_failed",
-            str(exc),
-            recordId=exc.record_id,
-            fields=exc.fields,
-        )
-
     @app.exception_handler(BudgetExhaustedError)
     async def _budget(_r: Request, exc: BudgetExhaustedError) -> JSONResponse:
         # A daily exhaustion is not retryable in any useful sense; a per-minute one is, so
@@ -190,6 +177,18 @@ def install_exception_handlers(app: FastAPI) -> None:
             retryAfter=round(exc.retry_after),
             model=exc.model,
             keys=[s.to_dict() for s in exc.states],
+        )
+
+    # Starlette answers anything unhandled with a bare "Internal Server Error", which leaves
+    # a bug report with nothing to go on. Naming the error is enough to find it; the
+    # traceback still reaches the log, since Starlette re-raises after this responds.
+    @app.exception_handler(Exception)
+    async def _unexpected(_r: Request, exc: Exception) -> JSONResponse:
+        return _problem(
+            500,
+            "internal_error",
+            "Alpha Harness hit an unexpected error.",
+            detail=f"{type(exc).__name__}: {exc}"[:500],
         )
 
     @app.exception_handler(BrainError)

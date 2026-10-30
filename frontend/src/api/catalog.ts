@@ -5,7 +5,7 @@
  */
 
 import type { components } from './generated'
-import { http } from './http'
+import { http, qs } from './http'
 import { type Scope, scopeQs } from './types'
 
 type Schemas = components['schemas']
@@ -22,8 +22,8 @@ export type FieldPage = Schemas['FieldPage']
 export type DataFieldDetail = Schemas['DataFieldDetail']
 export type FieldAvailabilityRow = Schemas['FieldAvailabilityRow']
 export type DatasetRow = Schemas['DatasetRow']
-export type PyramidCell = Schemas['PyramidCell']
 export type PyramidGridData = Schemas['PyramidGrid']
+export type FieldOutline = Schemas['FieldOutline']
 
 /** Unknown keys sort by alpha_count on the backend. */
 export type FieldSortKey =
@@ -60,16 +60,24 @@ export const catalog = {
   counts: (s: Scope) => http.get<CatalogCounts>(`${B}/counts${scopeQs(s)}`),
   stats: (s: Scope) => http.get<CatalogStats>(`${B}/stats${scopeQs(s)}`),
   /** Counts under every other active filter; each facet ignores its own selection. */
-  facets: (s: Scope, filter: FieldFilter) =>
-    http.post<CatalogFacets>(`${B}/facets${scopeQs(s)}`, filter),
-  fields: (s: Scope, filter: FieldFilter) =>
-    http.post<FieldPage>(`${B}/fields${scopeQs(s)}`, filter),
+  facets: (s: Scope, filter: FieldFilter, signal?: AbortSignal) =>
+    http.post<CatalogFacets>(`${B}/facets${scopeQs(s)}`, filter, signal),
+  fields: (s: Scope, filter: FieldFilter, signal?: AbortSignal) =>
+    http.post<FieldPage>(`${B}/fields${scopeQs(s)}`, filter, signal),
   field: (s: Scope, id: string) =>
     http.get<DataFieldDetail>(`${B}/fields/${encodeURIComponent(id)}${scopeQs(s)}`),
+  /** What a field is, from whichever market covers it best: for what is not market-bound. */
+  fieldAnywhere: (id: string) =>
+    http.get<DataFieldDetail>(`${B}/fields/${encodeURIComponent(id)}/anywhere`),
+  /** Fields named or described by ``search`` in any market, each once, the most used first. */
+  searchAnywhere: (search: string, limit = 40) =>
+    http.get<DataFieldRow[]>(`${B}/field-search${qs({ search, limit })}`),
   availability: (id: string) =>
     http.get<FieldAvailabilityRow[]>(`${B}/fields/${encodeURIComponent(id)}/availability`),
-  datasets: (s: Scope, search?: string) =>
-    http.get<DatasetRow[]>(`${B}/datasets${scopeQs(s, { search })}`),
+  datasets: (s: Scope) => http.get<DatasetRow[]>(`${B}/datasets${scopeQs(s)}`),
 
   pyramids: () => http.get<PyramidGridData>(`${B}/pyramids`),
+  /** The chosen fields as Category › Subcategory › Dataset › Field text, for an LLM. */
+  outline: (s: Scope, pick: { field_ids: string[] } | { dataset_ids: string[] }) =>
+    http.post<FieldOutline>(`${B}/fields/outline${scopeQs(s)}`, pick),
 }

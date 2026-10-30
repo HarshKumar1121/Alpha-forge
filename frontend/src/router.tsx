@@ -10,6 +10,7 @@ import {
   lazyRouteComponent,
   redirect,
 } from '@tanstack/react-router'
+import { MOD } from '@/shell/desktop'
 import { Shell } from '@/shell/shell'
 import { Button, Empty, ErrorNotice, Page, Panel } from '@/ui/kit'
 
@@ -35,17 +36,9 @@ const matrix = createRoute({
   component: lazyRouteComponent(() => import('@/screens/matrix'), 'MatrixScreen'),
 })
 
-const data = createRoute({ getParentRoute: () => root, path: '/data' })
-const dataIndex = createRoute({
-  getParentRoute: () => data,
-  path: '/',
-  beforeLoad: () => {
-    throw redirect({ to: '/data/$tab', params: { tab: 'fields' } })
-  },
-})
-const dataTab = createRoute({
-  getParentRoute: () => data,
-  path: '$tab',
+const data = createRoute({
+  getParentRoute: () => root,
+  path: '/data',
   component: lazyRouteComponent(() => import('@/screens/data'), 'DataScreen'),
 })
 
@@ -84,6 +77,14 @@ const powerPoolLab = createRoute({
     'PowerPoolLabScreen',
   ),
 })
+const superAlphaLab = createRoute({
+  getParentRoute: () => labs,
+  path: 'super-alpha',
+  component: lazyRouteComponent(
+    () => import('@/screens/research-labs/super-alpha'),
+    'SuperAlphaLabScreen',
+  ),
+})
 const tools = createRoute({ getParentRoute: () => root, path: '/tools' })
 const toolsIndex = createRoute({
   getParentRoute: () => tools,
@@ -104,18 +105,6 @@ const settingsSampler = createRoute({
   ),
 })
 
-const submissionPlanner = createRoute({
-  getParentRoute: () => tools,
-  path: 'submission-planner',
-  validateSearch: (search: Record<string, unknown>) => ({
-    task: typeof search['task'] === 'number' ? search['task'] : undefined,
-  }),
-  component: lazyRouteComponent(
-    () => import('@/screens/tools/submission-planner'),
-    'SubmissionPlannerScreen',
-  ),
-})
-
 const correlationBreaker = createRoute({
   getParentRoute: () => tools,
   path: 'correlation-breaker',
@@ -128,10 +117,27 @@ const correlationBreaker = createRoute({
   ),
 })
 
+const fieldsSampler = createRoute({
+  getParentRoute: () => tools,
+  path: 'fields-sampler',
+  validateSearch: (search: Record<string, unknown>) => ({
+    alpha: typeof search['alpha'] === 'string' ? search['alpha'] : undefined,
+  }),
+  component: lazyRouteComponent(
+    () => import('@/screens/tools/fields-sampler'),
+    'FieldsSamplerScreen',
+  ),
+})
+
 const tasks = createRoute({ getParentRoute: () => root, path: '/tasks' })
 const tasksIndex = createRoute({
   getParentRoute: () => tasks,
   path: '/',
+  // In the address, so a reload or the way back from a task's results lands where it was.
+  validateSearch: (search: Record<string, unknown>): { view?: 'submittable'; task?: number } => ({
+    ...(search['view'] === 'submittable' ? { view: 'submittable' as const } : {}),
+    ...(typeof search['task'] === 'number' ? { task: search['task'] } : {}),
+  }),
   component: lazyRouteComponent(() => import('@/screens/tasks'), 'TasksScreen'),
 })
 /** One task's whole result set, with room for the statistics the card cannot hold. */
@@ -185,6 +191,18 @@ const aiIndex = createRoute({
 const aiTab = createRoute({ getParentRoute: () => ai, path: '$tab' })
 const aiThread = createRoute({ getParentRoute: () => ai, path: 'assistant/$threadId' })
 
+const competitionsRoute = createRoute({
+  getParentRoute: () => root,
+  path: '/competitions',
+  component: lazyRouteComponent(() => import('@/screens/competitions'), 'CompetitionsScreen'),
+})
+
+const sync = createRoute({
+  getParentRoute: () => root,
+  path: '/sync',
+  component: lazyRouteComponent(() => import('@/screens/sync'), 'SyncScreen'),
+})
+
 const pyramids = createRoute({
   getParentRoute: () => root,
   path: '/pyramids',
@@ -195,15 +213,17 @@ const routeTree = root.addChildren([
   index,
   dashboard,
   matrix,
-  data.addChildren([dataIndex, dataTab]),
-  labs.addChildren([labsIndex, searchLab, templateLab, evolutionLab, powerPoolLab]),
-  tools.addChildren([toolsIndex, settingsSampler, submissionPlanner, correlationBreaker]),
+  data,
+  labs.addChildren([labsIndex, searchLab, templateLab, evolutionLab, powerPoolLab, superAlphaLab]),
+  tools.addChildren([toolsIndex, settingsSampler, correlationBreaker, fieldsSampler]),
+  competitionsRoute,
   tasks.addChildren([tasksIndex, taskResults]),
   pool.addChildren([poolIndex, poolTab]),
   portfolio,
   alpha,
   ai.addChildren([aiIndex, aiTab, aiThread]),
   pyramids,
+  sync,
 ])
 
 /** A screen that throws says so instead of going blank (CLAUDE.md anti-goal 3), and offers
@@ -222,7 +242,7 @@ function NotFound() {
     <Page>
       <Panel>
         <Empty title="There is no screen here">
-          Use the sidebar, or press ⌘K to go to a screen or lab.
+          Use the sidebar, or press {MOD}K to go to a screen or lab.
         </Empty>
       </Panel>
     </Page>

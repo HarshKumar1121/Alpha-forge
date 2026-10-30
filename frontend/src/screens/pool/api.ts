@@ -4,8 +4,10 @@
  * submits an alpha.
  */
 
+import { queryOptions } from '@tanstack/react-query'
 import type { components } from '@/api/generated'
 import { http, qs } from '@/api/http'
+import { PLATFORM_ALPHA_URL } from '@/api/platform'
 import type { AlphaCheck, Scope } from '@/api/types'
 
 export type AlphaMetricKey =
@@ -43,6 +45,7 @@ export type AlphaRow = Schemas['AlphaRow']
 export type AlphaPage = Schemas['AlphaPage']
 export type AlphaSettings = Schemas['AlphaSettings']
 export type AlphaDetail = Omit<Schemas['AlphaDetail'], 'checks'> & { checks: AlphaCheck[] }
+export type AlphaPnl = Schemas['AlphaPnl']
 export type SubmittableAlpha = Omit<Schemas['SubmittableAlpha'], 'checks'> & {
   checks: AlphaCheck[]
 }
@@ -63,8 +66,15 @@ export interface BrainCorrelation {
   [k: string]: unknown
 }
 
-export const BRAIN_ALPHA_URL = (alphaId: string) =>
-  `https://platform.worldquantbrain.com/alpha/${alphaId}`
+/**
+ * Singular. `/alphas/:id` is the Alpha *list* and its `:id` is a tab — `/alphas/unsubmitted`,
+ * `/alphas/lists`.
+ */
+export const BRAIN_ALPHA_URL = (alphaId: string) => `${PLATFORM_ALPHA_URL}${alphaId}`
+
+/** An Alpha ID, also from a BRAIN Alpha link pasted whole. */
+export const alphaIdOf = (text: string) =>
+  /worldquantbrain\.com\/alphas?\/([A-Za-z0-9]+)/.exec(text)?.[1] ?? text
 
 export const pool = {
   overview: () => http.get<VaultOverview>('/api/vault'),
@@ -74,18 +84,21 @@ export const pool = {
   query: (body: AlphaPageRequest) => http.post<AlphaPage>('/api/vault/alphas/query', body),
   detail: (alphaId: string) =>
     http.get<AlphaDetail>(`/api/vault/alphas/${encodeURIComponent(alphaId)}/detail`),
+  /** Downloads the daily PnL from BRAIN the first time, so it can take a while. */
+  pnl: (alphaId: string) =>
+    http.get<AlphaPnl>(`/api/vault/alphas/${encodeURIComponent(alphaId)}/pnl`),
   submittable: (scope: Scope, limit = 200) =>
     http.get<SubmittableResponse>(
       `/api/vault/submittable${qs({ region: scope.region, delay: scope.delay, universe: scope.universe, instrument_type: scope.instrumentType, limit })}`,
     ),
+  /** Every market at once: where an empty market points instead. */
+  everywhere: queryOptions({
+    queryKey: ['pool', 'submittable-count'],
+    queryFn: () => http.get<SubmittableResponse>('/api/vault/submittable?limit=1'),
+  }),
   /** Re-runs the submission checks on BRAIN without submitting. */
   check: (alphaId: string) =>
     http.get<{ is?: { checks?: AlphaCheck[] } }>(
       `/api/alphas/${encodeURIComponent(alphaId)}/check`,
-    ),
-  /** A slow, rate-limited BRAIN job. */
-  correlations: (alphaId: string, kind: 'self' | 'prod') =>
-    http.get<BrainCorrelation & { fetchedAt: string }>(
-      `/api/alphas/${encodeURIComponent(alphaId)}/correlations/${kind}`,
     ),
 }

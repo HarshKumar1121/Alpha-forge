@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import httpx2
 import pytest
 import pytest_asyncio
 from conftest import json_response
@@ -60,7 +60,7 @@ def altcha_challenge() -> dict[str, Any]:
 @pytest_asyncio.fixture
 async def db(tmp_path: Any) -> AsyncIterator[Database]:
     """A real SQLite database, thrown away with the test's tmp_path."""
-    database = Database.for_path(tmp_path / "harness.db")
+    database = Database(tmp_path / "harness.db")
     await database.create_all()
     yield database
     await database.dispose()
@@ -68,9 +68,7 @@ async def db(tmp_path: Any) -> AsyncIterator[Database]:
 
 def make_service(db: Database, handler: Any, sealer: Any) -> AuthService:
     """An ``AuthService`` wired exactly as ``AppState`` wires it, minus the network."""
-    client = BrainClient(
-        "https://brain.invalid", timeout=5.0, transport=httpx.MockTransport(handler)
-    )
+    client = BrainClient("https://brain.invalid", transport=httpx2.MockTransport(handler))
     endpoints = BrainEndpoints(client)
     return AuthService(db, sealer, endpoints, metadata=PlatformMetadata(db, endpoints))
 
@@ -79,7 +77,7 @@ def make_service(db: Database, handler: Any, sealer: Any) -> AuthService:
 def sealer(tmp_path: Any) -> Any:
     from alpha_harness.sealing import Sealer
 
-    return Sealer.from_path(tmp_path / "key")
+    return Sealer(tmp_path / "key")
 
 
 #: The cookie BRAIN sets on the step-up response and honours afterwards.
@@ -95,7 +93,7 @@ def step_up_then_accept() -> Any:
     would let the test pass with nothing saved at all.
     """
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         path = request.url.path
         carries_session = SESSION_COOKIE in request.headers.get("cookie", "")
 
@@ -103,7 +101,7 @@ def step_up_then_accept() -> Any:
             return json_response(altcha_challenge())
         if path == "/authentication" and request.method == "POST":
             # The step-up: a 401 carrying an inquiry, and the session cookie set alongside it.
-            return httpx.Response(
+            return httpx2.Response(
                 401,
                 json=PERSONA_401,
                 headers={"set-cookie": f"{SESSION_COOKIE}; Path=/"},
@@ -111,7 +109,7 @@ def step_up_then_accept() -> Any:
         if path == "/authentication/persona" and request.method == "POST":
             return json_response(AUTH_STATE)
         if path == "/authentication" and request.method == "GET":
-            return json_response(AUTH_STATE) if carries_session else httpx.Response(401)
+            return json_response(AUTH_STATE) if carries_session else httpx2.Response(401)
         if path == "/operators":
             return json_response(OPERATORS)
         if path.startswith("/users/"):
@@ -144,7 +142,6 @@ async def test_identity_check_signin_survives_a_restart(db: Database, sealer: An
         "a sign-in completed through BRAIN's identity check did not survive a restart"
     )
     assert restored.user_id == "AB12345"
-    assert restored.restored_from_cache is True
 
 
 async def test_the_paused_signin_stores_a_credential_to_hang_cookies_on(
@@ -169,7 +166,7 @@ async def test_a_wrong_password_is_still_never_stored(db: Database, sealer: Any)
     budget on every attempt.
     """
 
-    def refuses(request: httpx.Request) -> httpx.Response:
+    def refuses(request: httpx2.Request) -> httpx2.Response:
         if request.url.path == "/captcha":
             return json_response(altcha_challenge())
         if request.url.path == "/authentication":

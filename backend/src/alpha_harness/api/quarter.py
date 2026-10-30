@@ -1,36 +1,25 @@
 """The quarter BRAIN judges a consultant on.
 
-Levels are evaluated quarterly against three criteria, two of which are countable here
-(``docs/learn/consultant-information/brain-genius``): signals submitted in the quarter, and
-pyramids formulated in it. The third, combined Alpha performance, is BRAIN's own arithmetic
-and is not guessed at.
+Levels are evaluated quarterly against three criteria, two of which are countable here:
+signals submitted in the quarter, and pyramids formulated in it. The third, combined Alpha
+performance, is BRAIN's own arithmetic and is not guessed at.
 """
 
-from __future__ import annotations
-
 import asyncio
-from datetime import UTC, date, datetime, timedelta
+from datetime import datetime, timedelta
 
 import structlog
 from fastapi import APIRouter
 
+from ..brain.filters import PLATFORM_TZ
+from ..brain.platform import PYRAMID_MIN_ALPHAS
+from ..catalog.pyramids import next_quarter_start, quarter_start
 from ..schemas import Out
 from .deps import State
 
 log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/quarter", tags=["quarter"])
-
-#: "A consultant is considered to have formulated a pyramid if they have submitted a minimum
-#: of 3 Alphas in it" — ``docs/learn/consultant-information/brain-genius``.
-ALPHAS_PER_PYRAMID = 3
-
-
-def quarter_bounds(today: date) -> tuple[date, date]:
-    """The calendar quarter ``today`` falls in, both ends inclusive."""
-    first = date(today.year, 3 * ((today.month - 1) // 3) + 1, 1)
-    year, month = (first.year + 1, 1) if first.month == 10 else (first.year, first.month + 3)
-    return first, date(year, month, 1) - timedelta(days=1)
 
 
 class QuarterStanding(Out):
@@ -40,7 +29,7 @@ class QuarterStanding(Out):
     end: str
     #: Alphas submitted inside the quarter, summed from BRAIN's own daily counts.
     submitted: int
-    #: Pyramids with at least :data:`ALPHAS_PER_PYRAMID` submitted Alphas in them.
+    #: Pyramids with at least :data:`PYRAMID_MIN_ALPHAS` submitted Alphas in them.
     pyramids_formulated: int
     #: Pyramids with at least one submitted Alpha but not yet enough to count.
     pyramids_started: int
@@ -56,10 +45,15 @@ async def standing(state: State) -> QuarterStanding:
     many pyramids as it has data categories, so the pyramid counts sum to more than the
     number of Alphas and cannot stand in for it.
     """
-    start, end = quarter_bounds(datetime.now(UTC).date())
+    # BRAIN's day, as the Pyramids screen counts it: a UTC date starts the next quarter hours early.
+    today = datetime.now(PLATFORM_TZ).date()
+    after = next_quarter_start(today)
+    # Both ends inclusive.
+    start, end = quarter_start(today), after - timedelta(days=1)
     days, pyramids = await asyncio.gather(
         state.endpoints.submission_activity(),
-        state.endpoints.pyramid_alphas(start.isoformat(), end.isoformat()),
+        # BRAIN's own site asks up to the day after the quarter, so its last day counts.
+        state.endpoints.pyramid_alphas(start.isoformat(), after.isoformat()),
         return_exceptions=True,
     )
     if isinstance(days, BaseException):
@@ -77,7 +71,7 @@ async def standing(state: State) -> QuarterStanding:
         start=first,
         end=last,
         submitted=submitted,
-        pyramids_formulated=sum(1 for n in counts if n >= ALPHAS_PER_PYRAMID),
-        pyramids_started=sum(1 for n in counts if 0 < n < ALPHAS_PER_PYRAMID),
-        alphas_per_pyramid=ALPHAS_PER_PYRAMID,
+        pyramids_formulated=sum(1 for n in counts if n >= PYRAMID_MIN_ALPHAS),
+        pyramids_started=sum(1 for n in counts if 0 < n < PYRAMID_MIN_ALPHAS),
+        alphas_per_pyramid=PYRAMID_MIN_ALPHAS,
     )

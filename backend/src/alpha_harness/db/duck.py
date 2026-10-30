@@ -10,25 +10,25 @@ serialised behind a lock, all off the event loop. Reads take their own cursor in
 MVCC lets run beside a write, so a long correlation read never stalls a sync.
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import re
+import time
 from typing import TYPE_CHECKING, Any
 
 import duckdb
 import pyarrow as pa
 import structlog
 
+from ..brain.platform import REGION_AGNOSTIC_REGION
+
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator
     from pathlib import Path
 
 log = structlog.get_logger(__name__)
 
-# One row per field per (instrumentType, region, delay, universe). The composite key is
-# what makes availability checks and set operations a single indexed scan.
+# One row per field per (instrumentType, region, delay, universe).
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS data_field (
     field_id          VARCHAR NOT NULL,
@@ -76,31 +76,11 @@ CREATE TABLE IF NOT EXISTS data_set (
     PRIMARY KEY (dataset_id, instrument_type, region, delay, universe)
 );
 
-CREATE TABLE IF NOT EXISTS data_category (
-    category_id       VARCHAR NOT NULL,
-    name              VARCHAR,
-    parent_id         VARCHAR,
-    dataset_count     INTEGER,
-    field_count       INTEGER,
-    value_score       DOUBLE,
-    instrument_type   VARCHAR NOT NULL,
-    region            VARCHAR NOT NULL,
-    delay             INTEGER NOT NULL,
-    universe          VARCHAR NOT NULL,
-    synced_at         TIMESTAMP,
-    PRIMARY KEY (category_id, instrument_type, region, delay, universe)
-);
-
 -- Only region ALL sends it: how many regions hold the field, which is what says whether it
 -- can survive a region-agnostic simulation's intersection of regions.
 ALTER TABLE data_field ADD COLUMN IF NOT EXISTS region_coverage INTEGER;
 ALTER TABLE data_field ADD COLUMN IF NOT EXISTS date_coverage DOUBLE;
 ALTER TABLE data_field ADD COLUMN IF NOT EXISTS date_created DATE;
-
-CREATE INDEX IF NOT EXISTS ix_field_tuple
-    ON data_field (instrument_type, region, delay, universe);
-CREATE INDEX IF NOT EXISTS ix_set_tuple
-    ON data_set (instrument_type, region, delay, universe);
 
 -- Every alpha ever simulated, and its daily profit-and-loss series. Here rather than in
 -- SQLite because pairwise correlation over ~2,500 daily values per alpha is a columnar
@@ -147,9 +127,16 @@ ALTER TABLE alpha ADD COLUMN IF NOT EXISTS test_start DATE;
 -- pyramids ("ASI/D1/OTHER") are JSON arrays of names; an empty array means "none".
 ALTER TABLE alpha ADD COLUMN IF NOT EXISTS max_trade VARCHAR;
 ALTER TABLE alpha ADD COLUMN IF NOT EXISTS max_position VARCHAR;
+-- The rest of the Simulation Settings BRAIN lists, for copying an Alpha out as BRAIN shows it.
+ALTER TABLE alpha ADD COLUMN IF NOT EXISTS language VARCHAR;
+ALTER TABLE alpha ADD COLUMN IF NOT EXISTS pasteurization VARCHAR;
+ALTER TABLE alpha ADD COLUMN IF NOT EXISTS nan_handling VARCHAR;
 -- Quick mode alphas carry every performance metric and none of the submission checks,
 -- so nothing in `checks` reveals that BRAIN will never take one.
 ALTER TABLE alpha ADD COLUMN IF NOT EXISTS simulation_mode VARCHAR;
+-- A submitted Alpha's own Production and Self-Correlation, as BRAIN lists it.
+ALTER TABLE alpha ADD COLUMN IF NOT EXISTS prod_correlation DOUBLE;
+ALTER TABLE alpha ADD COLUMN IF NOT EXISTS self_correlation DOUBLE;
 ALTER TABLE alpha ADD COLUMN IF NOT EXISTS tags VARCHAR;
 ALTER TABLE alpha ADD COLUMN IF NOT EXISTS classifications VARCHAR;
 ALTER TABLE alpha ADD COLUMN IF NOT EXISTS pyramids VARCHAR;
@@ -159,13 +146,12 @@ ALTER TABLE alpha ADD COLUMN IF NOT EXISTS end_date DATE;
 ALTER TABLE alpha ADD COLUMN IF NOT EXISTS test_turnover DOUBLE;
 -- How the stored daily series was built (``vault.store.SERIES_VERSION``); older ones are refetched.
 ALTER TABLE alpha ADD COLUMN IF NOT EXISTS series_version INTEGER;
--- In-sample figures rebuilt from the stored series (final days included), kept so the Portfolio
--- list need not read every series. Apart from BRAIN's own, which a listing overwrites.
--- An older database still carries `series_sharpe` and its five siblings, rebuilt locally
--- from the stored series before the Portfolio page read BRAIN's own per-Alpha figures, and
--- `k_ratio`. Nothing reads or writes any of them now; they stay because DuckDB refuses to
--- drop a column from a table an index depends on, and rebuilding this one to tidy seven
--- unread doubles would cost far more than it saves.
+-- The same, for a daily PnL stored without its turnover: enough to correlate, not to cost.
+ALTER TABLE alpha ADD COLUMN IF NOT EXISTS pnl_version INTEGER;
+-- The Sharpe after 5 bps of trading cost (``vault.metrics.after_cost_sharpe``), worked out when
+-- the series is stored so a table of a thousand Alphas need not read a thousand series to show
+-- it. A new column rather than a rewrite of an earlier form, so startup rebuilds every value.
+ALTER TABLE alpha ADD COLUMN IF NOT EXISTS after_cost_5bps DOUBLE;
 DROP TABLE IF EXISTS k_ratio_2003;
 
 -- One row per alpha per trading day. ~2,500 rows per alpha.
@@ -179,10 +165,25 @@ CREATE TABLE IF NOT EXISTS alpha_pnl (
 -- is re-fetched: the old daily-pnl recordset is rounded separately from the platform's stats.
 ALTER TABLE alpha_pnl ADD COLUMN IF NOT EXISTS turnover DOUBLE;
 
-CREATE INDEX IF NOT EXISTS ix_alpha_scope
-    ON alpha (instrument_type, region, delay, universe);
-CREATE INDEX IF NOT EXISTS ix_alpha_sharpe ON alpha (sharpe);
-CREATE INDEX IF NOT EXISTS ix_pnl_date ON alpha_pnl (date);
+-- Measured: no read here was faster with these, every write was slower, and while one exists
+-- DuckDB refuses to drop a column from its table.
+DROP INDEX IF EXISTS ix_field_tuple;
+DROP INDEX IF EXISTS ix_set_tuple;
+DROP INDEX IF EXISTS ix_alpha_scope;
+DROP INDEX IF EXISTS ix_alpha_sharpe;
+DROP INDEX IF EXISTS ix_pnl_date;
+-- Figures earlier versions kept on the row, which nothing reads now.
+ALTER TABLE alpha DROP COLUMN IF EXISTS k_ratio;
+ALTER TABLE alpha DROP COLUMN IF EXISTS series_sharpe;
+ALTER TABLE alpha DROP COLUMN IF EXISTS series_turnover;
+ALTER TABLE alpha DROP COLUMN IF EXISTS series_fitness;
+ALTER TABLE alpha DROP COLUMN IF EXISTS series_returns;
+ALTER TABLE alpha DROP COLUMN IF EXISTS series_drawdown;
+ALTER TABLE alpha DROP COLUMN IF EXISTS series_margin;
+ALTER TABLE alpha DROP COLUMN IF EXISTS after_cost_ic;
+ALTER TABLE alpha DROP COLUMN IF EXISTS after_cost_ir;
+ALTER TABLE alpha DROP COLUMN IF EXISTS after_cost_sharpe;
+ALTER TABLE alpha DROP COLUMN IF EXISTS after_cost_t10;
 """
 
 FIELD_COLUMNS = (
@@ -231,20 +232,6 @@ DATASET_COLUMNS = (
     "synced_at",
 )
 
-CATEGORY_COLUMNS = (
-    "category_id",
-    "name",
-    "parent_id",
-    "dataset_count",
-    "field_count",
-    "value_score",
-    "instrument_type",
-    "region",
-    "delay",
-    "universe",
-    "synced_at",
-)
-
 ALPHA_COLUMNS = (
     "alpha_id",
     "expression",
@@ -281,6 +268,11 @@ ALPHA_COLUMNS = (
     "is_pnl",
     "end_date",
     "simulation_mode",
+    "prod_correlation",
+    "self_correlation",
+    "language",
+    "pasteurization",
+    "nan_handling",
 )
 
 #: Written only with an Alpha that has a ``train`` block (see ``AlphaVault.save_alphas``).
@@ -297,174 +289,49 @@ PNL_COLUMNS = ("alpha_id", "date", "pnl", "turnover")
 
 _KEYS = {
     "data_set": ("dataset_id", "instrument_type", "region", "delay", "universe"),
-    "data_category": ("category_id", "instrument_type", "region", "delay", "universe"),
     "alpha": ("alpha_id",),
     "alpha_pnl": ("alpha_id", "date"),
 }
 
-# Explicit Arrow types per column, matching the DuckDB schema above.
-#
-# Writes go through Arrow rather than SQL parameter binding, which was the bottleneck on
-# large batches by three orders of magnitude. The types are stated rather than inferred
-# because a column that happens to be all NULL in one page would otherwise infer as
-# Arrow's null type and fail to insert into a typed column.
-_STR = pa.string()
-_F64 = pa.float64()
-_I32 = pa.int32()
-_TS = pa.timestamp("us", tz="UTC")
-_DATE = pa.date32()
-
-ARROW_TYPES: dict[str, dict[str, pa.DataType]] = {
-    "data_field": {
-        "field_id": _STR,
-        "dataset_id": _STR,
-        "category_id": _STR,
-        "category_name": _STR,
-        "subcategory_id": _STR,
-        "subcategory_name": _STR,
-        "description": _STR,
-        "field_type": _STR,
-        "coverage": _F64,
-        "date_coverage": _F64,
-        "user_count": _I32,
-        "alpha_count": _I32,
-        "pyramid_multiplier": _F64,
-        "themes": _STR,
-        "date_created": _DATE,
-        "region_coverage": _I32,
-        "instrument_type": _STR,
-        "region": _STR,
-        "delay": _I32,
-        "universe": _STR,
-        "synced_at": _TS,
-    },
-    "data_set": {
-        "dataset_id": _STR,
-        "name": _STR,
-        "description": _STR,
-        "category_id": _STR,
-        "category_name": _STR,
-        "subcategory_id": _STR,
-        "subcategory_name": _STR,
-        "coverage": _F64,
-        "value_score": _F64,
-        "user_count": _I32,
-        "alpha_count": _I32,
-        "field_count": _I32,
-        "pyramid_multiplier": _F64,
-        "themes": _STR,
-        "instrument_type": _STR,
-        "region": _STR,
-        "delay": _I32,
-        "universe": _STR,
-        "synced_at": _TS,
-    },
-    "alpha": {
-        "alpha_id": _STR,
-        "expression": _STR,
-        "sim_type": _STR,
-        "instrument_type": _STR,
-        "region": _STR,
-        "delay": _I32,
-        "universe": _STR,
-        "neutralization": _STR,
-        "decay": _I32,
-        "truncation": _F64,
-        "sharpe": _F64,
-        "fitness": _F64,
-        "turnover": _F64,
-        "returns": _F64,
-        "drawdown": _F64,
-        "margin": _F64,
-        "long_count": _I32,
-        "short_count": _I32,
-        "grade": _STR,
-        "stage": _STR,
-        "status": _STR,
-        "operator_count": _I32,
-        "date_created": _TS,
-        "checks": _STR,
-        "fetched_at": _TS,
-        "name": _STR,
-        "date_submitted": _TS,
-        "train_sharpe": _F64,
-        "train_fitness": _F64,
-        "test_sharpe": _F64,
-        "test_fitness": _F64,
-        "test_start": _DATE,
-        "max_trade": _STR,
-        "max_position": _STR,
-        "tags": _STR,
-        "classifications": _STR,
-        "pyramids": _STR,
-        "is_pnl": _F64,
-        "end_date": _DATE,
-        "simulation_mode": _STR,
-        "test_turnover": _F64,
-        "series_version": _I32,
-    },
-    "alpha_pnl": {
-        "alpha_id": _STR,
-        "date": _DATE,
-        "pnl": _F64,
-        "turnover": _F64,
-    },
-    "data_category": {
-        "category_id": _STR,
-        "name": _STR,
-        "parent_id": _STR,
-        "dataset_count": _I32,
-        "field_count": _I32,
-        "value_score": _F64,
-        "instrument_type": _STR,
-        "region": _STR,
-        "delay": _I32,
-        "universe": _STR,
-        "synced_at": _TS,
-    },
+#: Writes go through Arrow rather than SQL parameter binding, which was the bottleneck on
+#: large batches by three orders of magnitude. Each column's Arrow type follows its DuckDB
+#: type, read off the schema when the catalog opens, rather than inferred: a column that
+#: happens to be all NULL in one batch would otherwise infer as Arrow's null type and fail to
+#: insert into a typed column.
+_ARROW: dict[str, pa.DataType] = {
+    "VARCHAR": pa.string(),
+    "DOUBLE": pa.float64(),
+    "INTEGER": pa.int32(),
+    "DATE": pa.date32(),
+    "TIMESTAMP": pa.timestamp("us", tz="UTC"),
 }
+
+#: The relation a bulk load is registered as while its statements read from it.
+_INCOMING = "_incoming"
 
 
 def _upsert_sql(
-    table: str, columns: tuple[str, ...], source: str, *, overwrite: bool = True
+    table: str, columns: tuple[str, ...], *, overwrite: bool, keep: tuple[str, ...] = ()
 ) -> str:
-    """``INSERT ... SELECT`` from a registered Arrow relation, with upsert semantics.
+    """``INSERT ... SELECT`` from the loaded Arrow relation, with upsert semantics.
 
     ``overwrite=False`` inserts only keys not stored yet and leaves existing rows untouched.
+    ``keep`` columns are written for a new row, but an existing row keeps a value it has.
     """
     key = _KEYS[table]
     column_list = ", ".join(columns)
     insert = (
-        f"INSERT INTO {table} ({column_list}) SELECT {column_list} FROM {source} "  # noqa: S608
+        f"INSERT INTO {table} ({column_list}) SELECT {column_list} FROM {_INCOMING} "  # noqa: S608
         f"ON CONFLICT ({', '.join(key)}) "
     )
     if not overwrite:
         return insert + "DO NOTHING"
-    updates = ", ".join(f"{c} = excluded.{c}" for c in columns if c not in key)
-    return insert + f"DO UPDATE SET {updates}"
-
-
-def _to_arrow(table: str, columns: tuple[str, ...], rows: list[tuple[Any, ...]]) -> pa.Table:
-    """Transpose row tuples into a typed Arrow table."""
-    types = ARROW_TYPES[table]
-    transposed = list(zip(*rows, strict=True))
-    return pa.table(
-        {
-            name: pa.array(values, type=types[name])
-            for name, values in zip(columns, transposed, strict=True)
-        }
+    updates = ", ".join(
+        f"{c} = COALESCE({table}.{c}, excluded.{c})" if c in keep else f"{c} = excluded.{c}"
+        for c in columns
+        if c not in key
     )
-
-
-#: Indexes the swap has to put back; the primary key deliberately is not one of them.
-_FIELD_INDEXES = (
-    "CREATE INDEX IF NOT EXISTS ix_field_tuple ON data_field "
-    "(instrument_type, region, delay, universe)",
-)
-
-#: Dropped on upgrade: each cost about eight times the write, and reads are within
-#: milliseconds without them because DuckDB scans columns rather than walking an index.
-_SPENT_FIELD_INDEXES = ("ix_field_dataset", "ix_field_category", "ix_field_id")
+    return insert + f"DO UPDATE SET {updates}"
 
 
 #: Restored after a rebuild: ``CREATE TABLE ... AS SELECT`` copies types but not
@@ -472,52 +339,16 @@ _SPENT_FIELD_INDEXES = ("ix_field_dataset", "ix_field_category", "ix_field_id")
 _FIELD_NOT_NULL = ("field_id", "instrument_type", "region", "delay", "universe")
 
 
-def _rebuild_field_table(conn: duckdb.DuckDBPyConnection, tmp: str) -> None:
-    """Swap ``data_field`` for a fresh copy of itself, inside one transaction.
-
-    Both callers want the same thing for different reasons: dropping a constraint DuckDB
-    cannot drop in place, and packing rows back into dense row groups.
-    """
+@contextlib.contextmanager
+def _transaction(conn: duckdb.DuckDBPyConnection) -> Generator[None]:
+    """One transaction: committed when the block finishes, rolled back when it raises."""
     conn.execute("BEGIN TRANSACTION")
     try:
-        conn.execute(f"CREATE TABLE {tmp} AS SELECT * FROM data_field")  # noqa: S608
-        conn.execute("DROP TABLE data_field")
-        conn.execute(f"ALTER TABLE {tmp} RENAME TO data_field")
-        for column in _FIELD_NOT_NULL:
-            conn.execute(f"ALTER TABLE data_field ALTER COLUMN {column} SET NOT NULL")
-        for statement in _FIELD_INDEXES:
-            conn.execute(statement)
+        yield
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
         raise
-    conn.execute("CHECKPOINT")
-
-
-def _drop_field_key(conn: duckdb.DuckDBPyConnection) -> None:
-    """Take the primary key off ``data_field`` on a catalog that still has one.
-
-    A scope is deleted and rewritten whole, so uniqueness never needed enforcing, and the
-    key charged for it twice: maintaining the index on every write, and leaving dead rows
-    that made each sync slower than the one before. DuckDB cannot drop a key in place, so
-    the table is swapped inside a transaction — a failure rolls back onto the original.
-    """
-    keyed = conn.execute(
-        "SELECT count(*) FROM duckdb_constraints() "
-        "WHERE table_name = 'data_field' AND constraint_type = 'PRIMARY KEY'"
-    ).fetchone()
-    if not keyed or not keyed[0]:
-        return
-
-    log.info("catalog.dropping_field_key")
-    _rebuild_field_table(conn, "data_field_rebuilt")
-    log.info("catalog.field_key_dropped")
-
-
-def _drop_spent_indexes(conn: duckdb.DuckDBPyConnection) -> None:
-    """Remove the secondary indexes on ``data_field`` that only ever slowed writes."""
-    for name in _SPENT_FIELD_INDEXES:
-        conn.execute(f"DROP INDEX IF EXISTS {name}")
 
 
 class CatalogUnusableError(RuntimeError):
@@ -526,6 +357,16 @@ class CatalogUnusableError(RuntimeError):
     Raised so a caller stops rather than retrying: once the database is invalidated every
     later statement fails the same way.
     """
+
+
+#: The share of the machine's memory the catalog may hold, and the share DuckDB takes unasked.
+MEMORY_SHARE = 0.25
+DUCKDB_DEFAULT_SHARE = 0.8
+#: What DuckDB's error says, whatever its type, when the write-ahead log will not replay.
+WAL_UNREPLAYABLE = "Failure while replaying WAL"
+#: What DuckDB's fatal error says when a table's key index has lost track of its rows. Every
+#: write to those rows then fails the same way, so the table is rebuilt (:meth:`Catalog.upsert`).
+INDEX_DESYNC = "Failed to delete all rows from index"
 
 
 class CatalogLockedError(RuntimeError):
@@ -550,23 +391,16 @@ class CatalogLockedError(RuntimeError):
 
 
 def _load_fts(conn: duckdb.DuckDBPyConnection) -> bool:
-    """Whether full-text search can be used at all.
+    """Whether full-text search can be used: ``fts`` is on disk and loads.
 
-    DuckDB ships ``fts`` from its repository rather than statically, so the first
-    ``INSTALL`` needs a network. Loading is tried first, because once the extension is on
-    disk that is the whole job and ``INSTALL`` is a registry round trip for nothing. A
-    machine that has never had a network keeps substring search, which is worse but not
-    broken — so this reports rather than raises.
+    DuckDB ships ``fts`` from its repository rather than statically, and fetching it is
+    :meth:`Catalog.install_fts`'s job, never opening's. A machine that cannot reach the
+    repository keeps substring search, which is worse but not broken.
     """
     try:
         conn.execute("LOAD fts")
     except duckdb.Error:
-        try:
-            conn.execute("INSTALL fts")
-            conn.execute("LOAD fts")
-        except Exception:
-            log.info("catalog.fts_unavailable", exc_info=True)
-            return False
+        return False
     return True
 
 
@@ -583,34 +417,82 @@ class Catalog:
         self._closing = False
         #: Whether full-text search is available; see :func:`_load_fts`.
         self.fts = False
+        #: Table -> column -> Arrow type, read off the schema on open; see :data:`_ARROW`.
+        self._types: dict[str, dict[str, pa.DataType]] = {}
 
     async def open(self) -> None:
-        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         await asyncio.to_thread(self._open_sync)
         log.info("catalog.opened", path=str(self.path))
 
     def _open_sync(self) -> None:
         try:
-            # DuckDB's zone otherwise defaults to the machine's, shifting every stored
-            # time by the local offset. Set here, not with SET, so read cursors get it too.
-            self._conn = duckdb.connect(str(self.path), config={"TimeZone": "UTC"})
+            self._conn = self._connect()
+        except duckdb.Error as exc:
+            if WAL_UNREPLAYABLE not in str(exc):
+                raise
+            # A write-ahead log DuckDB cannot replay keeps the catalog shut on every start.
+            # What it holds is all re-downloadable, so it is set aside, kept for a look, and
+            # the catalog opens as it was last checkpointed.
+            wal = self.path.with_name(f"{self.path.name}.wal")
+            aside = wal.with_name(f"{wal.name}.unreplayable-{time.strftime('%Y%m%d%H%M%S')}")
+            wal.rename(aside)
+            log.warning("catalog.wal_set_aside", path=str(aside), error=str(exc)[:500])
+            self._conn = self._connect()
+        # DuckDB's zone otherwise defaults to the machine's, shifting every stored time by the
+        # local offset. GLOBAL, so read cursors get it too. Never as a ``connect`` option: that
+        # makes DuckDB download its time zone extension before loading the one built in, and
+        # where the download is blocked the catalog does not open at all.
+        self._conn.execute("SET GLOBAL TimeZone = 'UTC'")
+        # DuckDB keeps what it reads up to 80% of the machine's memory, which on a long run
+        # reads as a leak. Scaled from its own figure, in its own unit, so nothing here has to
+        # measure the machine; reset first so a reopen does not shrink it twice.
+        self._conn.execute("RESET GLOBAL memory_limit")
+        row = self._conn.execute("SELECT current_setting('memory_limit')").fetchone()
+        if row is not None:
+            amount, unit = str(row[0]).split()
+            share = float(amount) * MEMORY_SHARE / DUCKDB_DEFAULT_SHARE
+            self._conn.execute(f"SET GLOBAL memory_limit = '{share:.1f} {unit}'")
+        self._conn.execute(SCHEMA)
+        for table, column, kind in self._conn.execute(
+            "SELECT table_name, column_name, data_type FROM duckdb_columns() "
+            "WHERE schema_name = 'main'"
+        ).fetchall():
+            if kind in _ARROW:
+                self._types.setdefault(table, {})[column] = _ARROW[kind]
+        self.fts = _load_fts(self._conn)
+
+    def _connect(self) -> duckdb.DuckDBPyConnection:
+        try:
+            return duckdb.connect(str(self.path))
         except duckdb.IOException as exc:
             # DuckDB is single-writer, so a second backend is the likely cause. The raw
             # exception is a wall of text ending in a URL; say the useful thing instead.
             if "lock" not in str(exc).lower():
                 raise
             raise CatalogLockedError(self.path, str(exc)) from exc
-        self._conn.execute(SCHEMA)
-        _drop_field_key(self._conn)
-        _drop_spent_indexes(self._conn)
-        self.fts = _load_fts(self._conn)
+
+    async def install_fts(self) -> bool:
+        """Download ``fts`` from DuckDB's repository, then load it. Whether search can use it.
+
+        On a scratch connection, so the download holds no lock: where the repository is
+        blocked, DuckDB retries for up to a couple of minutes before it gives up.
+        """
+
+        def download() -> None:
+            with duckdb.connect() as scratch:
+                scratch.execute("INSTALL fts")
+
+        try:
+            await asyncio.to_thread(download)
+        except duckdb.Error:
+            log.info("catalog.fts_unavailable", exc_info=True)
+            return False
+        self.fts = await self._locked(_load_fts, self._require())
+        return self.fts
 
     async def execute(self, sql: str, params: list[Any] | None = None) -> None:
         """Run one statement. For DDL and small writes; bulk loads go through Arrow."""
-        await self._locked(self._execute_sync, sql, params or [])
-
-    def _execute_sync(self, sql: str, params: list[Any]) -> None:
-        self._require().execute(sql, params)
+        await self._locked(lambda: self._require().execute(sql, params or []))
 
     async def close(self) -> None:
         """Refuse new reads, then let in-flight writes and reads finish before closing."""
@@ -640,7 +522,46 @@ class Catalog:
                     await work
                 raise
             except duckdb.FatalException as exc:
+                # DuckDB refuses everything after a fatal error until the database is opened
+                # again, so it is reopened here: one failed write must not fail every later one.
+                await asyncio.to_thread(self._reopen_sync)
                 raise CatalogUnusableError(str(exc)) from exc
+
+    def _reopen_sync(self) -> None:
+        conn, self._conn = self._conn, None
+        if conn is not None:
+            with contextlib.suppress(Exception):
+                conn.close()
+        self._open_sync()
+        log.warning("catalog.reopened_after_fatal")
+
+    def _rebuild_sync(self, table: str) -> None:
+        """``table`` copied out and back in, so its key index is built afresh from its rows.
+
+        One transaction, so a crash part-way leaves the table as it was.
+        """
+        conn = self._require()
+        kept = f"{table}__kept"
+        key = ", ".join(_KEYS[table])
+        with _transaction(conn):
+            # Every name is a module constant: a table in _KEYS and its key columns.
+            copy = f"CREATE OR REPLACE TABLE {kept} AS SELECT DISTINCT ON ({key}) * FROM {table}"  # noqa: S608
+            conn.execute(copy)
+            conn.execute(f"DROP TABLE {table}")
+            conn.execute(SCHEMA)
+            # Only the columns both tables have: one the old table still carried has nowhere
+            # to go, and naming it fails the whole repair.
+            listed = (
+                "SELECT column_name FROM duckdb_columns() "
+                "WHERE schema_name = 'main' AND table_name = ? ORDER BY column_index"
+            )
+            held = {name for (name,) in conn.execute(listed, [kept]).fetchall()}
+            columns = ", ".join(
+                name for (name,) in conn.execute(listed, [table]).fetchall() if name in held
+            )
+            conn.execute(f"INSERT INTO {table} ({columns}) SELECT {columns} FROM {kept}")  # noqa: S608
+            conn.execute(f"DROP TABLE {kept}")
+        conn.execute("CHECKPOINT")
 
     def _require(self) -> duckdb.DuckDBPyConnection:
         if self._conn is None:
@@ -651,9 +572,16 @@ class Catalog:
 
     async def query(self, sql: str, params: list[Any] | None = None) -> list[dict[str, Any]]:
         """Run a read query and return rows as dicts. Does not wait for writes."""
+        return await self._read(self._query_sync, sql, params or [])
+
+    async def arrow(self, sql: str, params: list[Any] | None = None) -> pa.Table:
+        """:meth:`query` as an Arrow table, for results too large for a Python object per row."""
+        return await self._read(self._arrow_sync, sql, params or [])
+
+    async def _read[T](self, fn: Callable[[str, list[Any]], T], sql: str, params: list[Any]) -> T:
         if self._closing or self._conn is None:
             raise RuntimeError("Catalog is closed or shutting down")
-        work = asyncio.ensure_future(asyncio.to_thread(self._query_sync, sql, params or []))
+        work = asyncio.ensure_future(asyncio.to_thread(fn, sql, params))
         self._reads.add(work)
         work.add_done_callback(self._reads.discard)
         return await asyncio.shield(work)
@@ -663,6 +591,10 @@ class Catalog:
             cur.execute(sql, params)
             columns = [d[0] for d in cur.description or []]
             return [dict(zip(columns, row, strict=True)) for row in cur.fetchall()]
+
+    def _arrow_sync(self, sql: str, params: list[Any]) -> pa.Table:
+        with self._require().cursor() as cur:
+            return cur.execute(sql, params).to_arrow_table()
 
     async def scalar(self, sql: str, params: list[Any] | None = None) -> Any:
         rows = await self.query(sql, params)
@@ -679,35 +611,55 @@ class Catalog:
         rows: list[tuple[Any, ...]],
         *,
         overwrite: bool = True,
+        keep: tuple[str, ...] = (),
     ) -> int:
         """Insert or update a batch. Returns the number of rows written.
 
-        Goes through Arrow — see :data:`ARROW_TYPES` for why. Re-syncing the same scope
-        updates rows in place rather than duplicating them; ``overwrite=False`` only adds
-        rows whose key is new.
+        Goes through Arrow — see :data:`_ARROW` for why. Re-syncing the same scope updates
+        rows in place rather than duplicating them; ``overwrite=False`` only adds rows whose
+        key is new, and ``keep`` columns keep a value an existing row already has.
         """
         if not rows:
             return 0
-        await self._locked(self._upsert_sync, table, columns, rows, overwrite)
+        # Built before the lock, as replace_fields does: no writer waits on the conversion.
+        batch = await asyncio.to_thread(self._to_arrow, table, columns, rows)
+        statement = (_upsert_sql(table, columns, overwrite=overwrite, keep=keep), [])
+        try:
+            await self._locked(self._load, batch, statement)
+        except CatalogUnusableError as exc:
+            if INDEX_DESYNC not in str(exc):
+                raise
+            # Reported on a live vault: DuckDB's index for the table no longer matched its
+            # rows, and every save of those Alphas failed the whole catalog. Rebuilt from its
+            # own rows, the index is whole again, and the write is tried once more.
+            log.warning("catalog.index_rebuilt", table=table, error=str(exc)[:300])
+            await self._locked(self._rebuild_sync, table)
+            await self._locked(self._load, batch, statement)
         return len(rows)
 
-    def _upsert_sync(
-        self, table: str, columns: tuple[str, ...], rows: list[tuple[Any, ...]], overwrite: bool
-    ) -> None:
+    def _to_arrow(
+        self, table: str, columns: tuple[str, ...], rows: list[tuple[Any, ...]]
+    ) -> pa.Table:
+        """Transpose row tuples into a typed Arrow table."""
+        types = self._types[table]
+        transposed = list(zip(*rows, strict=True))
+        return pa.table(
+            {
+                name: pa.array(values, type=types[name])
+                for name, values in zip(columns, transposed, strict=True)
+            }
+        )
+
+    def _load(self, table: pa.Table, *statements: tuple[str, list[Any]]) -> None:
+        """Run ``statements`` in one transaction, with ``table`` readable as :data:`_INCOMING`."""
         conn = self._require()
-        arrow_table = _to_arrow(table, columns, rows)
-        source = "_incoming"
-        conn.register(source, arrow_table)
+        conn.register(_INCOMING, table)
         try:
-            conn.execute("BEGIN TRANSACTION")
-            try:
-                conn.execute(_upsert_sql(table, columns, source, overwrite=overwrite))
-                conn.execute("COMMIT")
-            except Exception:
-                conn.execute("ROLLBACK")
-                raise
+            with _transaction(conn):
+                for sql, params in statements:
+                    conn.execute(sql, params)
         finally:
-            conn.unregister(source)
+            conn.unregister(_INCOMING)
 
     async def used_bytes(self) -> int:
         """What the catalog's data actually occupies.
@@ -732,14 +684,52 @@ class Catalog:
         groups where ten would do. DuckDB compresses per row group, so the same rows cost
         roughly five times the space until the table is rewritten.
         """
-        await self._locked(self._compact_fields_sync)
+        await self._locked(self._compact_sync)
 
-    def _compact_fields_sync(self) -> None:
-        _rebuild_field_table(self._require(), "data_field_compact")
+    def _compact_sync(self) -> None:
+        conn = self._require()
+        with _transaction(conn):
+            conn.execute("CREATE TABLE data_field_compact AS SELECT * FROM data_field")
+            conn.execute("DROP TABLE data_field")
+            conn.execute("ALTER TABLE data_field_compact RENAME TO data_field")
+            for column in _FIELD_NOT_NULL:
+                conn.execute(f"ALTER TABLE data_field ALTER COLUMN {column} SET NOT NULL")
+        conn.execute("CHECKPOINT")
 
-    async def checkpoint(self) -> None:
-        """Fold the write-ahead log into the file so its freed blocks can be reused."""
-        await self._locked(lambda: self._require().execute("CHECKPOINT"))
+    async def prune_markets(
+        self, kept: list[tuple[str, str, int, str]], *, region_agnostic: bool
+    ) -> int:
+        """Delete the fields and datasets of every market a full sync no longer covers: one
+        BRAIN has stopped offering this account. Returns the fields removed.
+
+        ``kept`` is every market the sync was asked for, failed ones included, so a market
+        that only failed this time keeps what it had. ``region_agnostic`` says which of the
+        two syncs ran, and each prunes only its own: the ordinary markets, or region ``ALL``.
+        """
+        return await self._locked(self._prune_sync, kept, region_agnostic)
+
+    def _prune_sync(self, kept: list[tuple[str, str, int, str]], region_agnostic: bool) -> int:
+        conn = self._require()
+        markets = ", ".join("(?, ?, ?, ?)" for _ in kept)
+        params = [REGION_AGNOSTIC_REGION, *(value for market in kept for value in market)]
+        removed = 0
+        with _transaction(conn):
+            for table in ("data_field", "data_set"):
+                found = conn.execute(
+                    f"""
+                    DELETE FROM {table} t
+                    WHERE t.region {"=" if region_agnostic else "<>"} ?
+                      AND NOT EXISTS (
+                          SELECT 1 FROM (VALUES {markets}) k(kind, region, delay, universe)
+                          WHERE k.kind = t.instrument_type AND k.region = t.region
+                            AND k.delay = t.delay AND k.universe = t.universe
+                      )
+                    """,  # noqa: S608 - table names and placeholders only
+                    params,
+                ).fetchone()
+                if table == "data_field":
+                    removed = int(found[0]) if found else 0
+        return removed
 
     async def replace_fields(self, scope: list[Any], rows: list[tuple[Any, ...]]) -> int:
         """Make one scope's fields exactly ``rows``, in one transaction.
@@ -751,43 +741,19 @@ class Catalog:
             return 0
         # Built before the lock: pivoting 85k rows into columns is pure CPU, and doing it
         # while holding the single writer stalls every other market's write behind it.
-        table = await asyncio.to_thread(_to_arrow, "data_field", FIELD_COLUMNS, rows)
-        await self._locked(self._replace_fields_sync, scope, table)
-        return len(rows)
-
-    def _replace_fields_sync(self, scope: list[Any], table: pa.Table) -> None:
-        conn = self._require()
-        source = "_incoming"
+        table = await asyncio.to_thread(self._to_arrow, "data_field", FIELD_COLUMNS, rows)
         columns = ", ".join(FIELD_COLUMNS)
-        conn.register(source, table)
-        try:
-            conn.execute("BEGIN TRANSACTION")
-            try:
-                conn.execute(
-                    "DELETE FROM data_field WHERE instrument_type = ? AND region = ? "
-                    "AND delay = ? AND universe = ?",
-                    scope,
-                )
-                conn.execute(
-                    f"INSERT INTO data_field ({columns}) SELECT {columns} FROM {source}"  # noqa: S608
-                )
-                conn.execute("COMMIT")
-            except Exception:
-                conn.execute("ROLLBACK")
-                raise
-        finally:
-            conn.unregister(source)
-
-    async def upsert_datasets(self, rows: list[tuple[Any, ...]], *, overwrite: bool = True) -> int:
-        return await self.upsert("data_set", DATASET_COLUMNS, rows, overwrite=overwrite)
-
-    async def upsert_categories(
-        self, rows: list[tuple[Any, ...]], *, overwrite: bool = True
-    ) -> int:
-        return await self.upsert("data_category", CATEGORY_COLUMNS, rows, overwrite=overwrite)
-
-    async def upsert_alphas(self, rows: list[tuple[Any, ...]]) -> int:
-        return await self.upsert("alpha", ALPHA_COLUMNS, rows)
+        await self._locked(
+            self._load,
+            table,
+            (
+                "DELETE FROM data_field WHERE instrument_type = ? AND region = ? "
+                "AND delay = ? AND universe = ?",
+                scope,
+            ),
+            (f"INSERT INTO data_field ({columns}) SELECT {columns} FROM {_INCOMING}", []),  # noqa: S608
+        )
+        return len(rows)
 
     async def replace_pnl(self, alpha_id: str, rows: list[tuple[Any, ...]]) -> int:
         """Make one alpha's daily series exactly ``rows``, in one transaction.
@@ -796,25 +762,12 @@ class Catalog:
         """
         if not rows:
             return 0
-        table = _to_arrow("alpha_pnl", PNL_COLUMNS, rows)
-        await self._locked(self._replace_pnl_sync, alpha_id, table)
-        return len(rows)
-
-    def _replace_pnl_sync(self, alpha_id: str, table: pa.Table) -> None:
-        conn = self._require()
-        source = "_incoming"
+        table = await asyncio.to_thread(self._to_arrow, "alpha_pnl", PNL_COLUMNS, rows)
         columns = ", ".join(PNL_COLUMNS)
-        conn.register(source, table)
-        try:
-            conn.execute("BEGIN TRANSACTION")
-            try:
-                conn.execute("DELETE FROM alpha_pnl WHERE alpha_id = ?", [alpha_id])
-                conn.execute(
-                    f"INSERT INTO alpha_pnl ({columns}) SELECT {columns} FROM {source}"  # noqa: S608
-                )
-                conn.execute("COMMIT")
-            except Exception:
-                conn.execute("ROLLBACK")
-                raise
-        finally:
-            conn.unregister(source)
+        await self._locked(
+            self._load,
+            table,
+            ("DELETE FROM alpha_pnl WHERE alpha_id = ?", [alpha_id]),
+            (f"INSERT INTO alpha_pnl ({columns}) SELECT {columns} FROM {_INCOMING}", []),  # noqa: S608
+        )
+        return len(rows)

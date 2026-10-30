@@ -7,11 +7,9 @@ The session cookie jar is persisted deliberately: signing in costs a proof-of-wo
 and counts against a lockout budget, so a backend restart must not trigger a new one.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -48,18 +46,20 @@ class AuthService:
         endpoints: BrainEndpoints,
         *,
         metadata: PlatformMetadata,
-        authenticator: Authenticator | None = None,
     ) -> None:
         self.db = db
         self.sealer = sealer
         self.endpoints = endpoints
         self.metadata = metadata
-        self.auth = authenticator or Authenticator(endpoints)
+        self.auth = Authenticator(endpoints)
         self._session = SessionInfo.anonymous()
         self._user_profile: dict[str, Any] | None = None
         #: One session change at a time: a UI sign-in, a silent re-login and a status
         #: refresh would otherwise overwrite each other, leaving the loser's credential current.
         self._lock = asyncio.Lock()
+        #: The login typed for a sign-in BRAIN paused for an identity check. Stored once the
+        #: check is done (:meth:`verify`), since BRAIN has not accepted it before then.
+        self._unverified: tuple[str, str] | None = None
 
     @property
     def session(self) -> SessionInfo:
@@ -93,11 +93,7 @@ class AuthService:
         """Save (or replace) the BRAIN login, sealed at rest."""
         sealed = self.sealer.seal(password, context=PASSWORD_CONTEXT)
         async with self.db.session() as session:
-            existing = (
-                (await session.execute(select(Credential).where(Credential.email == email)))
-                .scalars()
-                .first()
-            )
+            existing = await session.scalar(select(Credential).where(Credential.email == email))
             if existing is not None:
                 existing.password_sealed = sealed
             else:
@@ -118,6 +114,19 @@ class AuthService:
             credential = await _current_credential(session)
             return credential.email if credential else None
 
+    async def can_sign_in_silently(self) -> bool:
+        """Whether there is a stored login the app may use by itself."""
+        async with self.db.session() as session:
+            credential = await _current_credential(session)
+            return credential is not None and credential.silent_off_at is None
+
+    async def _silence(self) -> None:
+        """Stop signing in with the stored login by itself, until the person signs in."""
+        async with self.db.session() as session:
+            credential = await _current_credential(session)
+            if credential is not None:
+                credential.silent_off_at = utcnow()
+
     # -- session ---------------------------------------------------------
 
     async def restore(self) -> SessionInfo:
@@ -130,13 +139,22 @@ class AuthService:
             self._session = restored or SessionInfo.anonymous()
             return self._session
         self._session = restored
-        await self._save_cookies(restored)
+        await self._save_cookies()
         await self._warm_operators()
         return restored
 
-    async def login(self, email: str | None = None, password: str | None = None) -> SessionInfo:
-        """Sign in, storing the credential if it was supplied here and accepted."""
+    async def login(
+        self, email: str | None = None, password: str | None = None, *, silent: bool = False
+    ) -> SessionInfo:
+        """Sign in, storing the credential if it was supplied here and accepted.
+
+        ``silent`` is the app signing in by itself, which a refused login or Sign out turns
+        off (:meth:`can_sign_in_silently`); checked here too, under the lock, so a Sign out
+        that lands first wins.
+        """
         async with self._lock:
+            if silent and not await self.can_sign_in_silently():
+                return self._session
             supplied = bool(email and password)
             if not supplied:
                 credential = await self.get_credential()
@@ -150,13 +168,21 @@ class AuthService:
                 raise NoCredentialError("Enter both your BRAIN email and password.")
 
             self._user_profile = None
-            # A pending verification is finished on its own inquiry, never by a new sign-in.
+            # A pending verification that was completed finishes the sign-in on its own. One
+            # that was not is replaced: pressing Sign in again is how a person asks for a new
+            # check, and Persona expires an inquiry ("Session expired") while BRAIN still calls
+            # it unfinished, so resuming it handed back the same dead link on every press.
             pending = self._session.inquiry
             info = await self.auth.verify(pending) if pending else None
-            if info is None:
+            if info is None or not info.authenticated:
                 info = await self.auth.login(email, password)
             self._session = info
+            if info.inquiry and supplied:
+                self._unverified = (email, password)
+            elif info.refused and not supplied:
+                await self._silence()
             if info.authenticated:
+                self._unverified = None
                 # Stored only once BRAIN accepts it: a mistyped password must not become the
                 # credential that silent re-login keeps retrying.
                 if supplied:
@@ -164,7 +190,7 @@ class AuthService:
                 # Touched first: _save_cookies files the jar under the most recent sign-in,
                 # so a new email's cookies would otherwise land on the previous account's row.
                 await self._touch_last_login(email)
-                await self._save_cookies(info)
+                await self._save_cookies()
                 # Warm the profile so the first screen can greet them by name without a
                 # second round trip. Failure is swallowed inside; a missing name is cosmetic.
                 await self.get_user_profile()
@@ -187,10 +213,9 @@ class AuthService:
     async def verify(self, inquiry: str) -> SessionInfo:
         """Finish a sign-in BRAIN paused for an identity check, without asking again.
 
-        :meth:`login` already resumes a pending inquiry, which is why the old advice was to
-        sign in a second time. That works and asks the person to type a password they have
-        just typed. This closes the same inquiry on its own, so the check finishing is all
-        it takes.
+        :meth:`login` closes a pending inquiry too, but asks the person to type a password they
+        have just typed, and starts a new check when this one is not done. This closes the same
+        inquiry on its own, so the check finishing is all it takes.
 
         Answering before the check is done is the normal case, not a failure: the session
         comes back unauthenticated and still carrying the inquiry, and the caller asks
@@ -205,17 +230,20 @@ class AuthService:
             self._user_profile = None
             self._session = info
             if info.authenticated:
-                # No credential to store: the sign-in that started this never got far enough
-                # to have one accepted, and the cookie jar is what carries the session now.
-                await self._save_cookies(info)
+                # The login typed for this sign-in, accepted now that the check is done. Filed
+                # before the cookies, which are kept under the most recent sign-in's login.
+                if self._unverified is not None:
+                    email, password = self._unverified
+                    self._unverified = None
+                    await self.store_credential(email, password)
+                    await self._touch_last_login(email)
+                await self._save_cookies()
                 await self.get_user_profile()
                 await self._warm_operators()
             return info
 
-    async def status(self, *, refresh: bool = False) -> SessionInfo:
-        """Current state. ``refresh`` re-validates against the platform."""
-        if not refresh:
-            return self._session
+    async def status(self) -> SessionInfo:
+        """The session as the platform sees it now; :attr:`session` is the cheap read."""
         # Locked: a check still in flight when a sign-in lands would put the old state back.
         async with self._lock:
             fresh = await self.auth.status()
@@ -238,9 +266,12 @@ class AuthService:
     async def logout(self) -> None:
         async with self._lock:
             self._user_profile = None
-            await self.auth.logout()
+            # First, so the stored login stays unused even when BRAIN cannot be told.
+            await self._silence()
+            await self.endpoints.logout()
             await self._clear_cookies()
             self._session = SessionInfo.anonymous()
+            log.info("brain.session.ended")
 
     async def _warm_operators(self) -> None:
         """Cache the account's own operator list once signed in.
@@ -260,17 +291,11 @@ class AuthService:
             credential = await _current_credential(session)
             if credential is None:
                 return None
-            row = (
-                (
-                    await session.execute(
-                        select(BrainSessionRow)
-                        .where(BrainSessionRow.credential_id == credential.id)
-                        .order_by(BrainSessionRow.updated_at.desc())
-                        .limit(1)
-                    )
-                )
-                .scalars()
-                .first()
+            row = await session.scalar(
+                select(BrainSessionRow)
+                .where(BrainSessionRow.credential_id == credential.id)
+                .order_by(BrainSessionRow.updated_at.desc())
+                .limit(1)
             )
             if row is None:
                 return None
@@ -280,58 +305,36 @@ class AuthService:
                 log.warning("session.cookies_unreadable")
                 return None
 
-    async def _save_cookies(self, info: SessionInfo) -> None:
+    async def _save_cookies(self) -> None:
         cookies = self.endpoints.client.export_cookies()
         if not cookies:
             return
         sealed = self.sealer.seal(json.dumps(cookies), context=COOKIE_CONTEXT)
-        expires = datetime.fromtimestamp(info.expires_at, tz=UTC) if info.expires_at else None
 
         async with self.db.session() as session:
             credential = await _current_credential(session)
             if credential is None:
                 return
-            row = (
-                (
-                    await session.execute(
-                        select(BrainSessionRow).where(
-                            BrainSessionRow.credential_id == credential.id
-                        )
-                    )
-                )
-                .scalars()
-                .first()
+            row = await session.scalar(
+                select(BrainSessionRow).where(BrainSessionRow.credential_id == credential.id)
             )
             if row is None:
-                session.add(
-                    BrainSessionRow(
-                        credential_id=credential.id,
-                        cookies_sealed=sealed,
-                        user_id=info.user_id,
-                        permissions=info.permissions,
-                        expires_at=expires,
-                    )
-                )
+                session.add(BrainSessionRow(credential_id=credential.id, cookies_sealed=sealed))
             else:
                 row.cookies_sealed = sealed
-                row.user_id = info.user_id
-                row.permissions = info.permissions
-                row.expires_at = expires
 
     async def _clear_cookies(self) -> None:
         async with self.db.session() as session:
-            for row in (await session.execute(select(BrainSessionRow))).scalars():
+            for row in await session.scalars(select(BrainSessionRow)):
                 await session.delete(row)
 
     async def _touch_last_login(self, email: str) -> None:
         async with self.db.session() as session:
-            credential = (
-                (await session.execute(select(Credential).where(Credential.email == email)))
-                .scalars()
-                .first()
-            )
+            credential = await session.scalar(select(Credential).where(Credential.email == email))
             if credential is not None:
                 credential.last_login_at = utcnow()
+                # A sign-in that worked: the app may use this login by itself again.
+                credential.silent_off_at = None
 
 
 #: How long BRAIN's settings schema is trusted before it is read again.
@@ -376,8 +379,6 @@ class PlatformMetadata:
         async with self.db.session() as session:
             row = await session.get(MetadataCache, SCHEMA_KEY)
             cached, fetched = (row.value, row.fetched_at) if row else (None, None)
-        if fetched is not None and fetched.tzinfo is None:
-            fetched = fetched.replace(tzinfo=UTC)
         if cached is not None and fetched is not None and utcnow() - fetched < SCHEMA_MAX_AGE:
             return cached
         try:
@@ -417,16 +418,10 @@ async def _current_credential(session: Any) -> Credential | None:
     Most-recent rather than oldest-first, so signing in with a different email is the
     account silent re-login and the cookie jar then use.
     """
-    return (
-        (
-            await session.execute(
-                select(Credential)
-                .order_by(Credential.last_login_at.desc().nulls_last(), Credential.id.desc())
-                .limit(1)
-            )
-        )
-        .scalars()
-        .first()
+    return await session.scalar(
+        select(Credential)
+        .order_by(Credential.last_login_at.desc().nulls_last(), Credential.id.desc())
+        .limit(1)
     )
 
 

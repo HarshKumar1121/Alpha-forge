@@ -3,9 +3,8 @@
  *
  * The risk family neutralizes an Alpha against a risk model: RAM, the statistical model, the
  * crowding factors, and the fundamental factor models — "In BRAIN Research, fundamental models
- * such as SLOW, FAST, and SLOW_AND_FAST are already represented"
- * (`docs/learn/advanced-topics/getting-started-statistical-risk-neutralized-alphas`). Everything
- * else neutralizes against a group of instruments, or against nothing at all.
+ * such as SLOW, FAST, and SLOW_AND_FAST are already represented". Everything else
+ * neutralizes against a group of instruments, or against nothing at all.
  *
  * Which of them a market actually offers is BRAIN's to say, so the groups here are only an
  * ordering: a picker intersects them with the legal values for the scope it is showing.
@@ -24,21 +23,30 @@ export const RISK_NEUTRALIZATIONS: readonly string[] = [
 export interface NeutralizationGroup {
   id: 'risk' | 'other'
   label: string
-  hint: string
 }
 
 export const NEUTRALIZATION_GROUPS: readonly NeutralizationGroup[] = [
-  {
-    id: 'risk',
-    label: 'Risk Neutralization',
-    hint: 'Neutralized against a risk model: RAM, Statistical, Crowding and the factor models.',
-  },
-  {
-    id: 'other',
-    label: 'Other',
-    hint: 'Neutralized against a group of instruments, or not neutralized at all.',
-  },
+  { id: 'risk', label: 'Risk Neutralization' },
+  { id: 'other', label: 'Other' },
 ]
+
+/**
+ * What to call a neutralization: BRAIN's own label where the market gives one, otherwise its
+ * value made readable.
+ *
+ * A sweep spans regions, and a value legal in one arrives in another's list with no label of
+ * its own — `COUNTRY` among `Market` and `Subindustry`. `scope.choices` fills a missing label
+ * with the value, so a label equal to its value is the signal that none came through. Nothing
+ * is renamed here: the words are BRAIN's, only the shouting is taken off.
+ */
+export const neutralizationLabel = (value: string, label?: string): string =>
+  label && label !== value
+    ? label
+    : value
+        .split('_')
+        .filter(Boolean)
+        .map((word) => word.charAt(0) + word.slice(1).toLowerCase())
+        .join(' ')
 
 export const groupOf = (value: string): NeutralizationGroup['id'] =>
   RISK_NEUTRALIZATIONS.includes(value) ? 'risk' : 'other'

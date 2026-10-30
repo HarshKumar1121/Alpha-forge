@@ -1,8 +1,6 @@
 """The alpha vault: every alpha you have run, its checks, and its daily returns."""
 
-from __future__ import annotations
-
-import json
+import itertools
 from datetime import timedelta
 from typing import Annotated, Any, Literal
 
@@ -10,8 +8,11 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
 from ..brain.filters import AlphaQuery
+from ..brain.platform import INSTRUMENT_TYPE, PLATFORM_ALPHA_URL
 from ..schemas import Out
-from ..vault.yields import PLATFORM_ALPHA_URL
+from ..tools import portfolio
+from ..vault import yields
+from ..vault.yields import checks_of
 from .deps import State, refuse
 
 router = APIRouter(prefix="/api/vault", tags=["vault"])
@@ -83,11 +84,20 @@ class SubmittableAlpha(Out):
     brain_url: str
 
 
+class SubmittableMarket(Out):
+    instrument_type: str
+    region: str
+    delay: int
+    universe: str
+    count: int
+
+
 class SubmittableResponse(Out):
     #: At most five distinct Alphas that held up in the test years, most stable first.
     shortlist: list[SubmittableAlpha]
     alphas: list[SubmittableAlpha]
     total: int
+    markets: list[SubmittableMarket]
     #: Still being judged by the platform.
     pending: int
     #: Failing one or two fixable checks.
@@ -130,6 +140,10 @@ class AlphaRow(Out):
     pyramids: list[str] = Field(default_factory=list)
     train_sharpe: float | None = None
     test_sharpe: float | None = None
+    #: The limit each of BRAIN's figure checks names for this Alpha, by check name.
+    limits: dict[str, float] = Field(default_factory=dict)
+    #: Picking seeds only: the region a region-agnostic Alpha's figures come from.
+    standing_region: str | None = None
 
 
 class AlphaPage(Out):
@@ -147,13 +161,17 @@ class AlphaDetail(Out):
     expression: str | None
     settings: AlphaSettings
     checks: list[dict[str, Any]]
+    brain_url: str
+
+
+class AlphaPnl(Out):
     #: Cumulative PnL, one value per stored trading day.
     pnl: list[float]
     #: ``YYYY-MM-DD`` for each value in ``pnl``.
     dates: list[str]
     days: int
+    #: Why ``pnl`` is empty, when the download failed.
     problem: str | None
-    brain_url: str
 
 
 @router.get("")
@@ -175,7 +193,7 @@ async def submittable(
     region: str | None = None,
     delay: int | None = None,
     universe: str | None = None,
-    instrument_type: str = "EQUITY",
+    instrument_type: str = INSTRUMENT_TYPE,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> SubmittableResponse:
     """Alphas that passed every submission check, ready to submit on BRAIN.
@@ -183,7 +201,9 @@ async def submittable(
     Each entry carries the platform's own check results, the numbers behind them, and a
     link to the alpha on BRAIN — which is where it gets submitted. This application never does.
     """
-    found = await state.yields.submittable(
+    found = await yields.submittable(
+        state.db,
+        state.alphas,
         region=region,
         delay=delay,
         universe=universe,
@@ -220,6 +240,35 @@ async def query_alphas(body: AlphaPageRequest, state: State) -> AlphaPage:
     return AlphaPage.model_validate(await state.alphas.page(**body.model_dump()))
 
 
+class AfterCostRequest(BaseModel):
+    alpha_ids: list[str] = Field(max_length=10_000)
+    cost_bps: float = Field(gt=0, le=100)
+
+
+class NetFigures(Out):
+    sharpe: float | None
+    fitness: float | None
+    returns: float | None
+    drawdown: float | None
+    margin: float | None
+    train_sharpe: float | None
+    test_sharpe: float | None
+    k_ratio: float | None
+
+
+class AfterCost(Out):
+    #: By Alpha, only those whose daily PnL and turnover are stored here; nothing is downloaded.
+    figures: dict[str, NetFigures]
+
+
+@router.post("/alphas/after-cost")
+async def after_cost(body: AfterCostRequest, state: State) -> AfterCost:
+    """Each Alpha's figures worked out again on its daily PnL net of ``cost_bps``, charged on
+    each day's own turnover, as the Portfolio page works them out."""
+    net = await portfolio.net_figures_of(state.alphas, body.alpha_ids, body.cost_bps)
+    return AfterCost(figures={a: NetFigures.model_validate(f) for a, f in net.items()})
+
+
 @router.post("/sync")
 async def sync_alphas(state: State) -> SyncStarted:
     """Bring the stored alphas up to date with BRAIN.
@@ -235,7 +284,7 @@ async def sync_alphas(state: State) -> SyncStarted:
     complete = latest is not None and stored >= int(remote["count"])
     since = latest - timedelta(days=1) if complete and latest else None
     try:
-        task_id = await state.backfill.start(include_returns=False, limit=100_000, since=since)
+        task_id = await state.backfill.start(since=since)
     except RuntimeError as exc:
         raise refuse(409, "already_running", str(exc)) from exc
     return SyncStarted(task_id=task_id, since=since.isoformat() if since else None)
@@ -243,12 +292,30 @@ async def sync_alphas(state: State) -> SyncStarted:
 
 @router.get("/alphas/{alpha_id}/detail")
 async def alpha_detail(alpha_id: str, state: State) -> AlphaDetail:
-    """One alpha with its checks and PnL curve. Downloads the daily PnL the first time."""
+    """One stored alpha: its expression, settings and checks. Local only, so it answers at once;
+    the PnL comes from :func:`alpha_pnl`, which may have to download it."""
     row = (await state.alphas.by_ids([alpha_id])).get(alpha_id)
     if row is None:
         raise refuse(
             404, "unknown_alpha", f"{alpha_id} is not stored here yet. Sync from BRAIN first."
         )
+    return AlphaDetail.model_validate(
+        {
+            "alphaId": alpha_id,
+            "expression": row.get("expression"),
+            "settings": {
+                k: row.get(k)
+                for k in ("region", "universe", "delay", "neutralization", "decay", "truncation")
+            },
+            "checks": checks_of(row.get("checks")),
+            "brainUrl": f"{PLATFORM_ALPHA_URL}{alpha_id}",
+        }
+    )
+
+
+@router.get("/alphas/{alpha_id}/pnl")
+async def alpha_pnl(alpha_id: str, state: State) -> AlphaPnl:
+    """One alpha's cumulative PnL. Downloads the daily PnL from BRAIN the first time."""
     problem = None
     if await state.alphas.series_length(alpha_id) == 0:
         try:
@@ -258,25 +325,7 @@ async def alpha_detail(alpha_id: str, state: State) -> AlphaDetail:
             problem = f"Could not download the daily PnL: {exc}"
     rows = await state.alphas.pnl_series(alpha_id)
     # Stored rows are daily PnL; the chart wants the running total, every day with its date.
-    values: list[float] = []
-    total = 0.0
-    for r in rows:
-        total += float(r["pnl"])
-        values.append(round(total, 2))
-    dates = [str(r["date"]) for r in rows]
-    return AlphaDetail.model_validate(
-        {
-            "alphaId": alpha_id,
-            "expression": row.get("expression"),
-            "settings": {
-                k: row.get(k)
-                for k in ("region", "universe", "delay", "neutralization", "decay", "truncation")
-            },
-            "checks": json.loads(row["checks"]) if row.get("checks") else [],
-            "pnl": values,
-            "dates": dates,
-            "days": len(values),
-            "problem": problem,
-            "brainUrl": f"{PLATFORM_ALPHA_URL}{alpha_id}",
-        }
+    values = [round(total, 2) for total in itertools.accumulate(float(r["pnl"]) for r in rows)]
+    return AlphaPnl(
+        pnl=values, dates=[str(r["date"]) for r in rows], days=len(values), problem=problem
     )

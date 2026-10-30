@@ -1,22 +1,20 @@
 /**
- * The assistant: providers, keys and their daily budgets, prompts, the context the model
- * is shown, and the chat. Bodies are snake_case only. Keys never come back — only `hint`.
+ * The assistant: providers, keys and their daily budgets, the prompts it sends, and the chat.
+ * Bodies are snake_case only. Keys never come back — only `hint`.
  */
 
 import type { components } from '@/api/generated'
 import { ApiError, http, qs } from '@/api/http'
-import type { Scope, ScopeBody } from '@/api/types'
+import type { ScopeBody } from '@/api/types'
 import { fmt } from '@/lib/format'
 
 type Schemas = components['schemas']
 
-export type LLMModel = Schemas['LLMModel']
+export type LLMModel = Schemas['ModelInfo']
 export type LLMModels = Schemas['LLMModels']
 export type LLMProvider = Schemas['LLMProvider']
 export type LLMProvidersResponse = Schemas['LLMProviders']
-export type LLMKeyUsage = Schemas['LLMKeyUsage']
 export type LLMKey = Schemas['LLMKey']
-export type LLMBudget = Schemas['LLMBudget']
 export type LLMKeyStatus = Schemas['LLMKeyStatus']
 
 export interface AddKeyRequest {
@@ -27,9 +25,21 @@ export interface AddKeyRequest {
   daily_limit?: number | null
 }
 
+export type OfferedModels = Schemas['OfferedModels']
+
+export interface SetModelRequest {
+  provider: string
+  model: string
+  requests_per_minute: number
+  requests_per_day: number
+  /** IANA time zone whose midnight starts the provider's new day for this model. */
+  reset_timezone: string
+  /** Most tokens one Power Pool prompt may use; null for the default. */
+  max_prompt_tokens: number | null
+}
+
 export type KeyCheck = Schemas['KeyWorks'] | Schemas['KeyFailed']
 export type PromptInfo = Schemas['PromptInfo']
-export type LLMContextRendered = Schemas['LLMContextRendered']
 export type Reasoning = Schemas['ChatOptions']['defaultReasoning']
 export type ChatOptions = Schemas['ChatOptions']
 export type ChatThreadSummary = Schemas['ChatThreadSummary']
@@ -65,18 +75,17 @@ export interface ChatSayRequest {
 
 export type ChatReply = Omit<Schemas['ChatReply'], 'picks'> & { picks: ChatPick[] }
 
-/** A downloaded catalog scope. Raw row, snake_case. */
-export interface DownloadedScope {
-  instrument_type: string
-  region: string
-  delay: number
-  universe: string
-  fields: number
-}
-
 export const llm = {
   providers: () => http.get<LLMProvidersResponse>('/api/llm/providers'),
   models: () => http.get<LLMModels>('/api/llm/models'),
+  /** Sets a model up, or changes its limits. 400 llm_error when the id is another provider's. */
+  setModel: (body: SetModelRequest) => http.put<LLMModel>('/api/llm/models', body),
+  /** Query parameters, because model ids carry slashes. */
+  removeModel: (provider: string, model: string) =>
+    http.del<void>(`/api/llm/models${qs({ provider, model })}`),
+  /** Asked live of the provider's first enabled Key. */
+  offered: (provider: string) =>
+    http.get<OfferedModels>(`/api/llm/providers/${encodeURIComponent(provider)}/models`),
   keys: () => http.get<LLMKeyStatus>('/api/llm/keys'),
   /** 400 llm_error for a duplicate key. */
   addKey: (body: AddKeyRequest) => http.post<LLMKey>('/api/llm/keys', body),
@@ -92,10 +101,6 @@ export const llm = {
   checkKey: (id: number) => http.post<KeyCheck>(`/api/llm/keys/${id}/check`),
   checkAll: () => http.post<KeyCheck[]>('/api/llm/keys/check'),
   prompts: () => http.get<Schemas['PromptList']>('/api/llm/prompts'),
-  context: (scope: Scope) =>
-    http.get<LLMContextRendered>(
-      `/api/llm/context${qs({ region: scope.region, delay: scope.delay, universe: scope.universe, instrument_type: scope.instrumentType, rendered: true })}`,
-    ),
 }
 
 export const chat = {
@@ -106,11 +111,7 @@ export const chat = {
   deleteThread: (id: number) => http.del<void>(`/api/chat/threads/${id}`),
   /** Spends one assistant request. An undownloaded scope fails with a plain 500. */
   say: (body: ChatSayRequest) => http.post<ChatReply>('/api/chat', body),
-  downloadedScopes: () => http.get<DownloadedScope[]>('/api/catalog/scopes'),
 }
-
-/** Today's day in the quota's timezone, as usage rows spell it. */
-export const quotaDay = (timeZone: string) => new Date().toLocaleDateString('en-CA', { timeZone })
 
 /** The extra facts a 429 llm_budget_exhausted carries: when to retry, and what is left. */
 export function budgetDetail(error: unknown): string | null {

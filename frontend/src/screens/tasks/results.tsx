@@ -11,150 +11,174 @@ import { Link, useParams } from '@tanstack/react-router'
 import { ArrowLeftIcon } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { cn } from '@/lib/cn'
-import { DASH, fmt } from '@/lib/format'
-import { portfolio } from '@/screens/portfolio/api'
-import { labTasks, type RankedAlpha } from '@/screens/tasks/api'
+import { CORE_ORDER, DASH, fmt } from '@/lib/format'
+import { useRefetchOn } from '@/lib/ws'
+import { useDetailSheet } from '@/screens/pool/detail'
+import { AstInspector } from '@/screens/pool/shared'
+import { AlphaPane } from '@/screens/tasks/alpha-pane'
+import { labTasks, type RankedAlpha, TOP_LIMIT } from '@/screens/tasks/api'
 import {
-  Button,
-  Empty,
-  ErrorNotice,
-  Metric,
-  Page,
-  PageHeader,
-  Panel,
-  Skeleton,
-  signTone,
-  TEXT_TONE,
-} from '@/ui/kit'
+  Figure,
+  METRICS,
+  metricHeader,
+  setting,
+  TASK_OFFER,
+  taskStatus,
+} from '@/screens/tasks/columns'
+import { Button, Empty, ErrorNotice, KV, Metric, Page, PageHeader, Panel, Skeleton } from '@/ui/kit'
 import { type Column, DataTable, type Sort } from '@/ui/table'
 
-/** The sweep's whole result set, not a page of it: the comparison needs every row. */
-const LIMIT = 2000
-
-const setting = (r: RankedAlpha, key: string) => String(r.settings?.[key] ?? '')
 const market = (r: RankedAlpha) => setting(r, 'region') || DASH
 
-/** Sorted client-side: the rows are already here, and a sweep is thousands at most. */
-function compare(a: RankedAlpha, b: RankedAlpha, sort: Sort): number {
-  const pick = (r: RankedAlpha): string | number | null => {
-    switch (sort.key) {
-      case 'alphaId':
-        return r.alphaId ?? ''
-      case 'region':
-        return market(r)
-      case 'universe':
-        return setting(r, 'universe')
-      case 'neutralization':
-        return setting(r, 'neutralization')
-      case 'failed':
-        return r.failedChecks.length
-      default:
-        return (r as unknown as Record<string, number | null>)[sort.key] ?? null
-    }
-  }
-  const x = pick(a)
-  const y = pick(b)
-  if (x == null) return y == null ? 0 : 1
-  if (y == null) return -1
-  const order = typeof x === 'string' ? String(x).localeCompare(String(y)) : Number(x) - Number(y)
-  return sort.desc ? -order : order
-}
-
-const METRICS: { key: keyof RankedAlpha; label: string; show: (v: number | null) => string }[] = [
-  { key: 'sharpe', label: 'Sharpe', show: (v) => fmt.ratio(v) },
-  { key: 'turnover', label: 'Turnover', show: (v) => fmt.pct(v, 2) },
-  { key: 'fitness', label: 'Fitness', show: (v) => fmt.ratio(v) },
-  { key: 'returns', label: 'Returns', show: (v) => fmt.pct(v, 2) },
-  { key: 'drawdown', label: 'Drawdown', show: (v) => fmt.pct(v, 2) },
-  { key: 'margin', label: 'Margin', show: (v) => fmt.bps(v, 2) },
+const everyAlphaDefaults = (agent: boolean) => [
+  'alphaId',
+  'region',
+  'delay',
+  'universe',
+  'neutralization',
+  'investability',
+  ...(agent ? ['truncation'] : []),
+  'powerPoolCorrelation',
+  'prodCorrelation',
+  'failedChecks',
+  ...CORE_ORDER,
+  'afterCostSharpe',
+  'testSharpe',
+  'testFitness',
 ]
 
-const SIGNED = new Set(['sharpe', 'fitness', 'returns', 'margin'])
-
-function columns(): Column<RankedAlpha>[] {
-  return [
-    {
-      key: 'alphaId',
-      header: 'Alpha',
-      width: 'minmax(96px,1fr)',
-      sortable: true,
-      cell: (r) => <span className="num truncate text-ink">{r.alphaId ?? DASH}</span>,
-    },
-    {
-      key: 'region',
-      header: 'Region',
-      width: 'minmax(70px,0.7fr)',
-      sortable: true,
-      cell: (r) => <span className="num">{market(r)}</span>,
-    },
-    {
-      key: 'universe',
-      header: 'Universe',
-      width: 'minmax(84px,0.9fr)',
-      sortable: true,
-      cell: (r) => <span className="num truncate">{setting(r, 'universe') || DASH}</span>,
-    },
-    {
-      key: 'neutralization',
-      header: 'Neutralization',
-      width: 'minmax(96px,1fr)',
-      sortable: true,
-      cell: (r) => <span className="num truncate">{setting(r, 'neutralization') || DASH}</span>,
-    },
-    {
-      key: 'failed',
-      header: 'Checks Failed',
-      width: 'minmax(120px,1.4fr)',
-      sortable: true,
-      cell: (r) =>
-        r.failedChecks.length === 0 ? (
-          <span className="text-pnl-positive">none</span>
-        ) : (
-          <span className="truncate text-pnl-negative" title={r.failedChecks.join(', ')}>
-            {r.failedChecks.join(', ')}
-          </span>
-        ),
-    },
-    ...METRICS.map(
-      (m): Column<RankedAlpha> => ({
-        key: String(m.key),
-        header: m.label,
-        width: 'minmax(84px,0.8fr)',
-        align: 'right',
-        sortable: true,
-        cell: (r) => {
-          const value = r[m.key] as number | null
-          return (
-            <span className={cn('num', SIGNED.has(String(m.key)) && TEXT_TONE[signTone(value)])}>
-              {m.show(value)}
-            </span>
-          )
-        },
-      }),
-    ),
-  ]
-}
-
+/**
+ * What a reader can narrow the table by. Three independent questions, each answerable on its
+ * own, so any combination of them is a valid thing to ask: the useful one is all three at
+ * once, but "which of my refused Alphas still survive costs" is a real question too and a
+ * fixed set of presets could not express it.
+ */
 /** One row of the across-regions table. */
 interface RegionRow {
   region: string
   alphas: number
   submittable: number
   failed: number
-  bestSharpe: number | null
+  /** Per metric, the best any *submittable* Alpha here reached, keyed by its column key. */
+  best: Record<string, number | null>
+}
+
+/** One distinct set of failed checks, and how much of the sweep landed on exactly that set. */
+interface CheckSet {
+  key: string
+  checks: string[]
+  alphas: number
+  share: number
+}
+
+/**
+ * What is actually stopping this idea, counted by the *combination* of checks rather than by
+ * check. One Alpha usually trips several at once, so a per-check tally double-counts and
+ * makes every sweep look like the same wall of Sharpe failures. The sets separate "only the
+ * turnover is wrong", which a decay or a gate can fix, from "the signal is weak everywhere".
+ */
+function CheckSets({ rows }: { rows: RankedAlpha[] }) {
+  const [sort, setSort] = useState<Sort>({ key: 'alphas', desc: true })
+
+  const sets = useMemo(() => {
+    const seen = new Map<string, CheckSet>()
+    for (const r of rows) {
+      const checks = [...r.refusedBy].sort()
+      const key = checks.join(' + ')
+      const found = seen.get(key) ?? { key, checks, alphas: 0, share: 0 }
+      found.alphas += 1
+      seen.set(key, found)
+    }
+    const total = rows.length || 1
+    return [...seen.values()].map((s) => ({ ...s, share: s.alphas / total }))
+  }, [rows])
+
+  const sorted = useMemo(() => {
+    const pick = (s: CheckSet): string | number =>
+      sort.key === 'key' ? s.key : sort.key === 'count' ? s.checks.length : s.alphas
+    return [...sets].sort((a, b) => {
+      const x = pick(a)
+      const y = pick(b)
+      const order = typeof x === 'string' ? x.localeCompare(String(y)) : Number(x) - Number(y)
+      return sort.desc ? -order : order
+    })
+  }, [sets, sort])
+
+  return (
+    <Panel
+      title="Checks Failed Together"
+      description="Every distinct set of refusing checks, and how many Alphas hit exactly that set. Sort by Checks to find the ones a single problem is holding back."
+      actions={<span className="num text-ink-subtle">{fmt.int(sets.length)} sets</span>}
+    >
+      <DataTable
+        label="Failed check sets"
+        rows={sorted}
+        rowKey={(s) => s.key || 'none'}
+        sort={sort}
+        onSort={setSort}
+        columns={[
+          {
+            key: 'key',
+            header: 'Checks Failed',
+            width: 'minmax(260px,4fr)',
+            sortable: true,
+            cell: (s) =>
+              s.checks.length === 0 ? (
+                <span className="text-ink-subtle">{DASH}</span>
+              ) : (
+                <span className="num truncate text-pnl-negative-text" title={s.checks.join(', ')}>
+                  {s.checks.join(', ')}
+                </span>
+              ),
+          },
+          {
+            key: 'count',
+            header: 'Checks',
+            width: 'minmax(72px,0.6fr)',
+            align: 'right',
+            sortable: true,
+            cell: (s) => <span className="num">{fmt.int(s.checks.length)}</span>,
+          },
+          {
+            key: 'alphas',
+            header: 'Alphas',
+            width: 'minmax(76px,0.6fr)',
+            align: 'right',
+            sortable: true,
+            cell: (s) => (
+              <span className={cn('num', s.checks.length === 0 && 'text-pnl-positive-text')}>
+                {fmt.int(s.alphas)}
+              </span>
+            ),
+          },
+          {
+            key: 'share',
+            header: 'Share',
+            width: 'minmax(76px,0.6fr)',
+            align: 'right',
+            cell: (s) => <span className="num text-ink-subtle">{fmt.pct(s.share, 1)}</span>,
+          },
+        ]}
+        maxHeight="40vh"
+        empty="No Alphas back yet."
+      />
+    </Panel>
+  )
 }
 
 export function TaskResultsScreen() {
   const { taskId } = useParams({ from: '/tasks/$taskId' })
   const id = Number(taskId)
   const [sort, setSort] = useState<Sort>({ key: 'sharpe', desc: true })
+  const detail = useDetailSheet()
 
-  const tasks = useQuery({ queryKey: ['tasks'], queryFn: labTasks.list })
+  const tasks = useQuery({ queryKey: ['lab-tasks'], queryFn: labTasks.list })
   const task = tasks.data?.tasks.find((t) => t.id === id)
 
   const top = useQuery({
-    queryKey: ['tasks', id, 'results'],
-    queryFn: () => labTasks.top(id, LIMIT),
+    queryKey: ['lab-tasks', id, 'results'],
+    // The sweep's whole result set, not a page of it: the comparison needs every row.
+    queryFn: () => labTasks.top(id, TOP_LIMIT),
     enabled: Number.isFinite(id),
   })
   const rows = useMemo(() => top.data ?? [], [top.data])
@@ -168,47 +192,74 @@ export function TaskResultsScreen() {
         alphas: 0,
         submittable: 0,
         failed: 0,
-        bestSharpe: null,
+        best: {},
       }
       row.alphas += 1
-      if (r.submittable || r.pending) row.submittable += 1
+      const green = r.submittable || r.pending
+      if (green) row.submittable += 1
       else row.failed += 1
-      if (r.sharpe != null && (row.bestSharpe == null || r.sharpe > row.bestSharpe)) {
-        row.bestSharpe = r.sharpe
+      // Only Alphas nothing refused: a best that BRAIN will not take is not a best, it is a
+      // reason to look in this region and be disappointed.
+      if (green) {
+        for (const m of METRICS) {
+          const value = r[m.key] as number | null
+          if (value == null) continue
+          const held = row.best[m.key]
+          const better = held == null || (m.best === 'max' ? value > held : value < held)
+          if (better) row.best[m.key] = value
+        }
       }
       seen.set(key, row)
     }
     return [...seen.values()].sort((a, b) => b.submittable - a.submittable || b.alphas - a.alphas)
   }, [rows])
 
-  // Correlation needs the daily series, so it is asked for only once there are Alphas to ask
-  // about, and it says plainly when they have not been downloaded yet.
-  const ids = useMemo(
-    () => rows.map((r) => r.alphaId).filter((a): a is string => Boolean(a)),
-    [rows],
-  )
-  const correlation = useQuery({
-    queryKey: ['tasks', id, 'correlation', ids.length],
-    queryFn: () => portfolio.compute(ids, 0),
-    enabled: ids.length >= 2,
-    retry: false,
-  })
+  // Shown only when there is one expression to show. A Settings Sampler sweep is the same
+  // expression everywhere, which is the whole point of it; a Search Lab task is a thousand
+  // different ones and has no single answer to put here.
+  // Read off the task, not the results: a Settings Sampler sweep was *given* an expression
+  // and the four settings it holds still, so those are facts about the task. Recovering them
+  // by scanning a thousand rows for whatever happens to agree is a guess that looks like one.
+  const held: [string, string][] = task
+    ? (
+        [
+          ['Decay', task.decay],
+          ['Truncation', task.truncationAgent ? 'Truncation Agent' : task.truncation],
+          ['NaN Handling', task.nanHandling],
+          ['Test Period', task.testPeriod],
+          // Which models answered, when a Power Pool task moved between them.
+          [
+            'Models',
+            Object.entries(task.llmModels ?? {})
+              .map(([model, calls]) => `${model} × ${fmt.int(calls)}`)
+              .join(', '),
+          ],
+        ].filter(([, v]) => v != null && v !== '') as [string, string | number][]
+      ).map(([label, value]) => [label, String(value)])
+    : []
 
-  const sorted = useMemo(() => [...rows].sort((a, b) => compare(a, b, sort)), [rows, sort])
+  // The download reports progress through the task registry, so the rows refresh as its
+  // broadcasts land rather than on a timer of their own.
+  useRefetchOn('tasks', ['lab-tasks', id, 'results'], 5000)
+  // The lab itself reports on its own topic: the task's status, and the rows with it.
+  useRefetchOn('studies', ['lab-tasks'], 10_000)
+
   const green = rows.filter((r) => r.submittable || r.pending).length
   const pending = rows.filter((r) => r.pending).length
 
   return (
     <Page>
       <PageHeader
-        title={task?.templateName || task?.labName || `Task ${taskId}`}
+        title={task?.name || task?.templateName || task?.labName || `Task ${taskId}`}
+        // The lab is the title already; repeating it here spent the one line that says
+        // where this task got to.
         description={
           task
-            ? `${task.labName} · ${task.status}${task.alphaId ? ` · ${task.alphaId}` : ''}`
+            ? `${taskStatus(task).label}${task.alphaId ? ` · ${task.alphaId}` : ''}`
             : 'Every Alpha this task produced'
         }
         actions={
-          <Button variant="ghost" render={<Link to="/tasks" />}>
+          <Button variant="ghost" render={<Link to="/tasks" search={{ task: id }} />}>
             <ArrowLeftIcon />
             Back to Tasks
           </Button>
@@ -217,8 +268,34 @@ export function TaskResultsScreen() {
 
       {top.isError && <ErrorNotice error={top.error} title="Could not read this task's results" />}
 
+      {task?.expression && (
+        <Panel
+          title="Alpha Expression"
+          description="What every simulation in this task ran, and the settings it held still."
+        >
+          <div className="flex flex-col gap-4">
+            <AstInspector expression={task.expression} />
+            {held.length > 0 && (
+              <KV
+                items={held}
+                className="border-t border-hairline pt-4 sm:grid-cols-[repeat(2,auto_minmax(0,1fr))] lg:grid-cols-[repeat(4,auto_minmax(0,1fr))]"
+              />
+            )}
+          </div>
+        </Panel>
+      )}
+
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Metric boxed label="Alphas" value={fmt.int(rows.length)} />
+        <Metric
+          boxed
+          label="Alphas"
+          value={fmt.int(rows.length)}
+          hint={
+            rows.length >= TOP_LIMIT && task
+              ? `The best ${fmt.int(TOP_LIMIT)} of ${fmt.int(task.simulated)} simulated`
+              : ''
+          }
+        />
         <Metric
           boxed
           tone="profit"
@@ -236,7 +313,7 @@ export function TaskResultsScreen() {
 
       <Panel
         title="Across Regions"
-        description="Where the same expression is worth submitting, and where it is refused."
+        description="Where the same expression is worth submitting, and the best each metric reaches there. Refused Alphas are counted, never counted as a best."
       >
         {top.isPending ? (
           <Skeleton className="h-40" />
@@ -267,7 +344,7 @@ export function TaskResultsScreen() {
                 width: 'minmax(96px,1fr)',
                 align: 'right',
                 cell: (r) => (
-                  <span className={cn('num', r.submittable > 0 && 'text-pnl-positive')}>
+                  <span className={cn('num', r.submittable > 0 && 'text-pnl-positive-text')}>
                     {fmt.int(r.submittable)}
                   </span>
                 ),
@@ -278,22 +355,20 @@ export function TaskResultsScreen() {
                 width: 'minmax(84px,0.8fr)',
                 align: 'right',
                 cell: (r) => (
-                  <span className={cn('num', r.failed > 0 && 'text-pnl-negative')}>
+                  <span className={cn('num', r.failed > 0 && 'text-pnl-negative-text')}>
                     {fmt.int(r.failed)}
                   </span>
                 ),
               },
-              {
-                key: 'bestSharpe',
-                header: 'Best Sharpe',
-                width: 'minmax(96px,1fr)',
-                align: 'right',
-                cell: (r) => (
-                  <span className={cn('num', TEXT_TONE[signTone(r.bestSharpe)])}>
-                    {fmt.ratio(r.bestSharpe)}
-                  </span>
-                ),
-              },
+              ...METRICS.map(
+                (m): Column<RegionRow> => ({
+                  key: String(m.key),
+                  header: metricHeader(m),
+                  width: 'minmax(78px,0.8fr)',
+                  align: 'right',
+                  cell: (r) => <Figure metric={m} value={r.best[m.key] ?? null} />,
+                }),
+              ),
             ]}
             maxHeight="40vh"
             empty="No Alphas back yet."
@@ -301,74 +376,24 @@ export function TaskResultsScreen() {
         )}
       </Panel>
 
-      <Panel
-        title="Correlation"
-        description="Pairwise daily PnL correlation between this task's Alphas, from their stored series."
-      >
-        {ids.length < 2 ? (
-          <Empty title="Two Alphas with an id are needed before anything can be correlated." />
-        ) : correlation.isPending ? (
-          <Skeleton className="h-24" />
-        ) : correlation.isError ? (
-          <ErrorNotice error={correlation.error} title="Could not correlate these Alphas" />
-        ) : (
-          <div className="flex flex-col gap-3">
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Metric
-                boxed
-                label="Measured Pairs"
-                value={fmt.int(correlation.data?.measuredPairs)}
-              />
-              <Metric
-                boxed
-                label="Highest"
-                tone={(correlation.data?.highest?.correlation ?? 0) >= 0.7 ? 'loss' : 'neutral'}
-                value={fmt.ratio(correlation.data?.highest?.correlation)}
-              />
-              <Metric boxed label="Alphas Correlated" value={fmt.int(correlation.data?.alphas)} />
-              <Metric
-                boxed
-                label="Without PnL"
-                value={fmt.int(correlation.data?.missing.length)}
-                hint={
-                  (correlation.data?.missing.length ?? 0) > 0
-                    ? 'Download their PnL in the Pool'
-                    : ''
-                }
-              />
-            </div>
-            {correlation.data?.highest && (
-              <p className="text-body-compact text-ink-subtle">
-                The closest pair is{' '}
-                <span className="num text-ink">{correlation.data.highest.a}</span> and{' '}
-                <span className="num text-ink">{correlation.data.highest.b}</span> at{' '}
-                <span className="num text-ink">
-                  {fmt.ratio(correlation.data.highest.correlation)}
-                </span>
-                . Two results of one sweep that move together are one idea, not two submissions.
-              </p>
-            )}
-          </div>
-        )}
-      </Panel>
-
-      <Panel
+      <AlphaPane
         title="Every Alpha"
-        actions={<span className="num text-ink-subtle">{fmt.int(rows.length)}</span>}
-      >
-        <DataTable
-          label="Task results"
-          rows={sorted}
-          columns={columns()}
-          rowKey={(r) => String(r.trialId)}
-          sort={sort}
-          onSort={setSort}
-          loading={top.isPending}
-          error={top.error}
-          maxHeight="70vh"
-          empty="No Alphas back yet."
-        />
-      </Panel>
+        initial="all"
+        view="every-alpha"
+        rows={rows}
+        offer={TASK_OFFER}
+        defaults={everyAlphaDefaults(Boolean(task?.truncationAgent))}
+        sort={sort}
+        onSort={setSort}
+        loading={top.isPending}
+        error={top.error}
+        onRefresh={() => top.refetch()}
+        onOpenAlpha={detail.open}
+        openAlpha={detail.openId}
+      />
+
+      <CheckSets rows={rows} />
+      {detail.sheet}
     </Page>
   )
 }

@@ -7,23 +7,19 @@ no quarter dates, and Genius levels run on calendar quarters, so the quarter is 
 from today's date in platform time.
 """
 
-from __future__ import annotations
-
 import math
 import time
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
 
 from ..brain.filters import PLATFORM_TZ
+from ..brain.platform import PYRAMID_MIN_ALPHAS
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from ..brain.endpoints import BrainEndpoints
     from ..db.duck import Catalog
-
-#: Alphas submitted in a pyramid this quarter before it counts as formulated.
-LIT_AT = 3
 
 MULTIPLIERS_TTL = 6 * 3600
 COUNTS_TTL = 600
@@ -99,7 +95,7 @@ def assemble(
             found["alphaCount"] = int(item.get("alphaCount") or 0)
 
     for key, found in cells.items():
-        found["lit"] = found["alphaCount"] >= LIT_AT
+        found["lit"] = found["alphaCount"] >= PYRAMID_MIN_ALPHAS
         found["synced"] = key in synced
 
     # Both axes rank on the multiplier they average, richest first, ties alphabetical. A
@@ -124,14 +120,12 @@ def assemble(
         "columns": [{"region": region, "delay": delay} for region, delay in columns],
         "categories": [{"id": cid, "name": name} for cid, name in ordered],
         "cells": list(cells.values()),
-        "alphasPerPyramid": LIT_AT,
+        "alphasPerPyramid": PYRAMID_MIN_ALPHAS,
     }
 
 
-async def pyramid_grid(
-    endpoints: BrainEndpoints, catalog: Catalog, today: date | None = None
-) -> dict[str, Any]:
-    today = today or datetime.now(PLATFORM_TZ).date()
+async def pyramid_grid(endpoints: BrainEndpoints, catalog: Catalog) -> dict[str, Any]:
+    today = datetime.now(PLATFORM_TZ).date()
     start, end = quarter_start(today), next_quarter_start(today)
     multipliers = await _cached("multipliers", MULTIPLIERS_TTL, endpoints.pyramid_multipliers)
     counts = await _cached(

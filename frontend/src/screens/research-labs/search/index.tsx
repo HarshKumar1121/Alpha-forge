@@ -1,34 +1,32 @@
 /**
- * Search Lab: choose datasets, cores and simulations, then run the search as a task in
+ * Search Lab: choose datasets, cores and simulations, then run the search now or add it to
  * Tasks. It writes one- and two-operator Alphas from the datasets' fields, steering towards
  * the best Sharpe.
  */
 
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from '@tanstack/react-router'
-import { PlayIcon } from 'lucide-react'
-import { toast } from 'sonner'
+import { useQuery } from '@tanstack/react-query'
 import { today } from '@/api/core'
-import { errorMessage } from '@/api/http'
-import { useDebounced } from '@/lib/use-debounced'
+import { useCores } from '@/lib/preferences'
+import { useScopeOptions } from '@/lib/scope'
+import { AddTaskButtons, useAddTask } from '@/screens/research-labs/add-task'
 import {
   labBody,
   MAX_SIMULATIONS,
   simulationsValid,
   useLabMarket,
+  useLabPreview,
   vectorOperatorsOf,
 } from '@/screens/research-labs/lab-task'
 import { type SearchLabRequest, searchLab } from '@/screens/research-labs/search/api'
-import { DatasetsPanel, SettingsPanel } from '@/screens/research-labs/task-settings'
-import { Button, ErrorNotice, Page, PageHeader } from '@/ui/kit'
-import { useSearchLab } from './state'
+import { useSearchLab } from '@/screens/research-labs/search/state'
+import { DatasetsPanel, MarketPanel, SettingsPanel } from '@/screens/research-labs/task-settings'
+import { ErrorNotice, Page, PageHeader } from '@/ui/kit'
 
 export function SearchLabScreen() {
   const stored = useSearchLab()
+  const set = useSearchLab.setState
   const day = useQuery({ queryKey: ['today'], queryFn: () => today.get() })
-  const navigate = useNavigate()
-  const queryClient = useQueryClient()
-  const { chosen, names, choose } = useLabMarket(stored, stored.set, '/labs/search')
+  const { chosen, scope, choose, move } = useLabMarket(stored, set, '/labs/search')
 
   const options = useQuery({
     queryKey: ['search-lab', 'options'],
@@ -38,45 +36,31 @@ export function SearchLabScreen() {
   // Until the user types a number, the task takes what is left of today (never stored).
   const maxSimulations = options.data?.maxSimulations ?? MAX_SIMULATIONS
   const unspoken = day.data?.simulations.unspoken ?? 0
-  const draft = {
-    ...stored,
-    simulations: stored.simulations ?? (unspoken > 0 ? Math.min(unspoken, maxSimulations) : null),
-  }
+  const suggested = unspoken > 0 ? Math.min(unspoken, maxSimulations) : null
+  const draft = { ...stored, simulations: stored.simulations ?? suggested }
   const vectorOperators = vectorOperatorsOf(draft, options.data?.vector)
-  const body: SearchLabRequest = labBody(draft, vectorOperators)
-  const key = JSON.stringify(body)
-  const settledKey = useDebounced(key, 300)
-  const preview = useQuery({
-    queryKey: ['search-lab', 'preview', settledKey],
-    queryFn: () => searchLab.preview(JSON.parse(settledKey) as SearchLabRequest),
-    enabled: chosen && options.isSuccess && settledKey === key,
-    placeholderData: keepPreviousData,
+  const cores = useCores(draft.cores)
+  const { neutralizations } = useScopeOptions({
+    instrumentType: 'EQUITY',
+    region: draft.region,
+    delay: draft.delay,
+    universe: draft.universe,
+  })
+  const body: SearchLabRequest = labBody(draft, vectorOperators, cores, neutralizations)
+  const { preview, current } = useLabPreview('search-lab', body, searchLab.preview, {
+    enabled: chosen && options.isSuccess,
   })
   const plan = chosen ? preview.data : undefined
 
-  const add = useMutation({
-    mutationFn: (count: number) => searchLab.runTask({ ...body, simulations: count }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['lab-tasks'] })
-      void queryClient.invalidateQueries({ queryKey: ['today'] })
-      toast.success('Task running', {
-        action: {
-          label: 'Open Tasks',
-          onClick: () => void navigate({ to: '/tasks' }),
-        },
-      })
-    },
-    onError: (error) => toast.error(errorMessage(error)),
-  })
+  const add = useAddTask(() => searchLab.addTask({ ...body, simulations: draft.simulations ?? 0 }))
   const ready =
     plan !== undefined &&
-    settledKey === key &&
-    !preview.isFetching &&
+    current &&
     plan.problems.length === 0 &&
-    simulationsValid(draft, maxSimulations)
-  // What stops Run Task that no panel below already says.
+    simulationsValid(draft.simulations, maxSimulations)
+  // What stops both buttons that no panel below already says.
   const blocked = !chosen
-    ? 'Choose datasets to run.'
+    ? 'Choose datasets first.'
     : draft.simulations === null
       ? 'Enter the simulations to run.'
       : null
@@ -84,39 +68,28 @@ export function SearchLabScreen() {
   return (
     <Page>
       <PageHeader
+        sticky
         title="Search Lab"
-        actions={
-          <>
-            {blocked && (
-              <span id="run-task-blocked" className="text-body-compact text-ink-subtle">
-                {blocked}
-              </span>
-            )}
-            <Button
-              variant="primary"
-              disabled={!ready}
-              loading={add.isPending}
-              aria-describedby={blocked ? 'run-task-blocked' : undefined}
-              onClick={() => draft.simulations !== null && add.mutate(draft.simulations)}
-            >
-              <PlayIcon />
-              Run Task
-            </Button>
-          </>
-        }
+        actions={<AddTaskButtons add={add} disabled={!ready} blocked={blocked} />}
       />
       {options.isError && (
         <ErrorNotice error={options.error} title="Could not read your operators" />
       )}
+      <MarketPanel scope={scope} onChange={move} />
       <DatasetsPanel
         ids={draft.datasetIds}
-        names={names}
-        onChoose={choose}
-        onRemove={(id) => stored.set({ datasetIds: stored.datasetIds.filter((x) => x !== id) })}
+        scope={scope}
+        onApply={(datasetIds, fieldFilter) => set({ datasetIds, fieldFilter })}
+        onExplore={choose}
+        filter={draft.fieldFilter}
+        onClearFilter={() => set({ fieldFilter: null })}
+        onRemove={(ids) => set({ datasetIds: stored.datasetIds.filter((x) => !ids.includes(x)) })}
       />
       <SettingsPanel
-        draft={draft}
-        set={stored.set}
+        // The box holds only what was typed, so it can be emptied; the suggestion shows faintly.
+        draft={stored}
+        suggested={suggested}
+        set={set}
         vector={options.data?.vector ?? []}
         chosenVector={vectorOperators}
         decays={options.data?.decays}

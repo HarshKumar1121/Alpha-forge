@@ -37,13 +37,14 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-import httpx
+import httpx2
 
 from alpha_harness.account import AuthService, PlatformMetadata
 from alpha_harness.brain.client import BrainClient
 from alpha_harness.brain.endpoints import BrainEndpoints
 from alpha_harness.brain.filters import AlphaQuery, Filter
-from alpha_harness.config import BRAIN_API_BASE, get_settings
+from alpha_harness.brain.platform import API_BASE
+from alpha_harness.config import Settings
 from alpha_harness.db.sqlite import Database
 from alpha_harness.sealing import Sealer
 
@@ -51,12 +52,16 @@ PASS = "PASS"  # noqa: S105 - a check outcome, not a password
 FAIL = "FAIL"
 SKIP = "SKIP"
 
+#: Fields read from the sample dataset. One page is enough to prove the shape parses; the
+#: whole market is ~40 MB and the catalog sync is what downloads it.
+FIELD_SAMPLE = 50
+
 
 class ReadOnlyViolation(RuntimeError):
     """A write was attempted by a script that is only allowed to read."""
 
 
-class ReadOnlyTransport(httpx.AsyncHTTPTransport):
+class ReadOnlyTransport(httpx2.AsyncHTTPTransport):
     """Lets GET and OPTIONS through and refuses everything else.
 
     This is the structural guarantee behind "spends no simulations". ``POST /simulations``
@@ -65,7 +70,7 @@ class ReadOnlyTransport(httpx.AsyncHTTPTransport):
 
     ALLOWED = frozenset({"GET", "OPTIONS", "HEAD"})
 
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
         if request.method not in self.ALLOWED:
             raise ReadOnlyViolation(
                 f"smoke_brain.py attempted {request.method} {request.url.path}; "
@@ -131,15 +136,15 @@ async def _timed(check: Check, work: Any) -> Any:
 
 
 async def run(region: str, delay: int, universe: str) -> Report:
-    settings = get_settings()
+    settings = Settings()
     settings.ensure_data_dir()
     report = Report()
 
-    client = BrainClient(BRAIN_API_BASE, transport=ReadOnlyTransport())
+    client = BrainClient(API_BASE, transport=ReadOnlyTransport())
     endpoints = BrainEndpoints(client)
-    db = Database.for_path(settings.sqlite_path)
+    db = Database(settings.sqlite_path)
     await db.create_all()
-    sealer = Sealer.from_path(settings.key_path)
+    sealer = Sealer(settings.key_path)
     metadata = PlatformMetadata(db, endpoints)
     auth = AuthService(db, sealer, endpoints, metadata=metadata)
 
@@ -191,16 +196,23 @@ async def run(region: str, delay: int, universe: str) -> Report:
                 check.detail = f"no datasets for {region}/{delay}/{universe}"
 
         # 4. One dataset's fields.
+        #
+        # A `dataset.id` filter without a `limit` is refused outright (`400 ["Invalid
+        # query"]`); the unlimited read is only offered for a whole market, which is ~40 MB
+        # and far more than a smoke check should pull. One page proves the shape.
         check = report.add("fields")
         if dataset_id is None:
             check.detail = "no dataset to read fields from"
         else:
             fields = await _timed(
-                check, endpoints.list_data_fields_all(**scope, **{"dataset.id": dataset_id})
+                check,
+                endpoints.list_data_fields_all(
+                    **scope, **{"dataset.id": dataset_id, "limit": FIELD_SAMPLE}
+                ),
             )
             if fields is not None:
                 matrix = sum(1 for f in fields if f.type == "MATRIX")
-                check.detail = f"{len(fields)} fields in {dataset_id} ({matrix} MATRIX)"
+                check.detail = f"{len(fields)} fields sampled from {dataset_id} ({matrix} MATRIX)"
                 if not fields:
                     check.status = FAIL
                     check.detail = f"{dataset_id} returned no fields"

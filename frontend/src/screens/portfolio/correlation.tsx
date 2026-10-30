@@ -1,25 +1,54 @@
-/** Correlation of the selected Alphas' daily PnL, as a heatmap that fills the panel. */
+/** Correlation of the selected Alphas' daily PnL, as a heatmap small enough to take in at once. */
 
-import { cn } from '@/lib/cn'
+import { memo, useMemo, useState } from 'react'
 import { fmt } from '@/lib/format'
 import type { PortfolioResult } from './api'
 
-/** Deepest mix at ±1. Kept short of full so the white figure on it stays readable. */
-const DEEPEST = 70
+/** The lowest and highest correlation shown, which the colour scale runs between. */
+type Range = { low: number; high: number }
 
-/** Positive correlation deepens toward red: the pair moves together and adds little (BRAIN
- * refuses a Power Pool pair at 0.5). Negative deepens toward green: the pair diversifies. */
-function fill(value: number) {
-  const hue = value >= 0 ? 'var(--color-pnl-negative)' : 'var(--color-pnl-positive)'
-  const share = Math.round(Math.min(1, Math.abs(value)) * DEEPEST)
-  return `color-mix(in oklab, ${hue} ${share}%, var(--color-surface-1))`
+function rangeOf(values: number[]): Range {
+  return { low: Math.min(...values), high: Math.max(...values) }
 }
 
-const LEGEND = `linear-gradient(to right, ${[-1, -0.5, 0, 0.5, 1].map(fill).join(', ')})`
+const GREEN = 'var(--color-pnl-positive)'
+const AMBER = 'var(--color-status-warning)'
+const RED = 'var(--color-pnl-negative)'
+/** Where amber sits on the scale. Squared, so the many pairs near the low end stay green and
+ *  only the high ones heat up: amber lands at the square root of the halfway point. */
+const AMBER_AT = Math.SQRT1_2
+
+/** Green at the lowest correlation, red at the highest, through amber. */
+function fill(value: number, { low, high }: Range) {
+  const t = high > low ? ((value - low) / (high - low)) ** 2 : 1
+  return t < 0.5
+    ? `color-mix(in oklch, ${AMBER} ${Math.round(t * 200)}%, ${GREEN})`
+    : `color-mix(in oklch, ${RED} ${Math.round((t - 0.5) * 200)}%, ${AMBER})`
+}
+
+function Legend({ range }: { range: Range }) {
+  return (
+    <div className="flex items-center justify-center gap-2 text-body-compact text-ink-muted">
+      <span className="num">{fmt.ratio(range.low, 4)}</span>
+      <span
+        className="h-2 w-48 rounded-pill"
+        style={{
+          background: `linear-gradient(to right in oklch, ${GREEN}, ${AMBER} ${Math.round(AMBER_AT * 100)}%, ${RED})`,
+        }}
+        aria-hidden
+      />
+      <span className="num">{fmt.ratio(range.high, 4)}</span>
+    </div>
+  )
+}
+
+/** Opens an Alpha in the detail sheet, with the other one of its pair a step away. */
+type Open = (alphaId: string, ids?: string[]) => void
 
 /** Past its grid limit the backend sends only the most correlated pairs, highest first. */
-function TopPairs({ result }: { result: PortfolioResult }) {
+function TopPairs({ result, onOpen }: { result: PortfolioResult; onOpen: Open }) {
   const { ids, topPairs, measuredPairs } = result
+  const range = rangeOf(topPairs.map((p) => p.correlation))
   if (!topPairs.length) {
     return (
       <p className="text-body-compact text-ink-subtle">
@@ -31,84 +60,118 @@ function TopPairs({ result }: { result: PortfolioResult }) {
     <div className="flex flex-col gap-3">
       <p className="text-body-compact text-ink-subtle">
         The {topPairs.length} most correlated of{' '}
-        <span className="num">{fmt.int(measuredPairs)}</span> pairs; a full grid of {ids.length}{' '}
-        Alphas is too dense to read.
+        <span className="num">{fmt.int(measuredPairs)}</span> pairs; {ids.length} Alphas are too
+        many for the grid. Click a pair to open it.
       </p>
       <div className="grid gap-1.5 sm:grid-cols-2 xl:grid-cols-4">
         {topPairs.map((p) => (
-          <div
+          <button
+            type="button"
             key={`${p.a}-${p.b}`}
-            className="flex items-center justify-between gap-3 rounded-xs px-3 py-2 text-body-compact"
-            style={{ background: fill(p.correlation) }}
+            onClick={() => onOpen(p.a, [p.a, p.b])}
+            className="flex items-center justify-between gap-3 rounded-xs border border-hairline px-3 py-2 text-left text-body-compact transition-colors hover:border-hairline-strong hover:bg-surface-2"
           >
-            <span className="mono-metric text-ink-muted">
-              {p.a} · {p.b}
+            <span className="flex items-center gap-2">
+              <span
+                className="size-3 rounded-xs"
+                style={{ background: fill(p.correlation, range) }}
+                aria-hidden
+              />
+              <span className="mono-metric text-ink-muted">
+                {p.a} · {p.b}
+              </span>
             </span>
-            <span className="num text-ink">{fmt.ratio(p.correlation)}</span>
-          </div>
+            <span className="num text-ink">{fmt.ratio(p.correlation, 4)}</span>
+          </button>
         ))}
       </div>
+      <Legend range={range} />
     </div>
   )
 }
 
-export function CorrelationMatrix({ result }: { result: PortfolioResult }) {
+/** Up to 22,000 cells, so drawn once per result: hovering reads the cell under the pointer
+ *  from its data attributes rather than drawing the grid again. */
+const Cells = memo(function Cells({ result, range }: { result: PortfolioResult; range: Range }) {
   const { ids, correlation } = result
+  return ids.flatMap((row, i) =>
+    ids.map((column, j) => {
+      const value = correlation[i]?.[j] ?? null
+      const blank = i === j ? 'bg-surface-3' : value === null ? 'bg-surface-2' : ''
+      return (
+        <div
+          key={`${row}-${column}`}
+          data-i={i}
+          data-j={j}
+          className={`size-3 cursor-pointer hover:outline hover:outline-1 hover:outline-ink ${blank}`}
+          style={blank || value === null ? undefined : { background: fill(value, range) }}
+        />
+      )
+    }),
+  )
+})
+
+function Grid({ result, onOpen }: { result: PortfolioResult; onOpen: Open }) {
+  const { ids, correlation } = result
+  const [at, setAt] = useState<[number, number] | null>(null)
+  const measured = useMemo(
+    () => correlation.flatMap((row, i) => row.filter((v, j): v is number => j !== i && v !== null)),
+    [correlation],
+  )
+  const range = useMemo(() => (measured.length ? rangeOf(measured) : null), [measured])
   // The backend decides: a grid it can send, or only the top pairs when it cannot.
-  if (!correlation.length) return <TopPairs result={result} />
+  if (!correlation.length || !range) return <TopPairs result={result} onOpen={onOpen} />
+  const cell = (target: EventTarget): [number, number] | null => {
+    const { i, j } = (target as HTMLElement).dataset
+    return i === undefined || j === undefined ? null : [Number(i), Number(j)]
+  }
+  const [a, b] = at ? [ids[at[0]], ids[at[1]]] : [undefined, undefined]
+  const value = at ? (correlation[at[0]]?.[at[1]] ?? null) : null
   return (
     <div className="flex flex-col gap-3">
+      <p className="num flex h-5 items-center justify-center gap-2 text-body-compact">
+        {a && b ? (
+          a === b ? (
+            <span className="text-ink">{a}</span>
+          ) : (
+            <>
+              <span className="text-ink">{a}</span>
+              <span className="text-ink-subtle">·</span>
+              <span className="text-ink">{b}</span>
+              <span className="text-ink-subtle">—</span>
+              <span className="font-medium text-ink">
+                {value === null ? 'under 250 shared days' : fmt.ratio(value, 4)}
+              </span>
+            </>
+          )
+        ) : (
+          <span className="text-ink-subtle">
+            Point at a square to read its pair; click to open it.
+          </span>
+        )}
+      </p>
       <div className="overflow-x-auto">
-        <table
-          className="w-full table-fixed border-separate border-spacing-px"
-          style={{ minWidth: `${6 + ids.length * 4.5}rem` }}
+        {/* biome-ignore lint/a11y/useKeyWithClickEvents: a picture to point at; the members table is the keyboard's way to each Alpha */}
+        <div
+          role="img"
+          aria-label={`Correlation of ${ids.length} Alphas, newest first`}
+          className="mx-auto grid w-fit gap-px bg-surface-1"
+          style={{ gridTemplateColumns: `repeat(${ids.length}, 0.75rem)` }}
+          onPointerOver={(e) => setAt(cell(e.target))}
+          onPointerLeave={() => setAt(null)}
+          onClick={(e) => {
+            const hit = cell(e.target)
+            const [row, column] = hit ? [ids[hit[0]], ids[hit[1]]] : []
+            if (row && column) onOpen(row, row === column ? [row] : [row, column])
+          }}
         >
-          <thead>
-            <tr>
-              <th className="w-24" />
-              {ids.map((id) => (
-                <th
-                  key={id}
-                  className="mono-metric truncate pb-1.5 text-center font-normal text-ink-subtle"
-                >
-                  {id}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {ids.map((row, i) => (
-              <tr key={row}>
-                <th className="mono-metric truncate pr-3 text-left font-normal text-ink-subtle">
-                  {row}
-                </th>
-                {ids.map((column, j) => {
-                  const value = correlation[i]?.[j] ?? null
-                  const self = i === j
-                  return (
-                    <td
-                      key={column}
-                      title={`${row} · ${column}`}
-                      className={cn(
-                        'num h-11 text-center text-body-compact',
-                        self ? 'bg-surface-3 text-ink-subtle' : 'text-ink',
-                      )}
-                      style={{ background: self || value === null ? undefined : fill(value) }}
-                    >
-                      {value === null ? '' : fmt.ratio(value)}
-                    </td>
-                  )
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+          <Cells result={result} range={range} />
+        </div>
       </div>
-      <div className="flex items-center gap-2 text-body-compact text-ink-subtle">
-        <span className="num">−1</span>
-        <span className="h-2 w-48 rounded-pill" style={{ background: LEGEND }} aria-hidden />
-        <span className="num">+1</span>
-      </div>
+      <Legend range={range} />
     </div>
   )
 }
+
+/** Memoised: drawn again only when the result itself changes. */
+export const CorrelationMatrix = memo(Grid)

@@ -12,8 +12,6 @@ the ability to cancel a running simulation, which is the exact failure this proj
 exists to prevent.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
@@ -31,7 +29,9 @@ from sqlalchemy import (
     TypeDecorator,
     UniqueConstraint,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+from ..brain.platform import INSTRUMENT_TYPE
 
 
 def utcnow() -> datetime:
@@ -80,10 +80,10 @@ class Credential(Base):
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow, onupdate=utcnow)
     last_login_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
-
-    sessions: Mapped[list[BrainSessionRow]] = relationship(
-        back_populates="credential", cascade="all, delete-orphan"
-    )
+    #: Set when BRAIN refused this login or the person signed out: the app does not sign in
+    #: with it by itself again until the person does. Each refused sign-in spends BRAIN's
+    #: lockout budget.
+    silent_off_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
 
 
 class BrainSessionRow(Base):
@@ -97,13 +97,11 @@ class BrainSessionRow(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     credential_id: Mapped[int] = mapped_column(ForeignKey("credential.id", ondelete="CASCADE"))
     cookies_sealed: Mapped[bytes] = mapped_column(LargeBinary)
-    user_id: Mapped[str | None] = mapped_column(String(64))
+    #: Never read. Kept because it is NOT NULL with no server default: dropped here, a previous
+    #: build the launcher falls back to could not add it again, and would not start.
     permissions: Mapped[list[Any]] = mapped_column(JSON, default=list)
-    expires_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow, onupdate=utcnow)
-
-    credential: Mapped[Credential] = relationship(back_populates="sessions")
 
 
 # --- simulations ----------------------------------------------------------
@@ -137,12 +135,15 @@ class SimStatus(StrEnum):
 
     @property
     def terminal(self) -> bool:
-        return self not in (
-            SimStatus.QUEUED,
-            SimStatus.PENDING,
-            SimStatus.RUNNING,
-            SimStatus.ORPHANED,
-        )
+        return self not in ACTIVE
+
+
+#: Not yet finished; every other status is final. One exception: a cancel BRAIN refuses
+#: moves ``CANCELLED`` back to ``RUNNING``, because the simulation is in fact still running
+#: and still has to be polled (:func:`.engine.lifecycle.cancel_after_lost_race`).
+#: ``ORPHANED`` belongs here because an identical request arriving while its outcome is
+#: reconciled must share the row rather than pay for a second run.
+ACTIVE = (SimStatus.QUEUED, SimStatus.PENDING, SimStatus.RUNNING, SimStatus.ORPHANED)
 
 
 class SimulationRecord(Base):
@@ -179,7 +180,7 @@ class SimulationRecord(Base):
 
     # Batch-packing key: children of one multi-simulation must agree on all of these.
     sim_type: Mapped[str] = mapped_column(String(16), default="REGULAR")
-    instrument_type: Mapped[str] = mapped_column(String(16), default="EQUITY")
+    instrument_type: Mapped[str] = mapped_column(String(16), default=INSTRUMENT_TYPE)
     region: Mapped[str] = mapped_column(String(16))
     delay: Mapped[int] = mapped_column(Integer)
     language: Mapped[str] = mapped_column(String(16), default="FASTEXPR")
@@ -207,6 +208,10 @@ class SimulationRecord(Base):
     __table_args__ = (
         Index("ix_sim_active", "status", "created_at"),
         Index("ix_sim_batch_key", "sim_type", "instrument_type", "region", "delay", "language"),
+        # For the engine's every-tick reads, which otherwise scan every row ever simulated.
+        Index("ix_sim_unexpanded", "is_batch", "children_expanded"),
+        Index("ix_sim_finished", "status", "finished_at"),
+        Index("ix_sim_sent_day", "is_batch", "submitted_at"),
     )
 
     @property
@@ -214,20 +219,13 @@ class SimulationRecord(Base):
         """Wall time since submission — what the matrix cell counts up."""
         if self.submitted_at is None:
             return None
-        end = self.finished_at or utcnow()
-        start = self.submitted_at
-        if start.tzinfo is None:
-            start = start.replace(tzinfo=UTC)
-        if end.tzinfo is None:
-            end = end.replace(tzinfo=UTC)
-        return (end - start).total_seconds()
+        return ((self.finished_at or utcnow()) - self.submitted_at).total_seconds()
 
 
 class DedupEntry(Base):
     """Hash of a canonical simulation payload -> the alpha it produced.
 
-    Guards the daily quota against re-simulating something already run, as recommended
-    in ``docs/wqb-documentation/brain-api/how-can-you-avoid-duplicate-simulations.md``.
+    Guards the daily quota against re-simulating something already run, as BRAIN recommends.
     """
 
     __tablename__ = "dedup_entry"
@@ -252,6 +250,19 @@ class TaskQuota(Base):
     enabled: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow, onupdate=utcnow)
+
+
+class Preference(Base):
+    """One choice made in Settings, by name. A missing row means the default.
+
+    A row per choice rather than a column each: a choice added later needs no migration, and
+    a build older than it simply never reads the row.
+    """
+
+    __tablename__ = "preference"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[Any] = mapped_column(JSON)
 
 
 class QuotaSnapshot(Base):
@@ -295,34 +306,27 @@ class SyncStatus(StrEnum):
 
 
 class SyncRun(Base):
-    """One catalog crawl of a single (instrumentType, region, delay, universe) tuple.
-
-    ``cursor_offset`` makes the crawl resumable: an interrupted sync continues from the
-    last committed page rather than restarting.
-    """
+    """One catalog crawl of a single (instrumentType, region, delay, universe) tuple."""
 
     __tablename__ = "sync_run"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    instrument_type: Mapped[str] = mapped_column(String(16), default="EQUITY")
+    instrument_type: Mapped[str] = mapped_column(String(16), default=INSTRUMENT_TYPE)
     region: Mapped[str] = mapped_column(String(16))
     delay: Mapped[int] = mapped_column(Integer)
     universe: Mapped[str] = mapped_column(String(32))
 
     status: Mapped[str] = mapped_column(String(16), default=SyncStatus.RUNNING, index=True)
     phase: Mapped[str | None] = mapped_column(String(32))
-    cursor_offset: Mapped[int] = mapped_column(Integer, default=0)
-    #: Which dataset the field crawl is inside. Fields are fetched one dataset at a
-    #: time because the platform refuses any offset at or beyond 10,000, so the whole
-    #: scope cannot be paged as one list — see :mod:`alpha_harness.catalog.sync`.
-    cursor_dataset: Mapped[str | None] = mapped_column(String(64))
-    #: Datasets whose own field count exceeds what pagination can reach. Recorded rather
-    #: than ignored, so an incomplete catalog is never silent.
-    truncated_datasets: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    #: Unused. Retired once every install has run a build with these server defaults: a build
+    #: without them cannot put the columns back, so the launcher could not fall back to it.
+    cursor_offset: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    truncated_datasets: Mapped[list[Any]] = mapped_column(JSON, default=list, server_default="[]")
 
     datasets_synced: Mapped[int] = mapped_column(Integer, default=0)
     fields_synced: Mapped[int] = mapped_column(Integer, default=0)
-    fields_expected: Mapped[int | None] = mapped_column(Integer)
+    #: No longer counted. Kept because it is NOT NULL with no server default: dropped here, a
+    #: previous build the launcher falls back to could not add it again, and would not start.
     categories_synced: Mapped[int] = mapped_column(Integer, default=0)
 
     error: Mapped[str | None] = mapped_column(Text)
@@ -330,10 +334,6 @@ class SyncRun(Base):
     finished_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
 
     __table_args__ = (Index("ix_sync_tuple", "instrument_type", "region", "delay", "universe"),)
-
-    @property
-    def tuple_key(self) -> tuple[str, str, int, str]:
-        return (self.instrument_type, self.region, self.delay, self.universe)
 
 
 # --- platform metadata cache ---------------------------------------------
@@ -417,6 +417,8 @@ class Study(Base):
     name: Mapped[str] = mapped_column(String(128), unique=True)
     template_id: Mapped[int | None] = mapped_column(ForeignKey("template.id", ondelete="SET NULL"))
     template_name: Mapped[str | None] = mapped_column(String(128))
+    #: What the user calls the task, shown in place of its lab and template.
+    label: Mapped[str | None] = mapped_column(String(128))
     template_source: Mapped[str] = mapped_column(Text)
 
     sampler: Mapped[str] = mapped_column(String(32), default="nsga3")
@@ -441,8 +443,6 @@ class Study(Base):
     started_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
     finished_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
 
-    trials: Mapped[list[Trial]] = relationship(back_populates="study", cascade="all, delete-orphan")
-
 
 class Trial(Base):
     """One point in the search space, and what it turned into.
@@ -459,16 +459,16 @@ class Trial(Base):
     number: Mapped[int] = mapped_column(Integer)
 
     params: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    distributions: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    #: What Optuna drew each value from: every choice of every categorical, so a field searched
+    #: over a few thousand fields stores them all, on every trial — 127 KB a trial was measured.
+    #: Deferred, so only the two readers that rebuild the search load it; decoding it on every
+    #: row a screen or a harvest reads held the event loop for seconds.
+    distributions: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, deferred=True)
     expression: Mapped[str | None] = mapped_column(Text)
     settings: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
     state: Mapped[str] = mapped_column(String(16), default=TrialState.QUEUED, index=True)
     values: Mapped[list[Any] | None] = mapped_column(JSON)
-    #: Submission-check violations, keyed by the platform's own check name. Zero or
-    #: less is feasible, following Optuna's convention.
-    constraint: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    feasible: Mapped[bool | None] = mapped_column()
     result: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     message: Mapped[str | None] = mapped_column(Text)
 
@@ -481,8 +481,6 @@ class Trial(Base):
 
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(UtcDateTime)
-
-    study: Mapped[Study] = relationship(back_populates="trials")
 
     __table_args__ = (
         UniqueConstraint("study_id", "number", name="uq_trial_number"),
@@ -505,17 +503,13 @@ class ChatThread(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(160))
-    instrument_type: Mapped[str] = mapped_column(String(16), default="EQUITY")
+    instrument_type: Mapped[str] = mapped_column(String(16), default=INSTRUMENT_TYPE)
     region: Mapped[str] = mapped_column(String(16))
     delay: Mapped[int] = mapped_column(Integer)
     universe: Mapped[str] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         UtcDateTime, default=utcnow, onupdate=utcnow, index=True
-    )
-
-    messages: Mapped[list[ChatMessage]] = relationship(
-        back_populates="thread", cascade="all, delete-orphan"
     )
 
 
@@ -532,8 +526,6 @@ class ChatMessage(Base):
     text: Mapped[str] = mapped_column(Text)
     meta: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
-
-    thread: Mapped[ChatThread] = relationship(back_populates="messages")
 
 
 class ApiKey(Base):
@@ -563,10 +555,9 @@ class ApiKey(Base):
 class KeyUsage(Base):
     """Local budget ledger per (key, model, quota day).
 
-    Google exposes no remaining-quota endpoint, so RPM/TPM/RPD have to be tracked
-    client-side or rotation is guesswork. The day is **America/Los_Angeles**, where AI
-    Studio's quota clock lives; counting UTC days would hand a key's daily budget back
-    hours early and produce 429s that look like the platform misbehaving.
+    Providers expose no remaining-quota endpoint, so requests per minute and per day are
+    tracked client-side or rotation is guesswork. ``day`` is the date in the model's own
+    reset time zone, since providers do not agree on when a day starts.
     """
 
     __tablename__ = "key_usage"
@@ -582,15 +573,29 @@ class KeyUsage(Base):
     __table_args__ = (UniqueConstraint("api_key_id", "model", "day", name="uq_key_model_day"),)
 
 
-class Submission(Base):
-    """An Alpha the consultant has told us they submitted on BRAIN.
+class LLMModel(Base):
+    """A model the user has set up, with the limits they read off their provider.
 
-    Submission happens by hand on the platform, so nothing here can observe it. The row is
-    the user's own record, and the Submission Planner treats it as a permanent pool member
-    every later candidate has to clear.
+    Nothing about models is built in: which ones exist and what each allows change faster
+    than any table here could keep up. Limits apply per key, so a second account doubles
+    them. A model id is unique per provider: two providers may serve the same one.
     """
 
-    __tablename__ = "submission"
+    __tablename__ = "llm_model"
 
-    alpha_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    submitted_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(String(32))
+    model: Mapped[str] = mapped_column(String(200))
+    requests_per_minute: Mapped[int] = mapped_column(Integer)
+    requests_per_day: Mapped[int] = mapped_column(Integer)
+    #: The IANA time zone whose midnight starts the provider's new day for this model.
+    reset_timezone: Mapped[str] = mapped_column(
+        String(64), default="America/Los_Angeles", server_default="America/Los_Angeles"
+    )
+    #: The most tokens one Power Pool prompt may spend on this model, or null for the default.
+    max_prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
+
+    # An index rather than a table constraint, so a database that already has the table
+    # gains it on startup: SQLite cannot add a constraint to a live table.
+    __table_args__ = (Index("uq_llm_model_provider_model", "provider", "model", unique=True),)

@@ -10,13 +10,11 @@ of a platform id, and :class:`~alpha_harness.engine.tracker.SimulationTracker` p
 parent until it lists its children.
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import dataclasses
+import itertools
 import time
-from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -32,48 +30,38 @@ from ..brain.errors import (
     BrainValidationError,
 )
 from ..brain.filters import platform_midnight
-from ..brain.schemas import SimulationRequest
-from ..db.models import DedupEntry, SimStatus, SimulationRecord, Study, TaskQuota, utcnow
+from ..brain.platform import MULTI_SIMULATION_SIZE, SIMULATION_SLOTS
+from ..brain.schemas import QUICK_MODE, SimulationRequest
+from ..db.models import ACTIVE, DedupEntry, SimStatus, SimulationRecord, Study, TaskQuota, utcnow
+from ..tasks import spawn
 from .awake import StayAwake
 from .lifecycle import (
-    ACTIVE,
     SLOT_COST,
-    ChangeHook,
     Outcome,
     SubmissionFailed,
     cancel_after_lost_race,
     describe_fields,
     extract_simulation_id,
+    finish,
     hash_payload,
     new_record,
-    read_outcome,
     record_launch,
-    remember,
-    serialise,
+    request_hash,
     transition,
 )
-from .packer import (
-    MAX_BATCH,
-    Batch,
-    WorkItem,
-    allocate_slots,
-    demand_by_task,
-    key_of,
-    match_children,
-    pack,
-)
-from .tracker import DEFAULT_POLL_SECONDS
+from .packer import Batch, WorkItem, allocate_slots, demand_by_task, key_of, match_children, pack
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from ..brain.endpoints import BrainEndpoints
     from ..db.sqlite import Database
     from .tracker import SimulationTracker
 
 log = structlog.get_logger(__name__)
 
-#: Concurrent simulations the platform allows. Accounts without MULTI_SIMULATION get the
-#: same slots, one simulation per batch.
-DEFAULT_SLOTS = 8
+#: Added to a batched simulation's outcome when BRAIN named no child, so it was matched by order.
+POSITIONAL_NOTE = "Matched to this request by submission order."
 
 #: How often the engine looks for work.
 TICK_SECONDS = 2.0
@@ -100,9 +88,6 @@ ORPHAN_SWEEP_SECONDS = 60.0
 #: Cancellations in flight at once when a task is forced to stop.
 ABANDON_AT_ONCE = 8
 
-#: Asked while BRAIN refuses the session; True once simulations may be sent again.
-SessionHook = Callable[[], Awaitable[bool]]
-
 
 class BatchEngine:
     """Keeps the concurrent slots full from a local queue."""
@@ -113,38 +98,40 @@ class BatchEngine:
         endpoints: BrainEndpoints,
         tracker: SimulationTracker,
         *,
-        slots: int = DEFAULT_SLOTS,
-        on_change: ChangeHook | None = None,
-        on_unauthorized: SessionHook | None = None,
+        on_unauthorized: Callable[[], Awaitable[bool]],
     ) -> None:
         self.db = db
         self.endpoints = endpoints
         self.tracker = tracker
-        self.slots = slots
-        self._on_change = on_change
+        self.slots = SIMULATION_SLOTS
+        #: Asked while BRAIN refuses the session; True once simulations may be sent again.
         self._on_unauthorized = on_unauthorized
         #: Set when BRAIN answers 401. Sending on stops until the session is usable: every
         #: send would fail the same way, and work must never be rejected for it.
         self._session_lost = False
         self._task: asyncio.Task[None] | None = None
-        self._stopping = asyncio.Event()
+        #: Lend cores no task holds to tasks with more work than their own (Settings).
+        self.lend_idle_cores = False
+        #: Ask the OS not to sleep while work is pending (Settings).
+        self.keep_awake = True
+        #: Regions whose simulations run in BRAIN's Quick mode unless one names a mode
+        #: (Settings), and whether the account may run it at all.
+        self.quick_regions: frozenset[str] = frozenset()
+        self.quick_allowed = False
         #: Set when the daily cap is hit. Nothing is submitted until it clears, because
         #: retrying before the US-Eastern reset cannot succeed.
         self._daily_limit_hit = False
-        #: Monotonic time of BRAIN's quota reset; the flag clears once it passes.
+        #: Wall-clock time of BRAIN's quota reset; the flag clears once it passes. Not
+        #: monotonic: that clock stops while the computer sleeps, and BRAIN's day does not.
         self._limit_resets_at: float | None = None
-        self._tick_lock = asyncio.Lock()
         self._enqueue_lock = asyncio.Lock()
-        #: Reads finished batches back outside the tick lock; at most one runs at a time.
+        #: Reads finished batches back beside the scheduling round; at most one at a time.
         self._expansion: asyncio.Task[None] | None = None
-        #: Child platform id -> monotonic time its next read is due. Losing it on restart
-        #: only means one immediate read, as with the tracker's own schedule.
-        self._child_next_read: dict[str, float] = {}
         #: Child platform id -> (body, outcome) of a finished child not yet written to its
         #: row, because its batch still has children running.
         self._child_results: dict[str, tuple[dict[str, Any], Outcome]] = {}
         #: Batch size, reduced to 1 for accounts without MULTI_SIMULATION.
-        self.max_batch = MAX_BATCH
+        self.max_batch = MULTI_SIMULATION_SIZE
         #: Set once BRAIN refuses a batch with 403; lasts for the process.
         self._batch_refused = False
         #: Blocks OS sleep while work is pending; checked every AWAKE_TICKS rounds.
@@ -159,38 +146,50 @@ class BatchEngine:
     async def start(self) -> None:
         if self._task is not None:
             return
-        self._stopping.clear()
         self._task = asyncio.create_task(self._run(), name="batch-engine")
         log.info("engine.started", slots=self.slots, max_batch=self.max_batch)
 
     async def stop(self) -> None:
-        self._stopping.set()
         if self._task is not None:
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
             self._task = None
-        if self._expansion is not None:
-            self._expansion.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._expansion
-            self._expansion = None
         self._awake.release()
         log.info("engine.stopped")
 
+    def set_keep_awake(self, on: bool) -> None:
+        """Turned off, the machine may sleep at once rather than at the next check."""
+        self.keep_awake = on
+        if not on:
+            self._awake.release()
+
+    async def idle(self) -> bool:
+        """Nothing out on BRAIN and nothing about to be sent: safe to restart the app."""
+        return not await self._busy()
+
     def configure_from_permissions(self, permissions: list[str]) -> None:
-        """Batching needs MULTI_SIMULATION; without it every batch is a single run.
+        """Batching needs MULTI_SIMULATION, and Quick mode QUICK_MODE; without the first every
+        batch is a single run.
 
         A 403 on a batch outranks the permission list: a re-login must not resume the
         batches BRAIN already refused.
         """
         allowed = "MULTI_SIMULATION" in permissions and not self._batch_refused
-        self.max_batch = MAX_BATCH if allowed else 1
+        self.max_batch = MULTI_SIMULATION_SIZE if allowed else 1
+        self.quick_allowed = "QUICK_MODE" in permissions
 
-    def clear_daily_limit(self) -> None:
-        """Called when a new US-Eastern day starts, or by the user."""
-        self._daily_limit_hit = False
-        self._limit_resets_at = None
+    def _moded(self, request: SimulationRequest) -> SimulationRequest:
+        """``request`` in Quick mode where Settings ask for it and it names no mode itself."""
+        settings = request.settings
+        if (
+            settings.simulation_mode is not None
+            or not self.quick_allowed
+            or settings.region not in self.quick_regions
+        ):
+            return request
+        quick = settings.model_copy(update={"simulation_mode": QUICK_MODE, "visualization": False})
+        return request.model_copy(update={"settings": quick})
 
     # -- queueing --------------------------------------------------------
 
@@ -198,8 +197,7 @@ class BatchEngine:
         self,
         requests: list[SimulationRequest],
         *,
-        task: str = MANUAL_TASK,
-        skip_duplicates: bool = True,
+        task: str,
     ) -> dict[str, Any]:
         """Accept work. Returns what was queued and what was skipped as a duplicate.
 
@@ -211,42 +209,45 @@ class BatchEngine:
         queued: list[int] = []
         skipped: list[dict[str, Any]] = []
         outcomes: list[dict[str, Any]] = []
+        moded = [self._moded(request) for request in requests]
 
         # The duplicate lookup and the insert must not interleave with another enqueue:
         # two callers would each find no active row and both queue, spending quota twice.
         async with self._enqueue_lock, self.db.session() as session:
-            hashes = [hash_payload(request.to_wire()) for request in requests]
+            hashes = [request_hash(request) for request in moded]
+            # A request made Quick is answered as well by a Full Alpha of the same point, which
+            # is worth more: it can be submitted. Never the other way round.
+            fulls = [
+                request_hash(asked) if sent is not asked else None
+                for sent, asked in zip(moded, requests, strict=True)
+            ]
             known: dict[str, str] = {}
             #: Hash -> an active row's id, or the row this call is adding for it.
             in_flight: dict[str, int | SimulationRecord] = {}
-            if skip_duplicates:
-                # Looked up in bulk — a harvest enqueues thousands, and two reads per
-                # request would scale queueing with round-trips — and chunked to stay
-                # under SQLite's variable cap.
-                distinct = list(set(hashes))
-                for start in range(0, len(distinct), ENQUEUE_CHUNK):
-                    chunk = distinct[start : start + ENQUEUE_CHUNK]
-                    for entry in (
-                        await session.execute(
-                            select(DedupEntry).where(DedupEntry.request_hash.in_(chunk))
+            # Looked up in bulk — a harvest enqueues thousands, and two reads per request
+            # would scale queueing with round-trips — and chunked to stay under SQLite's
+            # variable cap.
+            looked_up = set(hashes) | {full for full in fulls if full}
+            for chunk in itertools.batched(looked_up, ENQUEUE_CHUNK, strict=False):
+                for entry in await session.scalars(
+                    select(DedupEntry).where(DedupEntry.request_hash.in_(chunk))
+                ):
+                    known[entry.request_hash] = entry.alpha_id
+                for digest, record_id in (
+                    await session.execute(
+                        select(SimulationRecord.request_hash, SimulationRecord.id).where(
+                            SimulationRecord.request_hash.in_(chunk),
+                            SimulationRecord.status.in_(ACTIVE),
                         )
-                    ).scalars():
-                        known[entry.request_hash] = entry.alpha_id
-                    for request_hash, record_id in (
-                        await session.execute(
-                            select(SimulationRecord.request_hash, SimulationRecord.id).where(
-                                SimulationRecord.request_hash.in_(chunk),
-                                SimulationRecord.status.in_(ACTIVE),
-                            )
-                        )
-                    ).tuples():
-                        in_flight.setdefault(request_hash, record_id)
+                    )
+                ).tuples():
+                    in_flight.setdefault(digest, record_id)
 
             # (index, hash, status, alpha id, the row: new, or an existing row's id)
             plan: list[tuple[int, str, SimStatus, str | None, int | SimulationRecord]] = []
-            for index, (request, request_hash) in enumerate(zip(requests, hashes, strict=True)):
-                if skip_duplicates and request_hash in known:
-                    alpha_id = known[request_hash]
+            for index, (request, digest, full) in enumerate(zip(moded, hashes, fulls, strict=True)):
+                if full in known or digest in known:
+                    alpha_id = known[full] if full in known else known[digest]
                     record = new_record(
                         request,
                         task=task,
@@ -256,38 +257,36 @@ class BatchEngine:
                         finished_at=utcnow(),
                     )
                     session.add(record)
-                    plan.append((index, request_hash, SimStatus.SKIPPED, alpha_id, record))
-                elif skip_duplicates and request_hash in in_flight:
+                    plan.append((index, digest, SimStatus.SKIPPED, alpha_id, record))
+                elif digest in in_flight:
                     # Same payload still queued or running (possibly from earlier in this
                     # call): share that row, so its result reaches both callers for one run.
-                    plan.append(
-                        (index, request_hash, SimStatus.SKIPPED, None, in_flight[request_hash])
-                    )
+                    plan.append((index, digest, SimStatus.SKIPPED, None, in_flight[digest]))
                 else:
                     record = new_record(request, task=task, status=SimStatus.QUEUED)
                     session.add(record)
-                    in_flight[request_hash] = record
-                    plan.append((index, request_hash, SimStatus.QUEUED, None, record))
+                    in_flight[digest] = record
+                    plan.append((index, digest, SimStatus.QUEUED, None, record))
             await session.flush()
 
-            for index, request_hash, status, alpha_id, row in plan:
+            for index, digest, status, alpha_id, row in plan:
                 record_id = row if isinstance(row, int) else row.id
                 if status == SimStatus.QUEUED:
                     queued.append(record_id)
                 else:
-                    skipped.append({"alphaId": alpha_id, "hash": request_hash})
+                    skipped.append({"alphaId": alpha_id, "hash": digest})
                 outcomes.append(
                     {
                         "index": index,
                         "recordId": record_id,
                         "status": str(status),
                         "alphaId": alpha_id,
-                        "hash": request_hash,
+                        "hash": digest,
                     }
                 )
 
         log.info("engine.enqueued", task=task, queued=len(queued), skipped=len(skipped))
-        await self._notify()
+        await self.tracker.notify()
         return {"queued": queued, "skipped": skipped, "outcomes": outcomes}
 
     async def drop_queued(self, task: str | None = None) -> int:
@@ -313,7 +312,7 @@ class BatchEngine:
 
         if dropped:
             log.info("engine.queue_dropped", task=task, count=dropped)
-            await self._notify()
+            await self.tracker.notify()
         return dropped
 
     async def disown_orphans(self) -> int:
@@ -349,11 +348,14 @@ class BatchEngine:
             dropped = result.rowcount or 0  # pyright: ignore[reportAttributeAccessIssue]
         if dropped:
             log.warning("engine.orphans_disowned", count=dropped)
-            await self._notify()
+            await self.tracker.notify()
         return dropped
 
     async def abandon(self, task: str) -> int:
         """Cancel everything ``task`` still has out on BRAIN. Returns how many were asked.
+
+        Except a batch it opened that also carries another task's simulations: cancelling
+        it would take theirs with it, so it is left to finish.
 
         Best effort on purpose. A simulation BRAIN has already finished refuses to cancel,
         and marking it cancelled here would hide an alpha that exists — so the refusal is
@@ -374,6 +376,17 @@ class BatchEngine:
                     )
                 ).all()
             )
+            shared = set(
+                (
+                    await session.scalars(
+                        select(SimulationRecord.parent_record_id).where(
+                            SimulationRecord.parent_record_id.in_(rows),
+                            SimulationRecord.task != task,
+                        )
+                    )
+                ).all()
+            )
+        rows = [r for r in rows if r not in shared]
         # Together rather than one after another: this runs while the task's lock is held,
         # and a task with fifty simulations out would otherwise hold it for the sum of fifty
         # round trips. Bounded, because BRAIN meters this endpoint like any other.
@@ -390,7 +403,7 @@ class BatchEngine:
                 log.warning("engine.cancel_failed", record_id=record_id, error=str(outcome))
         if rows:
             log.info("engine.task_abandoned", task=task, count=len(rows))
-            await self._notify()
+            await self.tracker.notify()
         return len(rows)
 
     # -- quotas ----------------------------------------------------------
@@ -406,7 +419,7 @@ class BatchEngine:
 
     async def quotas(self) -> dict[str, int]:
         async with self.db.session() as session:
-            rows = (await session.execute(select(TaskQuota))).scalars()
+            rows = await session.scalars(select(TaskQuota))
             return {r.name: (r.max_slots if r.enabled else 0) for r in rows}
 
     async def status(self) -> dict[str, Any]:
@@ -442,6 +455,7 @@ class BatchEngine:
             "dailyLimitHit": self._daily_limit_hit,
             "sessionLost": self._session_lost,
             "awake": self._awake.state,
+            "quickAllowed": self.quick_allowed,
             "lastPause": (
                 {"start": self._last_pause[0], "end": self._last_pause[1]}
                 if self._last_pause
@@ -455,65 +469,46 @@ class BatchEngine:
 
     async def _run(self) -> None:
         rounds = 0
-        while not self._stopping.is_set():
+        while True:
             try:
                 await self.tick()
                 if rounds % AWAKE_TICKS == 0:
-                    self._awake.hold(await self._busy())
+                    self._awake.hold(self.keep_awake and await self._busy())
                 rounds += 1
-            except asyncio.CancelledError:
-                raise
             except Exception:
                 log.exception("engine.tick_failed")
+            # Only the wait is timed: a slow round is not a sleep, a two-second nap that took
+            # a minute is.
             before = time.time()
-            try:
-                await asyncio.wait_for(self._stopping.wait(), timeout=TICK_SECONDS)
-            except TimeoutError:
-                continue
-            finally:
-                # Only the wait is timed: a slow round is not a sleep, a two-second nap that
-                # took a minute is.
-                if time.time() - before > SLEEP_GAP:
-                    self._last_pause = (
-                        datetime.fromtimestamp(before, UTC),
-                        datetime.now(UTC),
-                    )
-                    log.warning("engine.slept", seconds=round(time.time() - before))
+            await asyncio.sleep(TICK_SECONDS)
+            if time.time() - before > SLEEP_GAP:
+                self._last_pause = (datetime.fromtimestamp(before, UTC), datetime.now(UTC))
+                log.warning("engine.slept", seconds=round(time.time() - before))
 
     async def tick(self) -> int:
         """One scheduling round. Returns how many batches were submitted.
 
-        Finished batches are read back in a task of their own, outside the lock: a read-back
-        costs a request per child, and holding the lock through it leaves slots idle that
-        the next round would have filled. It touches only a finished parent's children,
-        never the QUEUED rows a round claims, and every write is a compare-and-set.
+        Finished batches are read back in a task of their own: a read-back costs a request
+        per child, and waiting for it would leave slots idle that the next round would have
+        filled. It touches only a finished parent's children, never the QUEUED rows a round
+        claims, and every write is a compare-and-set. A failed read-back is retried on a
+        later round.
         """
-        # The background loop and the manual tick route share this: two concurrent rounds
-        # would read the same QUEUED rows and submit them twice.
-        async with self._tick_lock:
-            submitted = await self._fill_slots()
+        submitted = await self._fill_slots()
         if self._expansion is None or self._expansion.done():
-            self._expansion = asyncio.create_task(self._expand_logged(), name="batch-expand")
+            self._expansion = spawn(self._expand_finished_batches(), name="batch-expand")
         return submitted
-
-    async def _expand_logged(self) -> None:
-        try:
-            await self._expand_finished_batches()
-        except asyncio.CancelledError:
-            raise
-        # A failed read-back is retried on a later round; it must not go unreported.
-        except Exception:
-            log.exception("engine.expand_failed")
 
     async def _fill_slots(self) -> int:
         reset = self._limit_resets_at
-        if self._daily_limit_hit and reset is not None and time.monotonic() >= reset:
+        if self._daily_limit_hit and reset is not None and time.time() >= reset:
             # BRAIN's day has turned: the quota is back.
-            self.clear_daily_limit()
+            self._daily_limit_hit = False
+            self._limit_resets_at = None
         if self._daily_limit_hit:
             return 0
         if self._session_lost:
-            if self._on_unauthorized is None or not await self._on_unauthorized():
+            if not await self._on_unauthorized():
                 return 0
             self._session_lost = False
             log.info("engine.session_back")
@@ -548,17 +543,13 @@ class BatchEngine:
                 .subquery()
             )
             queued = (
-                (
-                    await session.execute(
-                        select(SimulationRecord)
-                        .join(position, position.c.id == SimulationRecord.id)
-                        .where(position.c.position <= window)
-                        .order_by(SimulationRecord.id)
-                    )
+                await session.scalars(
+                    select(SimulationRecord)
+                    .join(position, position.c.id == SimulationRecord.id)
+                    .where(position.c.position <= window)
+                    .order_by(SimulationRecord.id)
                 )
-                .scalars()
-                .all()
-            )
+            ).all()
             if not queued:
                 return 0
 
@@ -574,7 +565,9 @@ class BatchEngine:
 
         quotas = await self.quotas()
         demand = demand_by_task(items, self.max_batch)
-        allocation = allocate_slots(free, demand=demand, quotas=quotas, in_flight=in_flight)
+        allocation = allocate_slots(
+            free, demand=demand, quotas=quotas, in_flight=in_flight, lend=self.lend_idle_cores
+        )
         if not allocation:
             return 0
 
@@ -595,7 +588,7 @@ class BatchEngine:
                 submitted += 1
 
         if submitted:
-            await self._notify()
+            await self.tracker.notify()
         return submitted
 
     # -- submission ------------------------------------------------------
@@ -642,11 +635,8 @@ class BatchEngine:
     async def _submit_single(self, item: WorkItem) -> bool:
         request = SimulationRequest.model_validate(item.payload)
         try:
-            await self.tracker.submit(request, task=item.task, record_id=item.record_id)
+            await self.tracker.submit(request, item.record_id)
             return True
-        except BrainDailyLimitReached:
-            await self._on_daily_limit()
-            return False
         except SubmissionFailed as exc:
             # The tracker wraps platform errors, so the daily cap arrives as a cause
             # rather than as itself. Missing it here would march the whole queue into
@@ -786,12 +776,12 @@ class BatchEngine:
                 self.db, self.endpoints, parent_id, platform_id, children=record_ids
             ):
                 log.warning("engine.batch_cancel_refused", parent=parent_id)
-                self.tracker.watch(parent_id)
+                self.tracker.watch(platform_id)
                 return True
             log.info("engine.batch_cancelled_after_send", parent=parent_id)
             return False
 
-        self.tracker.watch(parent_id, response.retry_after)
+        self.tracker.watch(platform_id, response.retry_after)
         log.info(
             "engine.batch_running",
             parent=parent_id,
@@ -876,7 +866,7 @@ class BatchEngine:
                     children_expanded=True,
                 )
         log.warning("engine.batch_failed", parent=parent_id, requeued=requeue, message=message)
-        await self._notify()
+        await self.tracker.notify()
 
     def _on_session_lost(self) -> None:
         if not self._session_lost:
@@ -885,9 +875,9 @@ class BatchEngine:
 
     async def _on_daily_limit(self) -> None:
         self._daily_limit_hit = True
-        self._limit_resets_at = time.monotonic() + await self._seconds_to_reset()
+        self._limit_resets_at = time.time() + await self._seconds_to_reset()
         log.warning("engine.daily_limit_reached")
-        await self._notify()
+        await self.tracker.notify()
 
     async def _seconds_to_reset(self) -> float:
         """Until BRAIN's quota resets, by its own ``X-Ratelimit-Reset`` when that is current.
@@ -916,28 +906,24 @@ class BatchEngine:
         """
         async with self.db.session() as session:
             candidates = (
-                (
-                    await session.execute(
-                        select(SimulationRecord).where(
-                            SimulationRecord.is_batch.is_(True),
-                            SimulationRecord.status.in_(
-                                [
-                                    SimStatus.RUNNING,
-                                    SimStatus.COMPLETE,
-                                    SimStatus.WARNING,
-                                    SimStatus.ERROR,
-                                    SimStatus.FAILED,
-                                    SimStatus.TIMEOUT,
-                                    SimStatus.CANCELLED,
-                                ]
-                            ),
-                            SimulationRecord.children_expanded.is_(False),
-                        )
+                await session.scalars(
+                    select(SimulationRecord).where(
+                        SimulationRecord.is_batch.is_(True),
+                        SimulationRecord.status.in_(
+                            [
+                                SimStatus.RUNNING,
+                                SimStatus.COMPLETE,
+                                SimStatus.WARNING,
+                                SimStatus.ERROR,
+                                SimStatus.FAILED,
+                                SimStatus.TIMEOUT,
+                                SimStatus.CANCELLED,
+                            ]
+                        ),
+                        SimulationRecord.children_expanded.is_(False),
                     )
                 )
-                .scalars()
-                .all()
-            )
+            ).all()
         parents = [p for p in candidates if p.status != SimStatus.RUNNING or p.child_ids]
 
         # Every parent each round: a child read is due only when its Retry-After has run
@@ -949,18 +935,13 @@ class BatchEngine:
     async def _expand(self, parent: SimulationRecord) -> None:
         child_ids: list[str] = list(parent.child_ids or [])
         async with self.db.session() as session:
-            rows = (
-                (
-                    await session.execute(
-                        select(SimulationRecord)
-                        .where(SimulationRecord.parent_record_id == parent.id)
-                        .order_by(SimulationRecord.id)
-                    )
+            records = list(
+                await session.scalars(
+                    select(SimulationRecord)
+                    .where(SimulationRecord.parent_record_id == parent.id)
+                    .order_by(SimulationRecord.id)
                 )
-                .scalars()
-                .all()
             )
-            records = list(rows)
 
         if not child_ids:
             # The platform reported no children. Say so on the rows rather than
@@ -1007,7 +988,7 @@ class BatchEngine:
                 await self._finish_children(
                     [r for r in open_rows if r.id in resolved], resolved, outcomes
                 )
-                await self._notify()
+                await self.tracker.notify()
             return
 
         await self._finish_children(open_rows, resolved, outcomes)
@@ -1024,35 +1005,30 @@ class BatchEngine:
         await self._mark_expanded(parent.id)
         for child_id in child_ids:
             self._child_results.pop(child_id, None)
-            self._child_next_read.pop(child_id, None)
         log.info(
             "engine.batch_expanded",
             parent=parent.id,
             children=len(child_ids),
             matched=len(resolved),
         )
-        await self._notify()
+        await self.tracker.notify()
 
     async def _read_children(self, child_ids: list[str]) -> bool:
         """Read each unfinished child that is due. Returns True if the session was refused.
 
-        Finished outcomes are kept in memory until their batch is expanded, so a child
-        that cannot be attributed yet is not read again. A restart loses them, which costs
-        one more read each — nothing is decided from memory alone.
+        Read through the tracker, so a child keeps the same schedule and lost-simulation rule
+        as a simulation sent alone: one BRAIN has lost ends as an error rather than holding
+        its batch's core for good. Finished outcomes are kept in memory until their batch is
+        expanded, so a child that cannot be attributed yet is not read again. A restart loses
+        them, which costs one more read each — nothing is decided from memory alone.
         """
         for child_id in child_ids:
             if child_id in self._child_results:
                 continue
-            if time.monotonic() < self._child_next_read.get(child_id, 0.0):
+            read = await self.tracker.read(child_id)
+            if read is None:
                 continue
-            try:
-                response = await self.endpoints.read_simulation(child_id)
-            except BrainError as exc:
-                log.warning("engine.child_read_failed", child=child_id, error=str(exc))
-                self._child_next_read[child_id] = time.monotonic() + DEFAULT_POLL_SECONDS
-                continue
-
-            outcome = read_outcome(response.status, response.body, response.retry_after)
+            outcome, body = read
             match outcome.kind:
                 case "unauthorized":
                     self._on_session_lost()
@@ -1060,11 +1036,8 @@ class BatchEngine:
                 case "pending" | "retry":
                     # Still simulating, or the read was refused for now: either way the alpha is
                     # coming, and closing the row now would throw it away.
-                    self._child_next_read[child_id] = time.monotonic() + (
-                        outcome.delay or DEFAULT_POLL_SECONDS
-                    )
+                    continue
                 case "fanout":
-                    body = response.body if isinstance(response.body, dict) else {}
                     self._child_results[child_id] = (
                         body,
                         Outcome(
@@ -1074,7 +1047,6 @@ class BatchEngine:
                         ),
                     )
                 case "gone" | "finished":
-                    body = response.body if isinstance(response.body, dict) else {}
                     self._child_results[child_id] = (body, outcome)
         return False
 
@@ -1092,41 +1064,22 @@ class BatchEngine:
             for record in records:
                 found = resolved.get(record.id)
                 if found is None:
-                    await transition(
-                        session,
-                        record.id,
-                        from_=ACTIVE,
-                        status=child_status,
-                        message=fallback_message
-                        or "BRAIN did not report a result for this simulation.",
-                        finished_at=utcnow(),
+                    message = (
+                        fallback_message or "BRAIN did not report a result for this simulation."
+                    )
+                    await finish(
+                        session, record, Outcome("finished", child_status, message=message)
                     )
                     continue
 
                 outcome = outcomes[found["platform_id"]]
-                message = outcome.message
                 if found.get("positional"):
-                    note = "Matched to this request by submission order."
-                    message = f"{message} {note}" if message else note
-
-                won = await transition(
-                    session,
-                    record.id,
-                    from_=ACTIVE,
-                    platform_id=found["platform_id"],
-                    alpha_id=outcome.alpha_id,
-                    status=outcome.status,
-                    platform_status=str(outcome.platform_status)
-                    if outcome.platform_status
-                    else None,
-                    message=message,
-                    progress=1.0,
-                    finished_at=utcnow(),
-                )
-
-                if won and outcome.alpha_id:
-                    await remember(session, record, outcome.alpha_id)
-                    landed.append(outcome.alpha_id)
+                    joined = f"{outcome.message or ''} {POSITIONAL_NOTE}".strip()
+                    outcome = dataclasses.replace(outcome, message=joined)
+                if alpha_id := await finish(
+                    session, record, outcome, platform_id=found["platform_id"]
+                ):
+                    landed.append(alpha_id)
 
         # The tracker polls only the parent, which carries no alpha of its own. Without
         # this hand-off no batched alpha would reach the vault, so nothing batched could
@@ -1177,14 +1130,3 @@ class BatchEngine:
             .group_by(SimulationRecord.task)
         )
         return {task: int(cost or 0) for task, cost in result.all()}
-
-    async def _notify(self) -> None:
-        if self._on_change is None:
-            return
-        try:
-            records = await self.tracker.active()
-            result = self._on_change([serialise(r) for r in records])
-            if asyncio.iscoroutine(result):
-                await result
-        except Exception:
-            log.exception("engine.notify_failed")

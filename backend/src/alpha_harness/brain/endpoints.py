@@ -8,21 +8,19 @@ dicts: bulk reads where validating every row costs too much (``list_data_fields_
 open-ended or undocumented blobs the callers read selectively.
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from .altcha import Challenge, Solution, solve_async
+from .altcha import Challenge
 from .errors import BrainError, BrainServiceUnavailable, BrainVerificationRequired
+from .platform import ALL_FIELDS_CEILING, ALL_FIELDS_PAGE
 from .schemas import (
     BULK_FIELDS,
     BULK_FIELDS_ENVELOPE,
     Alpha,
     AuthState,
     BulkField,
-    DataCategory,
     DataSet,
     Operator,
     RecordSet,
@@ -35,7 +33,7 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
-# Endpoints pinned to a non-default Accept version (docs/wqb-api/03-conventions.md).
+# Endpoints pinned to a non-default Accept version.
 V_SETTINGS_SCHEMA = "4.0"  # OPTIONS /simulations
 #: GET /data-fields with all four scope params. Unpaginated in practice: tens of thousands
 #: of rows arrive in one response.
@@ -100,9 +98,6 @@ class BrainEndpoints:
             raise ValueError(f"Unexpected captcha payload: {r.body!r}")
         return Challenge.from_payload(r.body)
 
-    async def solve_captcha(self) -> Solution:
-        return await solve_async(await self.get_captcha())
-
     async def authenticate(self, email: str, password: str, *, captcha: str) -> AuthState:
         """Exchange Basic auth plus the solved captcha for a session cookie."""
         r = await self.client.request(
@@ -132,18 +127,21 @@ class BrainEndpoints:
         return AuthState.model_validate(r.body)
 
     async def logout(self) -> None:
-        await self.client.request("DELETE", "/authentication", raise_for_status=False)
-        self.client.clear_cookies()
-
-    async def get_user(self, user_id: str = "self") -> dict[str, Any]:
-        """Fetch user profile details from /users/{user_id}."""
+        """End the session on BRAIN when it can be reached, and here whether or not."""
         try:
-            r = await self.client.request("GET", f"/users/{user_id}", raise_for_status=False)
-            if r.status >= 400 or not isinstance(r.body, dict):
-                return {}
-            return r.body
-        except BrainError:
+            await self.client.request("DELETE", "/authentication", raise_for_status=False)
+        except BrainError as exc:
+            # Offline: BRAIN lets the session lapse on its own; signing out must not wait for it.
+            log.info("brain.logout_unsent", error=str(exc))
+        finally:
+            self.client.clear_cookies()
+
+    async def get_user(self, user_id: str) -> dict[str, Any]:
+        """Fetch user profile details from /users/{user_id}."""
+        r = await self.client.request("GET", f"/users/{user_id}", raise_for_status=False)
+        if r.status >= 400 or not isinstance(r.body, dict):
             return {}
+        return r.body
 
     # -- platform metadata ----------------------------------------------
 
@@ -152,7 +150,7 @@ class BrainEndpoints:
 
         ``actions.POST.settings.children`` is the common tree; each type's
         ``settings.children`` overrides it, and region, universe, delay and neutralization
-        live only there (``docs/wqb-api/schemas/simulation.md``, "Merging rule").
+        live only there.
 
         The region-agnostic tree is folded into the same schema rather than kept apart:
         ``universe``, ``delay`` and ``neutralization`` are keyed *by region*, so it only adds
@@ -279,9 +277,9 @@ class BrainEndpoints:
     # There is deliberately no ``submit`` here: submission is irreversible, and the absence
     # of the method is the guarantee that no code path reaches it by mistake.
 
-    async def list_alphas(self, query: AlphaQuery, user_id: str = "self") -> dict[str, Any]:
+    async def list_alphas(self, query: AlphaQuery) -> dict[str, Any]:
         """One page of your alphas, with the total match count."""
-        r = await self.client.request("GET", query.path(user_id), version=V_ALPHA_LIST)
+        r = await self.client.request("GET", query.path(), version=V_ALPHA_LIST)
         body = r.body if isinstance(r.body, dict) else {}
         return {
             "count": int(body.get("count") or 0),
@@ -295,13 +293,20 @@ class BrainEndpoints:
         r = await self.client.request("GET", "/users/self/alphas/summary", version=V_ALPHA_SUMMARY)
         return r.body if isinstance(r.body, dict) else {}
 
-    # -- data catalog ----------------------------------------------------
+    # -- competitions ----------------------------------------------------
 
-    async def list_data_categories(self) -> list[DataCategory]:
-        """``GET /data-categories``: the whole taxonomy. It takes no parameters."""
-        r = await self.client.request_retrying("GET", "/data-categories")
-        raw = r.body if isinstance(r.body, list) else (r.body or {}).get("results", [])
-        return [DataCategory.model_validate(c) for c in raw]
+    async def competitions(self) -> list[dict[str, Any]]:
+        """Every competition, past and ongoing, with this account's ``status`` in each."""
+        r = await self.client.request("GET", "/competitions")
+        body = r.body if isinstance(r.body, dict) else {}
+        return list(body.get("results") or [])
+
+    async def competition(self, competition_id: str) -> dict[str, Any]:
+        """One competition. Only this carries the account's ``leaderboard`` standing."""
+        r = await self.client.request("GET", f"/competitions/{competition_id}")
+        return r.body if isinstance(r.body, dict) else {}
+
+    # -- data catalog ----------------------------------------------------
 
     #: A market's fields are ~40 MB, and eight scopes download at once. Measured on a first
     #: sync: every USA delay-1 scope (76,519 fields) blew the client's ordinary 30 s read and
@@ -312,7 +317,7 @@ class BrainEndpoints:
     async def list_data_fields_all(self, **params: Any) -> list[BulkField]:
         """Every field in one scope, in one request.
 
-        Needs all four scope parameters and ``version=3.0`` (``docs/wqb-api/endpoints/data.md``).
+        Needs all four scope parameters and ``version=3.0``.
         The body is taken as bytes and decoded by msgspec: a market is ~40 MB, and the
         standard library's parser spent that on the event loop.
         """
@@ -333,12 +338,6 @@ class BrainEndpoints:
             return BULK_FIELDS_ENVELOPE.decode(r.body).results
         return BULK_FIELDS.decode(r.body)
 
-    #: The page size region ``ALL`` allows. Measured: 51 is refused outright.
-    PAGED_FIELDS_SIZE = 50
-    #: Rows the flat listing will hand out for region ``ALL``, of 27,882 that exist —
-    #: ``offset + limit`` past this is a 400, which is why the paging goes dataset by dataset.
-    PAGED_FIELDS_CEILING = 10_000
-
     async def list_data_fields_paged(self, dataset_id: str, **params: Any) -> list[BulkField]:
         """Every field of one dataset in one scope, fifty at a time.
 
@@ -348,7 +347,7 @@ class BrainEndpoints:
         """
         out: list[BulkField] = []
         offset = 0
-        while offset < self.PAGED_FIELDS_CEILING:
+        while offset < ALL_FIELDS_CEILING:
             r = await self.client.request_retrying(
                 "GET",
                 "/data-fields",
@@ -356,7 +355,7 @@ class BrainEndpoints:
                 params={
                     **params,
                     "dataset.id": dataset_id,
-                    "limit": self.PAGED_FIELDS_SIZE,
+                    "limit": ALL_FIELDS_PAGE,
                     "offset": offset,
                 },
                 raw=True,
@@ -365,13 +364,13 @@ class BrainEndpoints:
                 break
             page = BULK_FIELDS_ENVELOPE.decode(r.body).results
             out.extend(page)
-            if len(page) < self.PAGED_FIELDS_SIZE:
+            if len(page) < ALL_FIELDS_PAGE:
                 return out
-            offset += self.PAGED_FIELDS_SIZE
+            offset += ALL_FIELDS_PAGE
         # Still handing out full pages at the ceiling: there is more than can be read this
         # way. Said rather than swallowed — a quietly short catalog is worse than a failed sync.
         raise BrainError(
-            f"{dataset_id} has more than {self.PAGED_FIELDS_CEILING:,} fields, which is as far "
+            f"{dataset_id} has more than {ALL_FIELDS_CEILING:,} fields, which is as far "
             "as BRAIN will page this market."
         )
 

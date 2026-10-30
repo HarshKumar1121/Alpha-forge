@@ -8,6 +8,7 @@ import { Checkbox as BaseCheckbox } from '@base-ui/react/checkbox'
 import { mergeProps } from '@base-ui/react/merge-props'
 import { Radio } from '@base-ui/react/radio'
 import { RadioGroup } from '@base-ui/react/radio-group'
+import { Switch as BaseSwitch } from '@base-ui/react/switch'
 import { Toggle } from '@base-ui/react/toggle'
 import { ToggleGroup } from '@base-ui/react/toggle-group'
 import { useRender } from '@base-ui/react/use-render'
@@ -18,12 +19,14 @@ import {
   CircleAlertIcon,
   InfoIcon,
   LoaderCircleIcon,
+  MinusIcon,
   TriangleAlertIcon,
 } from 'lucide-react'
 import { type ComponentProps, Fragment, type ReactNode, useId } from 'react'
 import { ApiError, errorMessage } from '@/api/http'
 import type { CheckResult } from '@/api/types'
 import { cn } from '@/lib/cn'
+import { type CORE_ORDER, isNum } from '@/lib/format'
 
 // ── Tone helpers: data colour comes from the value, never from decoration ──────────────
 
@@ -32,27 +35,74 @@ export type Tone = 'neutral' | 'muted' | 'profit' | 'loss' | 'warn'
 export const TEXT_TONE: Record<Tone, string> = {
   neutral: 'text-ink',
   muted: 'text-ink-subtle',
-  profit: 'text-pnl-positive',
-  loss: 'text-pnl-negative',
+  profit: 'text-pnl-positive-text',
+  loss: 'text-pnl-negative-text',
   warn: 'text-status-warning',
 }
 
-/** Sign of a return, Sharpe or PnL. */
+/** Sign of money made or lost: a return, a PnL, a change to a portfolio. */
 export const signTone = (v: number | null | undefined): Tone =>
   v == null || v === 0 ? 'neutral' : v > 0 ? 'profit' : 'loss'
 
 /**
- * One BRAIN submission check, coloured by what it says on its own: passed, noted, or not
- * a yes. A ``PENDING`` check has not been run, so it is not green — nothing about the Alpha
- * has been established yet. Whether the Alpha as a whole can still come good is a different
- * question with a different answer; see the Tasks results pane.
+ * A diagnostic ratio judged against the cutoff BRAIN submits at rather than against zero: red
+ * when negative (an inverted signal), green once it `meets` the cutoff, and plain between, since
+ * a positive figure is not yet a good one. With no cutoff to meet, only red is earned.
+ */
+export const cutoffTone = (v: number | null | undefined, meets = false): Tone =>
+  v == null || Number.isNaN(v) ? 'neutral' : v < 0 ? 'loss' : meets ? 'profit' : 'neutral'
+
+/** The limits BRAIN's checks set one Alpha's figures, by check name (`LOW_SHARPE`, …). */
+export type Limits = Partial<Record<string, number>>
+
+/**
+ * A core figure's tone: Returns by sign; Sharpe, Fitness and Turnover against the limits the
+ * Alpha's own checks name, so with none known only a negative is called out; Margin, which BRAIN
+ * checks against nothing, only when negative; Drawdown not at all.
+ */
+export function figureTone(
+  key: (typeof CORE_ORDER)[number],
+  v: number | null | undefined,
+  limits: Limits = {},
+): Tone {
+  if (!isNum(v)) return 'neutral'
+  const at = (check: string) => limits[check]
+  switch (key) {
+    case 'returns':
+      return signTone(v)
+    case 'sharpe': {
+      const floor = at('LOW_SHARPE')
+      return cutoffTone(v, floor !== undefined && v >= floor)
+    }
+    case 'fitness': {
+      const floor = at('LOW_FITNESS')
+      return cutoffTone(v, floor !== undefined && v >= floor)
+    }
+    // A band rather than a floor: outside it the Alpha fails the check outright.
+    case 'turnover': {
+      const [low, high] = [at('LOW_TURNOVER'), at('HIGH_TURNOVER')]
+      if ((low !== undefined && v < low) || (high !== undefined && v > high)) return 'loss'
+      return low !== undefined && high !== undefined ? 'profit' : 'neutral'
+    }
+    case 'margin':
+      return cutoffTone(v)
+    case 'drawdown':
+      return 'neutral'
+  }
+}
+
+/**
+ * One BRAIN submission check, coloured by what it says on its own: passed, unsettled, or
+ * refused. ``PENDING`` is not green — nothing has been established yet — but it is not red
+ * either, because BRAIN has not refused anything. Whether the Alpha as a whole counts as
+ * submittable while a check is pending is a different question; see the Tasks results pane.
  */
 export const checkTone = (result: CheckResult | null | undefined): Tone =>
   result === 'PASS'
     ? 'profit'
-    : result === 'WARNING'
+    : result === 'WARNING' || result === 'PENDING'
       ? 'warn'
-      : result === 'FAIL' || result === 'ERROR' || result === 'PENDING'
+      : result === 'FAIL' || result === 'ERROR'
         ? 'loss'
         : 'muted'
 
@@ -67,13 +117,23 @@ export function PageHeader({
   title,
   description,
   actions,
+  sticky = false,
 }: {
   title: ReactNode
   description?: ReactNode
   actions?: ReactNode
+  /** Stays at the top while the page scrolls, for a form whose buttons are up here and whose
+   *  last inputs are at the bottom. */
+  sticky?: boolean
 }) {
   return (
-    <header className="flex flex-wrap items-end justify-between gap-3 px-1 pt-1">
+    <header
+      className={cn(
+        'flex flex-wrap items-end justify-between gap-3 px-1 pt-1',
+        sticky &&
+          '-mx-3 -mt-3 sticky top-0 z-20 border-b border-hairline bg-canvas/95 px-4 py-3 backdrop-blur-sm lg:-mx-4 lg:-mt-4 lg:px-5',
+      )}
+    >
       <div className="flex min-w-0 flex-col gap-1">
         <h1 className="text-headline text-balance break-words font-semibold text-ink">{title}</h1>
         {description && (
@@ -144,10 +204,11 @@ const BUTTON_VARIANT = {
     'border border-hairline bg-surface-2 text-ink hover:border-hairline-strong hover:bg-surface-3 active:bg-surface-4',
   ghost: 'text-ink-muted hover:bg-surface-2 hover:text-ink active:bg-surface-3',
   danger:
-    'border border-hairline bg-surface-1 text-pnl-negative hover:border-(--btn-danger-border-hover) hover:bg-pnl-negative-tint active:border-pnl-negative',
+    'border border-hairline bg-surface-2 text-pnl-negative-text hover:border-(--btn-danger-border-hover) hover:bg-pnl-negative-tint active:border-pnl-negative',
 }
 const BUTTON_SIZE = {
-  md: 'rounded-sm px-3 py-1.5 text-body [&_svg]:size-4',
+  // The input's height, so a button beside a field lines up with it, border or none.
+  md: 'h-8 rounded-sm px-3 text-body [&_svg]:size-4',
   sm: 'h-7 rounded-sm px-2 text-body-compact [&_svg]:size-3.5',
   icon: 'size-8 rounded-sm [&_svg]:size-4',
   'icon-sm': 'size-7 rounded-sm [&_svg]:size-3.5',
@@ -240,7 +301,7 @@ export function Field({
 
 function FieldNote({ hint, error }: { hint?: ReactNode; error?: ReactNode }) {
   return error ? (
-    <span role="alert" className="text-body-compact break-words text-pnl-negative">
+    <span role="alert" className="text-body-compact break-words text-pnl-negative-text">
       {error}
     </span>
   ) : (
@@ -282,57 +343,97 @@ export function Fieldset({
 export function Checkbox({
   label,
   checked,
+  indeterminate = false,
   onChange,
   disabled,
   className,
-  hint,
   ...props
 }: {
+  /** `null` for a box labelled by `aria-label` alone, as in a table row. */
   label: ReactNode
   checked: boolean
+  /** Some of what it stands for is ticked, not all: drawn as a dash. */
+  indeterminate?: boolean | undefined
   onChange: (checked: boolean) => void
   disabled?: boolean | undefined
   className?: string | undefined
-  /** A second line under the label, for what the choice costs or changes. */
-  hint?: ReactNode
   'aria-label'?: string | undefined
 }) {
   const id = useId()
   return (
-    <span className={cn('group inline-flex items-start gap-2.5', className)}>
+    <span className={cn('group/check inline-flex items-start gap-2.5', className)}>
       <BaseCheckbox.Root
         id={id}
         checked={checked}
+        indeterminate={indeterminate}
         disabled={disabled}
         onCheckedChange={onChange}
         className={cn(
           'mt-px flex size-4 shrink-0 items-center justify-center rounded-xs border transition-colors',
           'border-(--field-border) bg-surface-1',
           'data-[checked]:border-(--btn-primary-bg) data-[checked]:bg-(--btn-primary-bg)',
+          'data-[indeterminate]:border-(--btn-primary-bg) data-[indeterminate]:bg-(--btn-primary-bg)',
           'data-[disabled]:border-(--field-border-disabled) data-[disabled]:bg-surface-2',
-          !disabled && 'cursor-pointer group-hover:border-(--field-border-hover)',
+          !disabled && 'cursor-pointer group-hover/check:border-(--field-border-hover)',
         )}
         {...props}
       >
         <BaseCheckbox.Indicator className="flex text-(--btn-primary-text)">
-          <CheckIcon className="size-3" strokeWidth={3.5} aria-hidden />
+          {indeterminate ? (
+            <MinusIcon className="size-3" strokeWidth={3.5} aria-hidden />
+          ) : (
+            <CheckIcon className="size-3" strokeWidth={3.5} aria-hidden />
+          )}
         </BaseCheckbox.Indicator>
       </BaseCheckbox.Root>
-      {(label || hint) && (
+      {label && (
         <label
           htmlFor={id}
           className={cn(
             'flex min-w-0 flex-col gap-0.5 text-body select-none',
             disabled
               ? 'cursor-not-allowed text-(--field-text-disabled)'
-              : 'cursor-pointer text-ink-muted group-hover:text-ink',
+              : 'cursor-pointer text-ink-muted group-hover/check:text-ink',
           )}
         >
           {label}
-          {hint && <span className="text-body-compact text-ink-subtle">{hint}</span>}
         </label>
       )}
     </span>
+  )
+}
+
+/** An on/off setting that takes effect at once, unlike a Checkbox, which is a choice in a form
+ *  submitted later. On reads in the same lavender as a checked box. */
+export function Switch({
+  checked,
+  onChange,
+  disabled,
+  ...props
+}: {
+  checked: boolean
+  onChange: (checked: boolean) => void
+  disabled?: boolean | undefined
+  'aria-label'?: string | undefined
+  'aria-labelledby'?: string | undefined
+  'aria-describedby'?: string | undefined
+}) {
+  return (
+    <BaseSwitch.Root
+      checked={checked}
+      disabled={disabled}
+      onCheckedChange={onChange}
+      className={cn(
+        'relative inline-flex h-5 w-9 shrink-0 items-center rounded-pill border p-0.5 transition-colors',
+        'border-(--field-border) bg-surface-3',
+        'data-[checked]:border-(--btn-primary-bg) data-[checked]:bg-(--btn-primary-bg)',
+        'data-[disabled]:border-(--field-border-disabled) data-[disabled]:opacity-60',
+        !disabled && 'cursor-pointer hover:border-(--field-border-hover)',
+      )}
+      {...props}
+    >
+      <BaseSwitch.Thumb className="size-3.5 rounded-pill bg-ink-muted transition-transform data-[checked]:translate-x-4 data-[checked]:bg-(--btn-primary-text)" />
+    </BaseSwitch.Root>
   )
 }
 
@@ -343,12 +444,15 @@ export function Chips<V extends string>({
   onChange,
   label,
   disabled,
+  size = 'md',
 }: {
   items: { value: V; label: ReactNode; title?: string | undefined }[]
   value: V[]
   onChange: (value: V[]) => void
   label: string
   disabled?: boolean | undefined
+  /** `lg` lays a few important choices out as tiles that share the row between them. */
+  size?: 'md' | 'lg'
 }) {
   return (
     <ToggleGroup
@@ -357,14 +461,21 @@ export function Chips<V extends string>({
       value={value}
       disabled={disabled}
       onValueChange={(next) => onChange(next as V[])}
-      className="flex flex-wrap gap-1.5"
+      className={
+        size === 'lg'
+          ? 'grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-2'
+          : 'flex flex-wrap gap-1.5'
+      }
     >
       {items.map((item) => (
         <Toggle
           key={item.value}
           value={item.value}
           title={item.title}
-          className="h-7 rounded-sm border whitespace-nowrap border-(--field-border) bg-surface-1 px-2 text-body-compact text-ink-subtle transition-colors hover:border-(--field-border-hover) hover:text-ink data-[disabled]:border-(--field-border-disabled) data-[disabled]:text-(--field-text-disabled) data-[pressed]:border-(--field-border-hover) data-[pressed]:bg-surface-3 data-[pressed]:text-ink"
+          className={cn(
+            'rounded-sm border whitespace-nowrap border-(--field-border) bg-surface-1 text-ink-muted transition-colors hover:border-(--field-border-hover) hover:text-ink data-[disabled]:border-(--field-border-disabled) data-[disabled]:text-(--field-text-disabled) data-[pressed]:border-primary data-[pressed]:bg-primary-subtle data-[pressed]:text-ink',
+            size === 'lg' ? 'h-11 px-4 text-body' : 'h-7 px-2 text-body-compact',
+          )}
         >
           {item.label}
         </Toggle>
@@ -379,19 +490,16 @@ export function Segmented<V extends string | number>({
   value,
   onChange,
   label,
-  disabled,
 }: {
-  items: { value: V; label: ReactNode }[]
+  items: { value: V; label: ReactNode; disabled?: boolean }[]
   value: V
   onChange: (value: V) => void
   label: string
-  disabled?: boolean | undefined
 }) {
   return (
     <RadioGroup
       aria-label={label}
       value={String(value)}
-      disabled={disabled}
       // Base UI values are strings; map back so numeric choices stay numbers.
       onValueChange={(next) => {
         const item = items.find((i) => String(i.value) === String(next))
@@ -403,7 +511,8 @@ export function Segmented<V extends string | number>({
         <Radio.Root
           key={String(item.value)}
           value={String(item.value)}
-          className="inline-flex h-7 items-center justify-center rounded-xs border border-transparent px-3 text-body-compact leading-none font-medium text-ink-subtle transition-colors hover:text-ink data-[checked]:border-hairline-strong data-[checked]:bg-surface-3 data-[checked]:text-ink data-[disabled]:text-(--field-text-disabled)"
+          disabled={item.disabled}
+          className="inline-flex h-7 items-center justify-center rounded-xs border border-transparent px-3 text-body-compact leading-none font-medium text-ink-subtle transition-colors hover:text-ink data-[checked]:border-hairline-strong data-[checked]:bg-surface-3 data-[checked]:text-ink data-[disabled]:text-ink-disabled data-[disabled]:hover:text-ink-disabled"
         >
           {item.label}
         </Radio.Root>
@@ -461,8 +570,8 @@ export function Metric({
 const BADGE: Record<Tone | 'outline', string> = {
   neutral: 'bg-surface-3 text-ink-muted',
   muted: 'bg-surface-2 text-ink-subtle',
-  profit: 'text-pnl-positive',
-  loss: 'text-pnl-negative',
+  profit: 'text-pnl-positive-text',
+  loss: 'text-pnl-negative-text',
   warn: 'text-status-warning',
   outline: 'border border-hairline-strong text-ink-subtle',
 }
@@ -492,31 +601,24 @@ export function Badge({
   )
 }
 
+const METRIC_BADGE = {
+  profit: 'bg-pnl-positive-tint text-pnl-positive-text border border-pnl-positive-edge',
+  loss: 'bg-pnl-negative-tint text-pnl-negative-text border border-pnl-negative-edge',
+  neutral: 'bg-surface-2 text-ink border border-hairline',
+}
+
 export function MetricBadge({
   tone = 'neutral',
   children,
-  className,
-  title,
 }: {
-  tone?: 'profit' | 'loss' | 'warn' | 'neutral' | 'muted'
+  tone?: keyof typeof METRIC_BADGE
   children: ReactNode
-  className?: string
-  title?: string
 }) {
-  const STYLES: Record<'profit' | 'loss' | 'warn' | 'neutral' | 'muted', string> = {
-    profit: 'bg-pnl-positive-tint text-pnl-positive border border-pnl-positive-edge',
-    loss: 'bg-pnl-negative-tint text-pnl-negative border border-pnl-negative-edge',
-    warn: 'bg-status-warning-tint text-status-warning border border-status-warning-edge',
-    neutral: 'bg-surface-2 text-ink border border-hairline',
-    muted: 'bg-surface-1 text-ink-subtle border border-hairline',
-  }
   return (
     <span
-      title={title}
       className={cn(
         'mono-metric inline-flex items-center gap-1 rounded-xs px-1.5 py-0.5 whitespace-nowrap',
-        STYLES[tone],
-        className,
+        METRIC_BADGE[tone],
       )}
     >
       {children}
@@ -543,13 +645,17 @@ export function Progress({
   value,
   className,
   label,
+  mark,
 }: {
   value: number | null
   className?: string
   label?: string
+  /** A tick across the track at this fraction, for a fill to be read against: the quota gauge's
+   *  share of the day gone. */
+  mark?: { at: number; label: string } | undefined
 }) {
   const clamped = value == null ? null : Math.min(1, Math.max(0, value))
-  return (
+  const bar = (
     <div
       role="progressbar"
       aria-label={label}
@@ -568,36 +674,16 @@ export function Progress({
       />
     </div>
   )
-}
-
-/** How much of the day's simulation quota is spent (DESIGN.md quota-gauge). */
-export function QuotaGauge({
-  used,
-  limit = 5000,
-  label = 'Simulation quota depletion',
-  className,
-}: {
-  used: number
-  limit?: number
-  label?: string
-  className?: string
-}) {
-  const fraction = limit > 0 ? Math.min(1, Math.max(0, used / limit)) : 0
+  if (!mark) return bar
   return (
-    <div
-      role="progressbar"
-      aria-label={label}
-      aria-valuemin={0}
-      aria-valuemax={limit}
-      aria-valuenow={used}
-      className={cn(
-        'h-1.5 w-full overflow-hidden rounded-pill border border-hairline-subtle bg-surface-2',
-        className,
-      )}
-    >
-      <div
-        className="h-full origin-left rounded-pill bg-primary transition-transform duration-300"
-        style={{ transform: `scaleX(${fraction})` }}
+    <div className="relative">
+      {bar}
+      <span
+        role="img"
+        aria-label={mark.label}
+        title={mark.label}
+        className="absolute top-1/2 h-2.5 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-pill bg-ink-muted"
+        style={{ left: `${Math.min(1, Math.max(0, mark.at)) * 100}%` }}
       />
     </div>
   )
@@ -650,7 +736,7 @@ const NOTICE = {
   error: {
     border: 'border-pnl-negative-edge',
     icon: CircleAlertIcon,
-    color: 'text-pnl-negative',
+    color: 'text-pnl-negative-text',
   },
 }
 
@@ -733,9 +819,7 @@ export function Empty({
       <p role="status" className="text-body font-medium text-balance break-words text-ink">
         {title}
       </p>
-      {children && (
-        <div className="max-w-md text-body-compact text-pretty text-ink-subtle">{children}</div>
-      )}
+      {children && <div className="text-body-compact text-pretty text-ink-subtle">{children}</div>}
     </div>
   )
 }
@@ -784,7 +868,7 @@ function TabAnchor({ className, ...props }: ComponentProps<'a'>) {
   )
 }
 
-/** A sub-tab that is a real link: `<TabLink to="/data/$tab" params={{ tab: 'fields' }}>`. */
+/** A sub-tab that is a real link: `<TabLink to="/pool/$tab" params={{ tab: 'stored' }}>`. */
 export const TabLink = createLink(TabAnchor)
 
 export function TabBar({ children }: { children: ReactNode }) {

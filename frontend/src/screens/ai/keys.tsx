@@ -1,10 +1,10 @@
 import { useMutation } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { errorMessage } from '@/api/http'
 import { DASH, fmt } from '@/lib/format'
-import { type LLMKey, llm, quotaDay } from '@/screens/ai/api'
+import { type LLMKey, llm } from '@/screens/ai/api'
 import { Badge, Button, Checkbox, Empty, ErrorNotice, Input, LINK, Panel, Skeleton } from '@/ui/kit'
 import { Confirm } from '@/ui/overlay'
 import { type Column, DataTable } from '@/ui/table'
@@ -27,7 +27,6 @@ export function Keys() {
       else toast.success(summary)
       invalidate()
     },
-    onError: (e) => toast.error(errorMessage(e)),
   })
 
   const remove = useMutation({
@@ -37,7 +36,6 @@ export function Keys() {
       setDeleting(null)
       invalidate()
     },
-    onError: (e) => toast.error(errorMessage(e)),
   })
 
   if (keys.isError) return <ErrorNotice title="Could not load the Keys" error={keys.error} />
@@ -56,9 +54,6 @@ export function Keys() {
       </Panel>
     )
   }
-
-  const day = quotaDay(data.quotaTimezone)
-  const today = (k: LLMKey) => k.usage.filter((u) => u.day === day)
 
   const columns: Column<LLMKey>[] = [
     {
@@ -88,7 +83,8 @@ export function Keys() {
     {
       key: 'status',
       header: 'Last check',
-      width: '150px',
+      // Fits the longest badge, "Working · 59 min ago": it cannot wrap.
+      width: '200px',
       cell: (k) => <KeyStatus apiKey={k} />,
     },
     {
@@ -103,14 +99,14 @@ export function Keys() {
       header: 'Requests today',
       width: '120px',
       align: 'right',
-      cell: (k) => fmt.int(today(k).reduce((s, u) => s + u.requests, 0)),
+      cell: (k) => fmt.int(k.usage.reduce((s, u) => s + u.requests, 0)),
     },
     {
       key: 'tokens',
       header: 'Tokens today',
       width: '120px',
       align: 'right',
-      cell: (k) => fmt.int(today(k).reduce((s, u) => s + u.tokens, 0)),
+      cell: (k) => fmt.int(k.usage.reduce((s, u) => s + u.tokens, 0)),
     },
     {
       key: 'actions',
@@ -123,7 +119,7 @@ export function Keys() {
   return (
     <Panel
       title="Key Pool"
-      description={`${fmt.int(data.enabled)} of ${fmt.int(data.keys.length)} Keys enabled. Requests rotate across enabled Keys; usage counts the current Pacific day.`}
+      description={`${fmt.int(data.enabled)} of ${fmt.int(data.keys.length)} Keys enabled. Requests rotate across enabled Keys; usage counts each model's current day.`}
       bodyClassName="p-0"
       actions={
         <Button size="sm" loading={checkAll.isPending} onClick={() => checkAll.mutate()}>
@@ -162,7 +158,6 @@ function EnabledCell({ apiKey: k }: { apiKey: LLMKey }) {
       toast.success(`${nameOf(k)} ${updated.enabled ? 'enabled' : 'disabled'}`)
       invalidate()
     },
-    onError: (e) => toast.error(errorMessage(e)),
   })
   return (
     <Checkbox
@@ -179,8 +174,8 @@ function EnabledCell({ apiKey: k }: { apiKey: LLMKey }) {
  *
  * Editable because it is a spending limit on a paid account: the moment someone wants to
  * lower one is the moment they have found it too high, and "delete the key and add it
- * again" is not what anyone wants to hear then. A key with no cap of its own uses the
- * model's, which is what every free provider already publishes.
+ * again" is not what anyone wants to hear then. A key with no cap of its own stops at the
+ * limits of the models set up for it.
  */
 function CapCell({ apiKey: k }: { apiKey: LLMKey }) {
   const invalidate = useInvalidateKeys()
@@ -210,7 +205,13 @@ function CapCell({ apiKey: k }: { apiKey: LLMKey }) {
     },
   })
 
+  // Escape leaves the field too, and leaving it saves: this keeps that one from saving.
+  const dropped = useRef(false)
   const commit = () => {
+    if (dropped.current) {
+      dropped.current = false
+      return
+    }
     const clean = draft.trim()
     if (clean === '') {
       if (k.dailyLimit !== null) save.mutate(null)
@@ -235,7 +236,14 @@ function CapCell({ apiKey: k }: { apiKey: LLMKey }) {
       disabled={save.isPending}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
-      onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          dropped.current = true
+          setDraft(String(k.dailyLimit ?? ''))
+          e.currentTarget.blur()
+        } else if (e.key === 'Enter') e.currentTarget.blur()
+      }}
     />
   )
 }
@@ -245,19 +253,13 @@ function RowActions({ apiKey: k, onDelete }: { apiKey: LLMKey; onDelete: () => v
   const check = useMutation({
     mutationFn: () => llm.checkKey(k.id),
     onSuccess: (result) => {
-      if (result.ok)
-        toast.success(`${nameOf(k)} works · ${fmt.int(result.models)} models`, {
-          description: result.newModels.length
-            ? `New models: ${result.newModels.join(', ')}`
-            : undefined,
-        })
+      if (result.ok) toast.success(`${nameOf(k)} works · reaches ${fmt.int(result.models)} models`)
       else
         toast.error(`${nameOf(k)} failed the check`, {
           description: result.error,
         })
       invalidate()
     },
-    onError: (e) => toast.error(errorMessage(e)),
   })
   return (
     <div className="flex w-full justify-end gap-1">

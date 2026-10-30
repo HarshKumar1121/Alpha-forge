@@ -17,6 +17,8 @@ const RECONNECT_MAX = 10_000
  * happening, so this only fires when the connection died without closing — a sleep, a
  * suspended VM, a dropped tunnel — which leaves the socket reading OPEN forever. */
 const SILENCE_MS = 60_000
+/** Longer than the backend's 25s ping: an open socket this quiet is presumed dead. */
+const PING_MS = 30_000
 
 class Telemetry {
   private socket: WebSocket | null = null
@@ -25,6 +27,7 @@ class Telemetry {
   private delay = RECONNECT_MIN
   private connected = false
   private silence: ReturnType<typeof setTimeout> | null = null
+  private lastHeard = 0
 
   connect(): void {
     if (this.socket && this.socket.readyState <= WebSocket.OPEN) return
@@ -59,8 +62,20 @@ class Telemetry {
     socket.onerror = () => socket.close()
   }
 
+  /**
+   * Back from a sleep, another window or a dropped network: reconnect now rather than after
+   * the backoff, or the silence timer for a socket that died while the machine slept.
+   */
+  wake(): void {
+    this.delay = RECONNECT_MIN
+    if (!this.socket) this.connect()
+    else if (this.socket.readyState === WebSocket.OPEN && Date.now() - this.lastHeard > PING_MS)
+      this.socket.close()
+  }
+
   /** Restart the silence timer. Closing a dead socket is what starts the reconnect. */
   private heard(): void {
+    this.lastHeard = Date.now()
     if (this.silence) clearTimeout(this.silence)
     this.silence = setTimeout(() => {
       this.silence = null
@@ -90,14 +105,10 @@ class Telemetry {
 
 export const telemetry = new Telemetry()
 
-/** Run `handler` for every message on `topic`. The handler may change freely. */
-function useTopic(topic: Topic, handler: (payload: unknown) => void): void {
-  const ref = useRef(handler)
-  useEffect(() => {
-    ref.current = handler
-  })
-  useEffect(() => telemetry.subscribe(topic, (payload) => ref.current(payload)), [topic])
-}
+window.addEventListener('online', () => telemetry.wake())
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') telemetry.wake()
+})
 
 /**
  * Refetch queries under `queryKey` whenever `topic` reports a change. The socket is a signal,
@@ -108,26 +119,28 @@ export function useRefetchOn(topic: Topic, queryKey: readonly unknown[], minGapM
   const queryClient = useQueryClient()
   const last = useRef(0)
   const pending = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const keyRef = useRef(queryKey)
+  // Read when a message lands, so one subscription serves every render.
+  const latest = useRef({ queryKey, minGapMs })
   useEffect(() => {
-    keyRef.current = queryKey
+    latest.current = { queryKey, minGapMs }
   })
 
-  useTopic(topic, () => {
-    const fire = () => {
-      last.current = Date.now()
-      pending.current = null
-      void queryClient.invalidateQueries({ queryKey: keyRef.current })
-    }
-    const since = Date.now() - last.current
-    if (since >= minGapMs) fire()
-    else if (!pending.current) pending.current = setTimeout(fire, minGapMs - since)
-  })
-
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    const unsubscribe = telemetry.subscribe(topic, () => {
+      const fire = () => {
+        last.current = Date.now()
+        pending.current = null
+        void queryClient.invalidateQueries({ queryKey: latest.current.queryKey })
+      }
+      const gap = latest.current.minGapMs
+      const since = Date.now() - last.current
+      if (since >= gap) fire()
+      else if (!pending.current) pending.current = setTimeout(fire, gap - since)
+    })
+    return () => {
+      unsubscribe()
       if (pending.current) clearTimeout(pending.current)
-    },
-    [],
-  )
+      pending.current = null
+    }
+  }, [topic, queryClient])
 }

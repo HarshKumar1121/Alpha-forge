@@ -8,19 +8,21 @@ database was created never appears and surfaces much later as ``no such column``
 :func:`migrate` closes that gap on every startup by comparing the live schema against
 ``Base.metadata``.
 
-**Additive only, and it checks.** Nothing is ever dropped or renamed, so a column that
-has *disappeared* from a model is reported rather than quietly reconciled — that change
-needs a real migration tool.
+**Additive, with two exceptions.** A column that has *disappeared* from a model is reported
+rather than quietly reconciled, unless it is listed in :data:`RETIRED`, or left ``NOT NULL``
+with no default: nothing writes that one, so it blocks every insert into its table, and it
+is dropped because nothing reads it either.
 """
 
-from __future__ import annotations
-
-from contextlib import asynccontextmanager
+import re
+import sqlite3
+from contextlib import asynccontextmanager, closing
 from typing import TYPE_CHECKING, Any
 
 import structlog
-from sqlalchemy import Index, Table, UniqueConstraint, event, inspect, text
+from sqlalchemy import Index, Table, event, inspect, text
 from sqlalchemy.dialects import sqlite
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import (
     AsyncConnection,
     AsyncEngine,
@@ -51,30 +53,19 @@ def _apply_pragmas(dbapi_connection: Any, _record: object) -> None:
 class Database:
     """Owns the engine and hands out sessions."""
 
-    def __init__(self, url: str) -> None:
-        self._engine: AsyncEngine = create_async_engine(url, future=True)
+    def __init__(self, path: Path) -> None:
+        self._engine: AsyncEngine = create_async_engine(f"sqlite+aiosqlite:///{path}")
         event.listen(self._engine.sync_engine, "connect", _apply_pragmas)
-        self._sessionmaker = async_sessionmaker(
-            self._engine, expire_on_commit=False, class_=AsyncSession
-        )
+        self._sessionmaker = async_sessionmaker(self._engine, expire_on_commit=False)
 
-    @classmethod
-    def for_path(cls, path: Path) -> Database:
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        return cls(f"sqlite+aiosqlite:///{path}")
-
-    @property
-    def engine(self) -> AsyncEngine:
-        return self._engine
-
-    async def create_all(self) -> dict[str, Any]:
-        """Bring the schema up to the models. Additive only — never drops.
+    async def create_all(self) -> None:
+        """Bring the schema up to the models, dropping only what :func:`migrate` says.
 
         Not just ``create_all``: that leaves an existing table alone, so a column added to
         a model later never appears. See :func:`migrate`.
         """
         async with self._engine.begin() as conn:
-            return await migrate(conn)
+            await migrate(conn)
 
     @asynccontextmanager
     async def session(self) -> AsyncGenerator[AsyncSession]:
@@ -96,6 +87,39 @@ class Database:
         await self._engine.dispose()
 
 
+#: Snapshots kept, one per version that started against this database.
+SNAPSHOTS_KEPT = 3
+
+
+def snapshot(path: Path, version: str) -> Path | None:
+    """Copy the database aside the first time ``version`` starts, before it migrates.
+
+    Migration can drop columns, and falling back to the previous build restores its code
+    but not this file. ``VACUUM INTO`` rather than a file copy, which can tear a WAL
+    database, and rather than the backup API, which copies free pages too: measured, 0.4 s
+    and 226 MB against 4.5 s and 749 MB. Returns the new snapshot, or ``None`` when there
+    was nothing to do.
+    """
+    if not path.exists():
+        return None
+    folder = path.parent / "backups"
+    target = folder / f"{path.stem}-before-{re.sub(r'[^\w.+-]', '_', version)}.db"
+    if target.exists():
+        return None
+    folder.mkdir(mode=0o700, exist_ok=True)
+    partial = target.with_suffix(".partial")
+    # VACUUM INTO refuses a file that is already there, as one a crash left half-written is.
+    partial.unlink(missing_ok=True)
+    with closing(sqlite3.connect(path)) as source:
+        source.execute("VACUUM INTO ?", [str(partial)])
+    partial.replace(target)
+    older = sorted(folder.glob(f"{path.stem}-before-*.db"), key=lambda p: p.stat().st_mtime)
+    for stale in older[:-SNAPSHOTS_KEPT]:
+        stale.unlink()
+    log.info("db.snapshot", path=str(target))
+    return target
+
+
 # --- migration -------------------------------------------------------------------
 
 log = structlog.get_logger(__name__)
@@ -105,15 +129,26 @@ class MigrationError(RuntimeError):
     """A schema change this migrator will not make on its own."""
 
 
-async def migrate(connection: AsyncConnection) -> dict[str, Any]:
-    """Create what is missing and report what was done."""
+#: Columns a model gave up on purpose, dropped wherever they are found. Only ones an older
+#: build can put back, nullable or with a server default: the launcher falls back to the
+#: previous build when a new one fails to start, and that build re-adds what its models declare.
+RETIRED = {
+    "sync_run": {"cursor_dataset", "fields_expected"},
+    "brain_session": {"user_id", "expires_at"},
+    "trial": {"constraint", "feasible"},
+}
+
+
+async def migrate(connection: AsyncConnection) -> None:
+    """Create what is missing and log what was done."""
     live_tables = set(await connection.run_sync(_table_names))
     await connection.run_sync(Base.metadata.create_all)
 
     added_columns: list[str] = []
     added_indexes: list[str] = []
     unknown_columns: list[str] = []
-    missing_unique: list[str] = []
+    dropped_columns: list[str] = []
+    retired_columns: list[str] = []
 
     for table in Base.metadata.sorted_tables:
         if table.name not in live_tables:
@@ -129,72 +164,73 @@ async def migrate(connection: AsyncConnection) -> dict[str, Any]:
             added_columns.append(f"{table.name}.{column.name}")
 
         expected = {c.name for c in table.columns}
-        unknown_columns.extend(f"{table.name}.{name}" for name in sorted(present - expected))
+        for name in sorted(present.keys() - expected):
+            retired = name in RETIRED.get(table.name, ())
+            # A leftover column is harmless unless it is NOT NULL with no default: nothing
+            # writes it, so every insert into the table fails forever. Measured on a
+            # consultant's machine, where `study.sampler_notes` from an older build made
+            # every lab's Add Task answer 500.
+            if (retired or present[name]) and await _drop_column(connection, table.name, name):
+                (retired_columns if retired else dropped_columns).append(f"{table.name}.{name}")
+            else:
+                unknown_columns.append(f"{table.name}.{name}")
 
         added_indexes.extend(
             [index.name or "" for index in table.indexes if await _create_index(connection, index)]
         )
 
-        missing_unique.extend(await connection.run_sync(_missing_unique, table))
-
-    if added_columns or added_indexes:
-        log.info("db.migrated", columns=added_columns, indexes=added_indexes)
-    if missing_unique:
-        # Reported, not created: SQLite cannot add a constraint to an existing table, and a
-        # unique index built over rows that already collide would stop startup instead.
+    if added_columns or added_indexes or retired_columns:
+        log.info(
+            "db.migrated", columns=added_columns, indexes=added_indexes, retired=retired_columns
+        )
+    if dropped_columns:
         log.warning(
-            "db.missing_unique_constraints",
-            constraints=missing_unique,
-            detail="Declared in the models but not enforced by the database. Needs a migration.",
+            "db.dropped_blocking_columns",
+            columns=dropped_columns,
+            detail=(
+                "Left by an older build, NOT NULL with no default, so nothing could be "
+                "inserted into their tables. Nothing read them."
+            ),
         )
     if unknown_columns:
-        # Not fatal: an extra column costs nothing at runtime and dropping it is the
-        # destructive act this migrator refuses. Still worth saying once per start.
+        # Not fatal: a nullable extra column costs nothing at runtime, and dropping it is
+        # the destructive act this migrator refuses. Still worth saying once per start.
         log.warning(
             "db.unknown_columns",
             columns=unknown_columns,
             detail=(
                 "These exist in the database but not in the models. Nothing reads them. "
-                "Removing them needs a real migration tool."
+                "Listing one in RETIRED drops it."
             ),
         )
-
-    return {
-        "columnsAdded": added_columns,
-        "indexesAdded": added_indexes,
-        "unknownColumns": unknown_columns,
-        "missingUniqueConstraints": missing_unique,
-    }
 
 
 def _table_names(sync_connection: Any) -> list[str]:
     return list(inspect(sync_connection).get_table_names())
 
 
-def _missing_unique(sync_connection: Any, table: Table) -> list[str]:
-    """Declared unique constraints the live table does not enforce, matched by column set.
+async def _columns(connection: AsyncConnection, table: str) -> dict[str, bool]:
+    """Every live column, mapped to whether a row could be inserted without naming it.
 
-    Matched by columns, not name: SQLite names a constraint's index
-    ``sqlite_autoindex_<table>_<n>``, so a name lookup would never find it.
+    ``PRAGMA table_info`` answers ``(cid, name, type, notnull, dflt_value, pk)``. A primary
+    key is exempt: SQLite fills an ``INTEGER PRIMARY KEY`` itself.
     """
-    inspector = inspect(sync_connection)
-    live = [frozenset(u["column_names"]) for u in inspector.get_unique_constraints(table.name)]
-    live += [
-        frozenset(c for c in i["column_names"] if c is not None)
-        for i in inspector.get_indexes(table.name)
-        if i["unique"]
-    ]
-    return [
-        f"{table.name}({', '.join(c.name for c in constraint.columns)})"
-        for constraint in table.constraints
-        if isinstance(constraint, UniqueConstraint)
-        and frozenset(c.name for c in constraint.columns) not in live
-    ]
-
-
-async def _columns(connection: AsyncConnection, table: str) -> set[str]:
     result = await connection.execute(text(f'PRAGMA table_info("{table}")'))
-    return {row[1] for row in result.fetchall()}
+    return {row[1]: bool(row[3]) and row[4] is None and not row[5] for row in result.fetchall()}
+
+
+async def _drop_column(connection: AsyncConnection, table: str, column: str) -> bool:
+    """Drop a column, reporting whether SQLite allowed it.
+
+    It refuses one an index or a generated column depends on, which is a refusal to report
+    rather than a reason to stop starting up.
+    """
+    try:
+        await connection.execute(text(f'ALTER TABLE "{table}" DROP COLUMN "{column}"'))
+    except OperationalError as exc:
+        log.warning("db.drop_column_refused", table=table, column=column, error=str(exc))
+        return False
+    return True
 
 
 async def _create_index(connection: AsyncConnection, index: Index) -> bool:
@@ -224,6 +260,3 @@ def _add_column_sql(table: Table, column: Any) -> str:
         )
     rendered = CreateColumn(column).compile(dialect=sqlite.dialect())
     return f'ALTER TABLE "{table.name}" ADD COLUMN {rendered}'
-
-
-__all__ = ["AsyncSession", "Database"]

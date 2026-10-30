@@ -8,19 +8,30 @@ Nothing here raises HTTP errors: a problem is returned as a sentence, and the ro
 decides whether it blocks.
 """
 
-from __future__ import annotations
-
 import random
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field, ValidationError
 
 from ..brain.errors import BrainError
+from ..brain.platform import INSTRUMENT_TYPE
 from ..brain.schemas import region_label
 from ..brain.settings_schema import resolve_options
+from ..catalog.queries import FieldFilter
 from ..db.models import Study, StudyStatus
 from ..schemas import Out
 from . import scheduler, search
+from .params import (
+    CORRELATION_BREAKER,
+    FIELDS_SAMPLER,
+    GA_SAMPLER,
+    POWER_POOL_SAMPLER,
+    SEARCH_SAMPLER,
+    SETTINGS_SAMPLER,
+    SUPER_LAB,
+    TASK_SAMPLERS,
+    TEMPLATE_SAMPLER,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -31,6 +42,22 @@ if TYPE_CHECKING:
     from .params import TaskParams
 
 OPERATORS_UNREAD = "Your BRAIN operators could not be read. Sign in again, then reload."
+NO_SIMULATIONS = "Assign the simulations for this task."
+#: Nothing is searched on a neutralization nobody chose, so an empty choice is refused.
+NO_NEUTRALIZATION = "Choose at least one Neutralization."
+#: Alphas a preview shows.
+SAMPLE_SIZE = 5
+#: What each lab's task names start with, and the objective its trials are scored on.
+_TASKS: dict[str, tuple[str, str]] = {
+    SEARCH_SAMPLER: ("search", "train_sharpe"),
+    TEMPLATE_SAMPLER: ("template", "train_sharpe"),
+    GA_SAMPLER: ("evolution", "train_fitness"),
+    POWER_POOL_SAMPLER: ("power-pool", "sharpe"),
+    SETTINGS_SAMPLER: ("settings-sampler", "sharpe"),
+    CORRELATION_BREAKER: ("correlation-breaker", "sharpe"),
+    FIELDS_SAMPLER: ("fields-sampler", "sharpe"),
+    SUPER_LAB: ("super-alpha", "sharpe"),
+}
 
 
 # --- wire shapes every lab's responses share ------------------------------------------
@@ -86,7 +113,7 @@ async def account_operators(state: Any, *, refresh: bool) -> list[dict[str, Any]
 
 def legal_choices(schema: dict[str, Any] | None, region: str, delay: int) -> dict[str, Any]:
     """BRAIN's legal settings for an equity market; empty until the schema is loaded."""
-    market = {"instrumentType": "EQUITY", "region": region, "delay": delay}
+    market = {"instrumentType": INSTRUMENT_TYPE, "region": region, "delay": delay}
     return resolve_options(schema, market) if schema else {}
 
 
@@ -102,17 +129,18 @@ async def neutralizations_for(
     Chosen ones are honoured as given, narrowed only by what BRAIN accepts in that market. The
     lab's own default list is four group neutralizations, and quietly intersecting a choice
     with it would drop ``STATISTICAL`` or ``CROWDING`` from a sweep that asked for them —
-    a task that never ran what it was told to.
+    a task that never ran what it was told to. For the same reason none of them accepted
+    comes back empty, for the caller to refuse, never as the default.
 
-    Choosing nothing keeps the default, so every lab behaves exactly as before until a reader
-    says otherwise.
+    Nothing chosen falls back to that default, which only Auto Select relies on: every lab
+    refuses a task with no neutralization chosen (:data:`NO_NEUTRALIZATION`).
     """
     schema = await state.metadata.cached_settings_schema()
     if not schema:
         return []
     offered = choices(legal_choices(schema, region, delay), "neutralization")
-    if chosen and (picked := [n for n in offered if n in set(chosen)]):
-        return picked
+    if chosen:
+        return [n for n in offered if n in set(chosen)]
     return [n for n in search.NEUTRALIZATIONS if n in offered] or offered[:1]
 
 
@@ -123,7 +151,9 @@ async def synced_universes(
     synced = {
         str(r["universe"])
         for r in await state.queries.synced_tuples()
-        if r["instrument_type"] == "EQUITY" and r["region"] == region and int(r["delay"]) == delay
+        if r["instrument_type"] == INSTRUMENT_TYPE
+        and r["region"] == region
+        and int(r["delay"]) == delay
     }
     universes = [u for u in choices(legal, "universe") if u in synced]
     if first in universes:
@@ -139,12 +169,15 @@ class SearchRequest(BaseModel):
     universe: str | None = None
     dataset_ids: list[str] = Field(default_factory=list, max_length=200)
     vector_operators: list[str] = Field(default_factory=list)
-    #: Empty keeps the lab's default four; anything here is searched instead.
+    #: What the lab searches. Empty is refused: see :data:`NO_NEUTRALIZATION`.
     neutralizations: list[str] = Field(default_factory=list, max_length=20)
     decay: int = 0
     cores: int = Field(default=search.MAX_CORES, ge=1, le=search.MAX_CORES)
     #: Needed to add a task; a preview ignores it.
     simulations: int = Field(default=0, ge=0, le=search.MAX_SIMULATIONS)
+    #: The Data Explorer's filter the datasets were chosen under: only the fields it shows are
+    #: searched. Its ordering and paging are the lab's own.
+    field_filter: FieldFilter | None = None
 
 
 async def market_for(body: SearchRequest, state: Any, need: tuple[str, ...] = ()) -> dict[str, Any]:
@@ -173,18 +206,18 @@ async def market_for(body: SearchRequest, state: Any, need: tuple[str, ...] = ()
     neutralizations = await neutralizations_for(
         state, body.region, body.delay, body.neutralizations
     )
-    if schema and not neutralizations:
-        problems.append(f"BRAIN offers no neutralization for {region_label(body.region)}.")
+    if not body.neutralizations:
+        problems.append(NO_NEUTRALIZATION)
+    elif schema and not neutralizations:
+        problems.append(
+            f"BRAIN offers none of the chosen neutralizations in {region_label(body.region)}."
+        )
 
     lacking: set[str] = set()
     if need and universes:
-        held: dict[str, set[str]] = {}
-        for name in need:
-            held[name] = {
-                str(r["universe"])
-                for r in await state.queries.field_availability(name)
-                if r["region"] == body.region and int(r["delay"]) == body.delay
-            }
+        held: dict[str, set[str]] = {name: set() for name in need}
+        for r in await state.queries.universes_holding(body.region, body.delay, list(need)):
+            held[str(r["field_id"])].add(str(r["universe"]))
         for universe in list(universes):
             short = [name for name in need if universe not in held[name]]
             if short:
@@ -217,10 +250,15 @@ async def market_for(body: SearchRequest, state: Any, need: tuple[str, ...] = ()
             universes=universes,
             dataset_ids=body.dataset_ids,
             allow_vector=bool(vector_ops),
+            narrow=body.field_filter,
         )
         if not pool.fields:
             problems.append(
-                "The chosen datasets have no usable fields in this market."
+                (
+                    "No field in the chosen datasets matches the Data Explorer filter."
+                    if body.field_filter
+                    else "The chosen datasets have no usable fields in this market."
+                )
                 + (
                     " Allow a vector operator to use their vector fields."
                     if pool.vector_skipped
@@ -246,13 +284,13 @@ async def market_for(body: SearchRequest, state: Any, need: tuple[str, ...] = ()
 
 
 def preview_samples(
-    draw: Callable[[random.Random], SimulationRequest | None], *, tries: int, want: int = 5
+    draw: Callable[[random.Random], SimulationRequest | None], *, tries: int
 ) -> list[SampleAlpha]:
-    """Up to ``want`` Alphas a task could send, from at most ``tries`` draws."""
+    """Up to :data:`SAMPLE_SIZE` Alphas a task could send, from at most ``tries`` draws."""
     rng = random.Random()
     sample: list[SampleAlpha] = []
     for _ in range(tries):
-        if len(sample) >= want:
+        if len(sample) >= SAMPLE_SIZE:
             break
         request = draw(rng)
         if request is not None:
@@ -271,27 +309,27 @@ async def add_study(
     state: Any,
     *,
     now: datetime,
-    lab: str,
-    prefix: str,
     sampler: str,
     params: TaskParams,
-    objective: str,
     simulations: int,
     batch_size: int,
     template_source: str,
     template_name: str | None = None,
-    template_id: int | None = None,
     run: bool = False,
     seeds: Callable[[int], list[Trial]] | None = None,
-) -> Study:
+    objective: str | None = None,
+) -> AddedTask:
     """Store a task: not started, or queued for the scheduler when ``run``.
 
     ``seeds`` are trials the task starts with, written in the same transaction.
+    ``objective`` replaces the lab's own, e.g. Sharpe where no test period splits off a train.
     """
+    lab = TASK_SAMPLERS[sampler]
+    prefix, own = _TASKS[sampler]
+    objective = objective or own
     task = f"{prefix}-{now:%y%m%d%H%M%S%f}"
     row = Study(
         name=f"{lab} · {task}",
-        template_id=template_id,
         template_name=template_name or lab,
         template_source=template_source,
         sampler=sampler,
@@ -313,4 +351,4 @@ async def add_study(
     if run:
         await scheduler.start_waiting(state.optimizer)
     await state.optimizer.notify()
-    return row
+    return AddedTask(id=row.id, name=row.name)

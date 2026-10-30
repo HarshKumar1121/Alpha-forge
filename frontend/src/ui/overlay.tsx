@@ -1,16 +1,24 @@
 /**
  * Floating surfaces on Base UI's headless primitives (focus trap, dismissal, ARIA), styled
- * as lifted Linear surfaces: surface-2/3 with a strong hairline, no shadows.
+ * as lifted Linear surfaces: surface-3/4 with a strong hairline, casting `shadow-float`
+ * onto whatever they cover.
  */
 
+import { ContextMenu as BContextMenu } from '@base-ui/react/context-menu'
 import { Dialog as BDialog } from '@base-ui/react/dialog'
 import { Menu as BMenu } from '@base-ui/react/menu'
 import { Select as BSelect } from '@base-ui/react/select'
 import { Tooltip as BTooltip } from '@base-ui/react/tooltip'
-import { CheckIcon, ChevronDownIcon, XIcon } from 'lucide-react'
-import type { ReactElement, ReactNode, RefObject } from 'react'
+import { CheckIcon, ChevronDownIcon, ChevronUpIcon, XIcon } from 'lucide-react'
+import { type ReactElement, type ReactNode, type RefObject, useEffect } from 'react'
 import { cn } from '@/lib/cn'
+import type { Choice } from '@/lib/scope'
 import { Button } from './kit'
+
+/** Behind every modal: the page dims and blurs, so what floats is the only thing in focus. */
+export const BACKDROP = 'fixed inset-0 z-50 bg-black/60 backdrop-blur-sm'
+/** Lighter, and unblurred: a sheet is read against the table it was opened from. */
+const SHEET_BACKDROP = 'fixed inset-0 z-50 bg-black/25'
 
 interface DialogProps {
   open: boolean
@@ -19,6 +27,8 @@ interface DialogProps {
   description?: ReactNode
   children?: ReactNode
   footer?: ReactNode
+  /** Buttons beside Close in the header. */
+  actions?: ReactNode
   className?: string
   /**
    * Where to portal to. Needed only inside an element in fullscreen: the browser renders
@@ -33,6 +43,7 @@ function Frame({
   description,
   children,
   footer,
+  actions,
 }: Omit<DialogProps, 'open' | 'onOpenChange' | 'className'>) {
   return (
     <>
@@ -45,9 +56,12 @@ function Frame({
             </BDialog.Description>
           )}
         </div>
-        <BDialog.Close render={<Button variant="ghost" size="icon-sm" aria-label="Close" />}>
-          <XIcon />
-        </BDialog.Close>
+        <div className="flex shrink-0 items-center gap-1">
+          {actions}
+          <BDialog.Close render={<Button variant="ghost" size="icon-sm" aria-label="Close" />}>
+            <XIcon />
+          </BDialog.Close>
+        </div>
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-4">{children}</div>
       {footer && (
@@ -63,10 +77,10 @@ export function Dialog({ open, onOpenChange, className, ...frame }: DialogProps)
   return (
     <BDialog.Root open={open} onOpenChange={(next) => onOpenChange(next)}>
       <BDialog.Portal>
-        <BDialog.Backdrop className="fixed inset-0 z-50 bg-black/60" />
+        <BDialog.Backdrop className={BACKDROP} />
         <BDialog.Popup
           className={cn(
-            'fixed top-1/2 left-1/2 z-50 flex max-h-[85vh] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 flex-col rounded-lg border border-hairline-strong bg-surface-3 outline-none',
+            'fixed top-1/2 left-1/2 z-50 flex max-h-[85vh] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 flex-col rounded-lg border border-hairline-strong bg-surface-3 shadow-float outline-none',
             className,
           )}
         >
@@ -82,10 +96,10 @@ export function Sheet({ open, onOpenChange, className, container, ...frame }: Di
   return (
     <BDialog.Root open={open} onOpenChange={(next) => onOpenChange(next)}>
       <BDialog.Portal container={container}>
-        <BDialog.Backdrop className="fixed inset-0 z-50 bg-black/50" />
+        <BDialog.Backdrop className={SHEET_BACKDROP} />
         <BDialog.Popup
           className={cn(
-            'fixed inset-y-0 right-0 z-50 flex w-full max-w-2xl flex-col border-l border-hairline-strong bg-surface-1 outline-none',
+            'fixed inset-y-0 right-0 z-50 flex w-full max-w-2xl flex-col border-l border-hairline-strong bg-surface-1 shadow-float outline-none',
             className,
           )}
         >
@@ -93,6 +107,73 @@ export function Sheet({ open, onOpenChange, className, container, ...frame }: Di
         </BDialog.Popup>
       </BDialog.Portal>
     </BDialog.Root>
+  )
+}
+
+/**
+ * Previous and next for a sheet opened from a table's rows, `ids` in the order shown: on the
+ * buttons, and on K and J as in a mail list (not while typing or in a menu, where they are letters).
+ */
+export function SheetSteps({
+  ids,
+  id,
+  onStep,
+  noun,
+}: {
+  ids: string[]
+  id: string | null
+  onStep: (id: string) => void
+  noun: string
+}) {
+  const at = id === null ? -1 : ids.indexOf(id)
+  const previous = at > 0 ? ids[at - 1] : undefined
+  const next = at >= 0 ? ids[at + 1] : undefined
+  useEffect(() => {
+    if (at < 0) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
+      const target = event.target as HTMLElement | null
+      // Nor inside an open menu or list, where a letter jumps to the item it starts.
+      if (
+        target?.closest(
+          'input, textarea, select, [contenteditable="true"], [role="menu"], [role="listbox"], [role="combobox"]',
+        )
+      )
+        return
+      const to = event.key === 'j' ? next : event.key === 'k' ? previous : undefined
+      if (to) onStep(to)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [at, next, previous, onStep])
+
+  if (at < 0 || ids.length < 2) return null
+  return (
+    <>
+      <span className="num px-1 text-body-compact text-ink-subtle">
+        {at + 1} / {ids.length}
+      </span>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label={`Previous ${noun} (K)`}
+        title={`Previous ${noun} (K)`}
+        disabled={!previous}
+        onClick={() => previous && onStep(previous)}
+      >
+        <ChevronUpIcon />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label={`Next ${noun} (J)`}
+        title={`Next ${noun} (J)`}
+        disabled={!next}
+        onClick={() => next && onStep(next)}
+      >
+        <ChevronDownIcon />
+      </Button>
+    </>
   )
 }
 
@@ -140,14 +221,9 @@ export function Confirm({
 }
 
 const POPUP =
-  'max-w-[calc(100vw-2rem)] rounded-md border border-hairline-strong bg-surface-3 p-1 outline-none'
+  'max-w-[calc(100vw-2rem)] rounded-md border border-hairline-strong bg-surface-3 p-1 shadow-float outline-none'
 const ITEM =
   'flex h-8 min-w-0 cursor-default items-center gap-2 rounded-sm px-2 text-body text-ink-muted outline-none select-none data-[disabled]:text-ink-disabled data-[highlighted]:bg-surface-4 data-[highlighted]:text-ink'
-
-export interface Choice<V extends string = string> {
-  value: V
-  label: string
-}
 
 export function Select<V extends string>({
   value,
@@ -219,6 +295,8 @@ interface MenuItem {
   label: ReactNode
   onClick: () => void
   icon?: ReactNode
+  /** Shown at the row's right edge, as plain text. */
+  shortcut?: string
   danger?: boolean
   disabled?: boolean
 }
@@ -238,25 +316,48 @@ export function Menu({
       <BMenu.Portal>
         <BMenu.Positioner sideOffset={4} align={align} className="z-50">
           <BMenu.Popup className={cn(POPUP, 'min-w-44')}>
-            {items.map((item, i) => (
-              <BMenu.Item
-                key={i}
-                disabled={item.disabled}
-                onClick={item.onClick}
-                className={cn(
-                  ITEM,
-                  item.danger && 'text-pnl-negative data-[highlighted]:text-pnl-negative',
-                  '[&_svg]:size-3.5 [&_svg]:shrink-0',
-                )}
-              >
-                {item.icon}
-                <span className="truncate">{item.label}</span>
-              </BMenu.Item>
-            ))}
+            <MenuItems items={items} />
           </BMenu.Popup>
         </BMenu.Positioner>
       </BMenu.Portal>
     </BMenu.Root>
+  )
+}
+
+function MenuItems({ items }: { items: MenuItem[] }) {
+  return items.map((item, i) => (
+    <BMenu.Item
+      key={i}
+      disabled={item.disabled}
+      onClick={item.onClick}
+      className={cn(
+        ITEM,
+        item.danger && 'text-pnl-negative-text data-[highlighted]:text-pnl-negative-text',
+        '[&_svg]:size-3.5 [&_svg]:shrink-0',
+      )}
+    >
+      {item.icon}
+      <span className="truncate">{item.label}</span>
+      {item.shortcut && (
+        <span className="ml-auto shrink-0 pl-6 text-ink-subtle">{item.shortcut}</span>
+      )}
+    </BMenu.Item>
+  ))
+}
+
+/** The same items as {@link Menu}, opened by a right-click (or a long press) on `children`. */
+export function ContextMenu({ children, items }: { children: ReactElement; items: MenuItem[] }) {
+  return (
+    <BContextMenu.Root>
+      <BContextMenu.Trigger render={children} />
+      <BContextMenu.Portal>
+        <BContextMenu.Positioner className="z-50">
+          <BContextMenu.Popup className={cn(POPUP, 'min-w-44')}>
+            <MenuItems items={items} />
+          </BContextMenu.Popup>
+        </BContextMenu.Positioner>
+      </BContextMenu.Portal>
+    </BContextMenu.Root>
   )
 }
 
@@ -266,7 +367,7 @@ export function Tooltip({ content, children }: { content: ReactNode; children: R
       <BTooltip.Trigger render={children} />
       <BTooltip.Portal>
         <BTooltip.Positioner sideOffset={6} className="z-50">
-          <BTooltip.Popup className="max-w-[min(24rem,calc(100vw-2rem))] rounded-xs border border-hairline-strong bg-surface-4 px-2 py-1 text-caption text-pretty break-words text-ink">
+          <BTooltip.Popup className="max-w-[min(24rem,calc(100vw-2rem))] rounded-xs border border-hairline-strong bg-surface-4 px-2 py-1 text-caption shadow-float text-pretty break-words text-ink">
             {content}
           </BTooltip.Popup>
         </BTooltip.Positioner>

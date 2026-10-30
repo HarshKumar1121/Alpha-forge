@@ -4,8 +4,6 @@ One endpoint behind the indicator in the top bar: a catalog sync, a returns back
 template sweep all report into the same registry, so "is anything happening?" has one answer.
 """
 
-from __future__ import annotations
-
 from typing import Any, Literal
 
 from fastapi import APIRouter
@@ -46,4 +44,4 @@ async def running(state: State) -> TasksSummary:
     not drag the rest toward zero. Finished tasks linger briefly so a job that completes
     between two polls is still seen.
     """
-    return TasksSummary.model_validate(await state.tasks.summary())
+    return TasksSummary.model_validate(state.tasks.summary())

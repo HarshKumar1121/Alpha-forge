@@ -2,13 +2,10 @@
 
 Metadata is cheap: a hundred alphas per listing request. Daily returns are one
 ``Retry-After`` request per alpha, so a thousand alphas is the better part of an hour —
-hence a background task with visible progress, ordered by Sharpe so the alphas most
-likely to be worth mixing arrive first.
+hence background tasks with visible progress.
 
 None of this spends simulation quota. It is all reading results that already exist.
 """
-
-from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta
@@ -17,22 +14,20 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from ..brain.filters import AlphaQuery, Filter
-from ..brain.schemas import Alpha
+from ..brain.platform import ALPHA_LIST_MAX_OFFSET, ALPHA_LIST_PAGE
+from ..brain.schemas import QUICK_MODE, Alpha, RecordSet, SimulationType
+from .store import checks_json
+from .yields import checks_of, gating_results
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Coroutine
 
     from ..brain.endpoints import BrainEndpoints
-    from ..tasks import TaskRegistry
+    from ..tasks import Task, TaskRegistry
     from .store import AlphaVault
 
 log = structlog.get_logger(__name__)
 
-#: The alpha list's largest page: a bigger ``limit`` is served as 100 anyway.
-PAGE = 100
-#: The alpha list refuses offsets past 1,000. Beyond it the listing continues by
-#: ``dateCreated`` instead.
-MAX_OFFSET = 1_000
 
 #: Captures landing within this long of each other share one alpha-list request. A batch's
 #: children land within a second or two of each other, and one list page carries the same
@@ -48,6 +43,42 @@ CAPTURE_PAGES = 3
 #: each. Four, the same width every other BRAIN read here uses.
 CAPTURE_CONCURRENCY = 4
 
+#: Alphas whose returns are downloaded at once by :meth:`Backfill.fetch_each`.
+#:
+#: Four, not eight. The client's ``429`` gate is not a private limiter for this job -- it
+#: pauses every read of an Alpha, captures included, for the ``Retry-After`` BRAIN sends,
+#: which is up to a minute. Measured at eight: 922 Alphas in 5m16s on a quiet account, but
+#: ``Retry-After`` of 61-75s once anything else was in flight. Going wider buys a stall, not
+#: throughput; each Alpha is three reads.
+RETURNS_CONCURRENCY = 4
+#: Most progress broadcasts a returns job will send. One per Alpha puts a thousand messages
+#: on the socket to move a bar the width of a hair; a fixed stride of ten leaves a job of
+#: fifteen reading "0 of 15" until it is two thirds done, which looks like a hang -- and a
+#: rate-limited job *is* slow enough to be mistaken for one.
+RETURNS_PROGRESS_STEPS = 50
+
+
+def worth_downloading(alpha: Alpha, allowed: frozenset[str]) -> bool:
+    """Whether this alpha's daily PnL is worth a request as soon as it lands.
+
+    Only when every check that decides anything reads one of ``allowed``, chosen in Settings.
+    The default, PASS, WARNING or PENDING, is the ones nothing refused: a refused alpha is
+    rarely charted, correlated or planned with, so its series is a request and ~2,500 rows
+    spent on something no screen reads -- and a full day is 5,000 alphas, of which about one
+    in five is worth keeping. A quick-mode alpha is never submittable, so never downloaded.
+    """
+    if alpha.settings is not None and alpha.settings.simulation_mode == QUICK_MODE:
+        return False
+    results = gating_results(checks_of(checks_json(alpha)))
+    return bool(results) and results <= allowed
+
+
+def _warn_unreadable(alpha_id: str, pnl: RecordSet, stored: int) -> None:
+    if pnl.records and not stored:
+        # Days came back but none had a date and a PnL: the columns were renamed.
+        columns = [p.name for p in pnl.schema_.properties]
+        log.warning("vault.pnl_unreadable", alpha_id=alpha_id, columns=columns)
+
 
 def _now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
@@ -62,22 +93,22 @@ class Backfill:
         endpoints: BrainEndpoints,
         tasks: TaskRegistry,
         *,
-        on_stored: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        on_stored: Callable[[dict[str, Any]], Awaitable[None]],
     ) -> None:
         self.vault = vault
         self.endpoints = endpoints
         self.tasks = tasks
         self.on_stored = on_stored
         self._running: asyncio.Task[Any] | None = None
+        self._starting = asyncio.Lock()
         self._background: set[asyncio.Task[Any]] = set()
         #: Alphas whose daily PnL was asked for in the background, each once per run.
         self._returns_asked: set[str] = set()
+        #: Check results that let an alpha's PnL download as it lands (Settings). Empty: never.
+        self.pnl_results: frozenset[str] = frozenset({"PASS", "WARNING", "PENDING"})
         #: Alphas waiting for the next shared list read, each with what its caller awaits.
         self._landed: dict[str, asyncio.Future[None]] = {}
         self._drainer: asyncio.Task[None] | None = None
-        #: How captures were read: from a shared list page, or one request each. If
-        #: ``fetched`` rivals ``listed``, the list read is not saving anything.
-        self.capture_counts = {"lists": 0, "listed": 0, "fetched": 0}
         #: How the last backfill ended. Kept past the task registry's short linger, so a
         #: sync that stopped early is still reported when someone looks.
         self.last: dict[str, Any] | None = None
@@ -86,77 +117,165 @@ class Backfill:
     def busy(self) -> bool:
         return self._running is not None and not self._running.done()
 
-    async def start(
-        self,
-        *,
-        include_returns: bool = True,
-        limit: int = 5000,
-        since: datetime | None = None,
-    ) -> str:
-        """Begin a backfill in the background. Returns the task id.
+    async def start(self, *, since: datetime | None = None) -> str:
+        """Begin importing the listing — metrics, no daily PnL — in the background. Returns
+        the task id.
 
         ``since`` makes it incremental: only alphas created after that moment are listed.
         """
-        if self.busy:
-            raise RuntimeError("A backfill is already running.")
-        task = await self.tasks.start("vault-backfill", "Importing your Alphas")
-        self._running = asyncio.create_task(
-            self._run(
-                task,
-                include_returns=include_returns,
-                limit=limit,
-                since=since,
-            ),
-            name="vault-backfill",
+        return await self._launch(
+            "vault-backfill", "Importing your Alphas", lambda task: self._run(task, since=since)
         )
-        return task.id
 
     async def start_submitted(self) -> str:
         """Refresh the submitted Alphas and download each one's PnL and turnover. Returns the
         task id. Only submitted Alphas: the Portfolio needs nothing else."""
-        if self.busy:
-            raise RuntimeError("A sync is already running.")
-        task = await self.tasks.start("portfolio-sync", "Syncing submitted Alphas")
-        self._running = asyncio.create_task(self._sync_submitted(task), name="portfolio-sync")
-        return task.id
+        return await self._launch(
+            "portfolio-sync", "Syncing submitted Alphas", self._sync_submitted
+        )
+
+    async def start_job(self, kind: str, label: str, work: Callable[[Task], Awaitable[str]]) -> str:
+        """Run ``work`` in the background, reported like every other job. Returns the task id.
+
+        ``work`` returns what the finished task says. One job at a time, shared with the syncs:
+        they draw on the same BRAIN rate limit, so two at once finish no sooner.
+        """
+        return await self._launch(kind, label, lambda task: self._job(task, work))
+
+    def cancel_job(self, kind: str) -> bool:
+        """Stop the running job if it is a ``kind``. Whatever it already saved stays."""
+        job = self._running
+        if job is None or job.done() or job.get_name() != kind:
+            return False
+        job.cancel()
+        return True
+
+    async def _launch(
+        self, kind: str, label: str, run: Callable[[Task], Coroutine[Any, Any, None]]
+    ) -> str:
+        # Held across ``tasks.start``, which awaits a broadcast to every open tab: without it a
+        # second request passes the ``busy`` check meanwhile and both jobs run.
+        async with self._starting:
+            if self.busy:
+                raise RuntimeError("A sync is already running.")
+            task = await self.tasks.start(kind, label)
+            self._running = asyncio.create_task(run(task), name=kind)
+            return task.id
+
+    async def _job(self, task: Task, work: Callable[[Task], Awaitable[str]]) -> None:
+        try:
+            detail = await work(task)
+            await self.tasks.update(task, progress=1.0, detail=detail)
+            await self.tasks.finish(task)
+        except asyncio.CancelledError:
+            await self.tasks.finish(task, state="cancelled")
+            raise
+        except Exception as exc:
+            log.exception("vault.job_failed", kind=task.kind)
+            await self.tasks.finish(task, state="failed", error=str(exc)[:300])
+
+    async def fetch_each(
+        self,
+        task: Task,
+        alpha_ids: list[str],
+        fetch: Callable[[str], Awaitable[int]],
+        *,
+        what: str,
+    ) -> list[str]:
+        """``fetch`` each Alpha, several at a time, with progress. Returns the ones that failed."""
+        if not alpha_ids:
+            return []
+        gate = asyncio.Semaphore(RETURNS_CONCURRENCY)
+        every = max(1, len(alpha_ids) // RETURNS_PROGRESS_STEPS)
+        failed: list[str] = []
+        done = 0
+        await self.tasks.update(task, progress=0.0, detail=f"{what}: 0 of {len(alpha_ids)}")
+
+        async def one(alpha_id: str) -> None:
+            nonlocal done
+            async with gate:
+                try:
+                    # Nothing stored is as much a failure as an error: BRAIN gave no rows.
+                    if not await fetch(alpha_id):
+                        failed.append(alpha_id)
+                # One Alpha's series failing must not abandon the rest.
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("vault.returns_failed", alpha_id=alpha_id, error=str(exc)[:160])
+                    failed.append(alpha_id)
+            # Outside the gate: the broadcast waits on every open tab, and a download slot
+            # held for that is a slot not downloading.
+            done += 1
+            if done % every == 0 or done == len(alpha_ids):
+                await self.tasks.update(
+                    task,
+                    progress=done / len(alpha_ids),
+                    detail=f"{what}: {done} of {len(alpha_ids)}",
+                )
+
+        await asyncio.gather(*(one(a) for a in alpha_ids))
+        return failed
 
     async def _sync_submitted(self, task: Any) -> None:
         try:
             await self.tasks.update(task, detail="Listing SUBMITTED Alphas", progress=None)
             ids: list[str] = []
             offset = 0
+            before: datetime | None = None
             while True:
+                filters = [Filter("status", "!=", "UNSUBMITTED")]
+                if before is not None:
+                    filters.append(Filter("dateSubmitted", "<", before))
                 page = await self.endpoints.list_alphas(
                     AlphaQuery(
-                        limit=PAGE,
+                        limit=ALPHA_LIST_PAGE,
                         offset=offset,
                         order="-dateSubmitted",
-                        filters=[Filter("status", "!=", "UNSUBMITTED")],
+                        filters=filters,
+                        # A submitted Alpha you hid still counts in BRAIN's pools.
+                        hidden=None,
                     )
                 )
                 results = page.get("results") or []
                 alphas = [Alpha.model_validate(raw) for raw in results]
                 await self.vault.save_alphas(alphas)
-                ids.extend(a.id for a in alphas)
-                await self.tasks.update(task, detail=f"Listed {len(ids)} SUBMITTED Alphas")
-                if len(results) < PAGE:
+                # A region-agnostic parent has no PnL of its own: its submitted children do.
+                ids.extend(a.id for a in alphas if a.type != SimulationType.RA_PARENT)
+                await self.tasks.update(
+                    task, detail=f"Listed {len(dict.fromkeys(ids))} SUBMITTED Alphas"
+                )
+                if len(results) < ALPHA_LIST_PAGE:
                     break
-                offset += PAGE
+                offset += ALPHA_LIST_PAGE
+                if offset > ALPHA_LIST_MAX_OFFSET:
+                    # BRAIN refuses offsets past 1,000, so carry on below the oldest Alpha seen,
+                    # newest first as before. One second past it: a multi-simulation submits
+                    # several in the same second and ``dateSubmitted<`` is strict; the overlap
+                    # is listed twice and counted once.
+                    oldest = alphas[-1].date_submitted
+                    if oldest is None:
+                        raise RuntimeError("BRAIN listed a SUBMITTED Alpha with no submit date.")
+                    bound = oldest + timedelta(seconds=1)
+                    if before is not None and bound >= before:
+                        raise RuntimeError(
+                            f"More than {ALPHA_LIST_PAGE} Alphas share a submit second; the "
+                            "listing cannot go past them."
+                        )
+                    before, offset = bound, 0
+            ids = list(dict.fromkeys(ids))
 
             # A simulated series never changes, so one already stored is not fetched again.
             missing = await self.vault.lacking_series(ids)
-            for done, alpha_id in enumerate(missing, start=1):
-                try:
-                    await self.fetch_returns(alpha_id)
-                except Exception as exc:  # noqa: BLE001
-                    log.warning("vault.returns_failed", alpha_id=alpha_id, error=str(exc)[:160])
-                await self.tasks.update(
-                    task,
-                    progress=done / len(missing),
-                    detail=f"Downloading PnL and turnover: {done} of {len(missing)}",
-                )
+            failed = await self.fetch_each(
+                task, missing, self.fetch_returns, what="Downloading PnL and turnover"
+            )
+            detail = f"Synced {len(ids)} SUBMITTED Alphas"
+            if failed:
+                detail += f". BRAIN gave no PnL for {len(failed)}: sync again to retry them"
+            await self.tasks.update(task, detail=detail)
             await self.tasks.finish(task)
-            log.info("vault.submitted_synced", alphas=len(ids), fetched=len(missing))
+            log.info(
+                "vault.submitted_synced", alphas=len(ids), fetched=len(missing), failed=len(failed)
+            )
         except asyncio.CancelledError:
             await self.tasks.finish(task, state="cancelled")
             raise
@@ -175,19 +294,10 @@ class Backfill:
         await asyncio.gather(*tasks, return_exceptions=True)
         self._running = None
 
-    async def _run(
-        self,
-        task: Any,
-        *,
-        include_returns: bool,
-        limit: int,
-        since: datetime | None = None,
-    ) -> None:
+    async def _run(self, task: Any, *, since: datetime | None) -> None:
         imported = 0
         try:
-            imported = await self._import_alphas(task, limit, since=since)
-            if include_returns:
-                await self._import_returns(task)
+            imported = await self._import_alphas(task, since=since)
             await self.tasks.finish(task)
             self.last = {"state": "done", "imported": imported, "finishedAt": _now()}
             log.info("vault.backfill_done", alphas=imported)
@@ -205,21 +315,25 @@ class Backfill:
                 "finishedAt": _now(),
             }
 
-    async def _import_alphas(self, task: Any, limit: int, *, since: datetime | None = None) -> int:
-        """Page the pool into the vault, newest first."""
+    async def _import_alphas(self, task: Any, *, since: datetime | None) -> int:
+        """Page the pool into the vault, newest first, until BRAIN lists no older Alphas.
+
+        Ends on a short page, or when the date window below the oldest Alpha seen stops
+        moving; an account at 5,000 simulations a day passes any fixed count within weeks.
+        """
         await self.tasks.update(task, detail="Listing your Alphas", progress=0.0)
         offset = 0
         imported = 0
         before: datetime | None = None
         total: int | None = None
 
-        while imported < limit:
+        while True:
             # hidden=None: an alpha you hid is still an alpha, and still has returns
             # worth correlating. Excluding them by default is a UI nicety, not a
             # property of the data.
             page = await self.endpoints.list_alphas(
                 AlphaQuery(
-                    limit=PAGE,
+                    limit=ALPHA_LIST_PAGE,
                     offset=offset,
                     hidden=None,
                     created_after=since,
@@ -238,14 +352,14 @@ class Backfill:
             imported += len(alphas)
             await self.tasks.update(
                 task,
-                progress=min(1.0, imported / total) * 0.2 if total else None,
+                progress=min(1.0, imported / total) if total else None,
                 detail=f"Imported {imported} of {total} Alphas",
                 alphas=imported,
             )
-            if len(results) < PAGE:
+            if len(results) < ALPHA_LIST_PAGE:
                 break
-            offset += PAGE
-            if offset > MAX_OFFSET:
+            offset += ALPHA_LIST_PAGE
+            if offset > ALPHA_LIST_MAX_OFFSET:
                 # Newest first, so continue below the oldest alpha seen. One second past
                 # it, because a multi-simulation creates several alphas in the same second
                 # and ``dateCreated<`` is strict; the upsert makes the overlap harmless.
@@ -260,45 +374,30 @@ class Backfill:
 
         return imported
 
-    async def _import_returns(self, task: Any) -> int:
-        """Fetch the daily series for every alpha that lacks one."""
-        pending = await self.vault.without_returns()
-        if not pending:
-            await self.tasks.update(task, progress=1.0, detail="Daily returns already complete")
-            return 0
-
-        done = 0
-        for alpha_id in pending:
-            try:
-                await self.fetch_returns(alpha_id)
-            except Exception as exc:  # noqa: BLE001
-                # One alpha's series failing must not abandon the rest; some alphas
-                # genuinely have none.
-                log.warning("vault.returns_failed", alpha_id=alpha_id, error=str(exc)[:160])
-            done += 1
-            await self.tasks.update(
-                task,
-                progress=0.2 + 0.8 * (done / len(pending)),
-                detail=f"Daily returns: {done} of {len(pending)}",
-                returns=done,
-            )
-        return done
-
     async def fetch_returns(self, alpha_id: str) -> int:
         """Fetch and store one alpha's daily PnL and turnover.
 
         From the cumulative ``pnl`` recordset rather than ``daily-pnl``, which is rounded
         separately and drifts from the platform's own figures, with turnover scaled to
-        ``yearly-stats`` (see :mod:`.metrics`).
+        ``yearly-stats`` (see :mod:`.metrics`). A PnL already stored without its turnover is
+        not asked for again.
         """
-        pnl = await self.endpoints.get_recordset(alpha_id, "pnl")
+        if await self.vault.lacking_pnl([alpha_id]):
+            pnl = await self.endpoints.get_recordset(alpha_id, "pnl")
+            turnover = await self.endpoints.get_recordset(alpha_id, "turnover")
+            yearly = await self.endpoints.get_recordset(alpha_id, "yearly-stats")
+            stored = await self.vault.save_pnl(alpha_id, pnl.rows(), turnover.rows(), yearly.rows())
+            _warn_unreadable(alpha_id, pnl, stored)
+            return stored
         turnover = await self.endpoints.get_recordset(alpha_id, "turnover")
         yearly = await self.endpoints.get_recordset(alpha_id, "yearly-stats")
-        stored = await self.vault.save_pnl(alpha_id, pnl.rows(), turnover.rows(), yearly.rows())
-        if pnl.records and not stored:
-            # Days came back but none had a date and a PnL: the columns were renamed.
-            columns = [p.name for p in pnl.schema_.properties]
-            log.warning("vault.pnl_unreadable", alpha_id=alpha_id, columns=columns)
+        return await self.vault.save_turnover(alpha_id, turnover.rows(), yearly.rows())
+
+    async def fetch_pnl(self, alpha_id: str) -> int:
+        """Fetch and store one alpha's daily PnL alone: one request, all a correlation needs."""
+        pnl = await self.endpoints.get_recordset(alpha_id, "pnl")
+        stored = await self.vault.save_pnl_only(alpha_id, pnl.rows())
+        _warn_unreadable(alpha_id, pnl, stored)
         return stored
 
     def schedule_returns(self, alpha_ids: list[str]) -> None:
@@ -319,8 +418,6 @@ class Backfill:
         for alpha_id in alpha_ids:
             try:
                 await self.fetch_returns(alpha_id)
-            except asyncio.CancelledError:
-                raise
             # One alpha's series failing must not abandon the rest.
             except Exception as exc:  # noqa: BLE001
                 log.warning("vault.returns_failed", alpha_id=alpha_id, error=str(exc)[:160])
@@ -329,8 +426,8 @@ class Backfill:
         """Record one alpha as soon as its simulation finishes. Returns once it is stored.
 
         Alphas that land together are read from one list page rather than a request each.
-        Daily returns are *not* fetched here — they cost a request per alpha and are
-        pulled on demand. Failure is logged and dropped, never a reason to fail the
+        Daily returns follow in the background for the ones nothing refused; see
+        :func:`worth_downloading`. Failure is logged and dropped, never a reason to fail the
         simulation that produced the alpha.
         """
         future = self._landed.get(alpha_id)
@@ -371,16 +468,17 @@ class Backfill:
         try:
             for page_number in range(CAPTURE_PAGES):
                 page = await self.endpoints.list_alphas(
-                    AlphaQuery(limit=PAGE, offset=page_number * PAGE, hidden=None)
+                    AlphaQuery(
+                        limit=ALPHA_LIST_PAGE, offset=page_number * ALPHA_LIST_PAGE, hidden=None
+                    )
                 )
-                self.capture_counts["lists"] += 1
                 results = page.get("results") or []
                 for raw in results:
                     listed = Alpha.model_validate(raw)
                     if listed.id in missing:
                         missing.discard(listed.id)
                         found[listed.id] = listed
-                if not missing or len(results) < PAGE:
+                if not missing or len(results) < ALPHA_LIST_PAGE:
                     break
             complete = list(found.values())
             if complete:
@@ -394,8 +492,6 @@ class Backfill:
             await self._captured(alpha)
         stored = {a.id for a in complete}
         fetch = [a for a in alpha_ids if a not in stored]
-        self.capture_counts["listed"] += len(complete)
-        self.capture_counts["fetched"] += len(fetch)
         log.info("vault.captured", listed=len(complete), fetched=len(fetch))
         gate = asyncio.Semaphore(CAPTURE_CONCURRENCY)
 
@@ -407,6 +503,10 @@ class Backfill:
         for one in await asyncio.gather(*(read(a) for a in fetch)):
             if one is not None:
                 complete.append(one)
+
+        # Daily PnL for the ones worth opening, downloaded now rather than when a screen
+        # first asks. One request each, so it is the Alphas nothing refused, not all of them.
+        self.schedule_returns([a.id for a in complete if worth_downloading(a, self.pnl_results)])
 
         asked = set(alpha_ids)
         children = list(dict.fromkeys(c for a in complete for c in a.children if c not in asked))
@@ -428,9 +528,8 @@ class Backfill:
         alpha_id = alpha.id
         # Tell open screens it is stored. The simulation's own "finished" broadcast lands
         # before this save, so a refetch on that alone would miss the new alpha.
-        if self.on_stored is not None:
-            # One failed notice must not cost the rest of its batch their capture.
-            try:
-                await self.on_stored({"alphaId": alpha_id, "stored": True})
-            except Exception:
-                log.warning("vault.capture_notify_failed", alpha_id=alpha_id, exc_info=True)
+        # One failed notice must not cost the rest of its batch their capture.
+        try:
+            await self.on_stored({"alphaId": alpha_id, "stored": True})
+        except Exception:
+            log.warning("vault.capture_notify_failed", alpha_id=alpha_id, exc_info=True)

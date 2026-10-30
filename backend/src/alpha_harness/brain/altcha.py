@@ -2,13 +2,10 @@
 
 BRAIN gates sign-in behind ALTCHA: the server sends a target digest and a salt, and the
 client hashes ``salt + n`` for increasing integers ``n`` until the digest matches. Solving
-is pure CPU, so ``solve_async`` offloads it to a worker thread and a ~1e6-iteration search
-cannot stall the event loop.
+is pure CPU, so sign-in runs it in a worker thread and a ~1e6-iteration search cannot stall
+the event loop.
 """
 
-from __future__ import annotations
-
-import asyncio
 import base64
 import hashlib
 import json
@@ -17,7 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 
 # ALTCHA permits SHA-1 and SHA-512 too; BRAIN sends SHA-256.
-_HASHERS = {"SHA-256": hashlib.sha256}
+ALGORITHM = "SHA-256"
 
 DEFAULT_MAX_NUMBER = 1_000_000
 
@@ -45,10 +42,8 @@ class Challenge:
         except KeyError as exc:
             raise AltchaError(f"Challenge is missing required field {exc.args[0]!r}") from exc
 
-        if algorithm not in _HASHERS:
-            raise AltchaError(
-                f"Unsupported ALTCHA algorithm {algorithm!r}; expected one of {sorted(_HASHERS)}"
-            )
+        if algorithm != ALGORITHM:
+            raise AltchaError(f"Unsupported ALTCHA algorithm {algorithm!r}; expected {ALGORITHM}")
 
         # `maxnumber` is optional in the ALTCHA challenge format.
         raw_max = payload.get("maxnumber", DEFAULT_MAX_NUMBER)
@@ -90,28 +85,47 @@ class Solution:
         return base64.b64encode(compact.encode("utf-8")).decode("ascii")
 
 
+_DIGITS = tuple(str(n).encode("ascii") for n in range(100))
+_TWO_DIGITS = tuple(f"{n:02d}".encode("ascii") for n in range(100))
+
+
 def solve(challenge: Challenge) -> Solution:
     """Search for the integer whose digest matches the challenge.
 
     Raises :class:`AltchaError` if no solution exists at or below ``maxnumber``, which
     means the challenge was malformed or the algorithm changed.
     """
-    hasher = _HASHERS[challenge.algorithm]
-    salt = challenge.salt.encode("utf-8")
-    target = challenge.challenge.lower()
+    # The salt hashed once and copied, and raw digests compared: measured, faster.
+    salted = hashlib.sha256(challenge.salt.encode("utf-8"))
+    try:
+        target = bytes.fromhex(challenge.challenge)
+    except ValueError:
+        target = b""  # Matches no digest, so it ends as any unsolvable challenge does.
     started = time.monotonic()
 
-    for number in range(challenge.maxnumber + 1):
-        if hasher(salt + str(number).encode("ascii")).hexdigest() == target:
-            took_ms = int((time.monotonic() - started) * 1000)
-            return Solution(challenge=challenge, number=number, took_ms=took_ms)
+    def found(number: int) -> Solution:
+        took_ms = int((time.monotonic() - started) * 1000)
+        return Solution(challenge=challenge, number=number, took_ms=took_ms)
+
+    limit = challenge.maxnumber
+    for number in range(min(limit + 1, 100)):
+        attempt = salted.copy()
+        attempt.update(_DIGITS[number])
+        if attempt.digest() == target:
+            return found(number)
+    # Past 99 the leading digits are hashed once per hundred numbers, each then finished with
+    # its last two: the same digest as the whole number's, since SHA-256 reads a stream.
+    for hundreds in range(1, limit // 100 + 1):
+        prefix = salted.copy()
+        prefix.update(str(hundreds).encode("ascii"))
+        base = hundreds * 100
+        for last in range(min(100, limit - base + 1)):
+            attempt = prefix.copy()
+            attempt.update(_TWO_DIGITS[last])
+            if attempt.digest() == target:
+                return found(base + last)
 
     raise AltchaError(
         f"No solution found for {challenge.algorithm} challenge within "
         f"maxnumber={challenge.maxnumber}. The captcha scheme may have changed."
     )
-
-
-async def solve_async(challenge: Challenge) -> Solution:
-    """Solve off the event loop."""
-    return await asyncio.to_thread(solve, challenge)

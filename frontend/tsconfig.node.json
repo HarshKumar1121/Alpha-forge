@@ -9,7 +9,6 @@
     /* Node mode: this project holds vite.config.ts, which Vite loads in Node, and the
        offline token generator in tools/, which the app never imports. */
     "module": "nodenext",
-    "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",
     "noEmit": true,
@@ -26,5 +25,5 @@
     "noImplicitOverride": true,
     "noImplicitReturns": true
   },
-  "include": ["vite.config.ts", "tools/oklch.ts"]
+  "include": ["vite.config.ts", "tools/oklch.ts", "tools/contrast.ts"]
 }

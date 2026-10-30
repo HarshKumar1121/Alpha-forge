@@ -3,7 +3,7 @@
 Two behaviours in here are the reason this file exists, and both break naive clients:
 
 1. **A response carrying ``Retry-After`` means "not ready yet".** The header's presence —
-   not the status code — is the signal (``docs/wqb-api/03-conventions.md``).
+   not the status code — is the signal.
    :meth:`BrainClient.poll` re-issues the request until it is gone; recordsets,
    correlations and checks are read that way.
 2. **``POST /simulations`` answers in headers.** The id is in ``Location``; the caller
@@ -11,8 +11,6 @@ Two behaviours in here are the reason this file exists, and both break naive cli
 
 Versioning lives in the ``Accept`` header (``application/json;version=N``), not the path.
 """
-
-from __future__ import annotations
 
 import asyncio
 import math
@@ -24,7 +22,7 @@ from email.utils import parsedate_to_datetime
 from typing import Any, Literal
 from urllib.parse import parse_qs, urljoin, urlsplit
 
-import httpx
+import httpx2
 import structlog
 
 from .errors import (
@@ -49,6 +47,17 @@ Method = Literal["GET", "POST", "PATCH", "DELETE", "OPTIONS"]
 
 DEFAULT_VERSION = "2.0"
 
+#: Seconds a request may take. ``read_timeout`` stretches the read for the few slow endpoints.
+TIMEOUT = 30.0
+#: Retry backoff when the server names no wait: doubling from the first, capped at the second.
+BASE_BACKOFF = 2.0
+MAX_BACKOFF = 60.0
+#: Attempts for retryable failures (429, 503, transport errors).
+ATTEMPTS = 6
+#: Ceiling on one poll loop, so a stuck server-side job cannot hang a request forever.
+#: Simulations are polled by the background tracker, not here.
+POLL_TIMEOUT = 300.0
+
 #: Shortest wait between polls of a pending job, whatever ``Retry-After`` says.
 MIN_POLL_DELAY = 0.25
 
@@ -59,7 +68,7 @@ EPOCH_SECONDS = 1e9
 MAX_MEASURED_GAP = 60.0
 
 
-def _header_num(headers: httpx.Headers, name: str) -> float | None:
+def _header_num(headers: httpx2.Headers, name: str) -> float | None:
     raw = headers.get(name)
     try:
         return float(raw) if raw is not None else None
@@ -80,20 +89,18 @@ class RateLimit:
     observed_at: float
 
     @classmethod
-    def from_headers(cls, headers: httpx.Headers) -> RateLimit | None:
-        def _num(name: str, kind: type[int] | type[float]) -> Any:
-            raw = headers.get(name)
-            try:
-                return kind(raw) if raw is not None else None
-            except ValueError:
-                return None
-
-        limit = _num("x-ratelimit-limit", int)
-        remaining = _num("x-ratelimit-remaining", int)
-        reset = _num("x-ratelimit-reset", float)
+    def from_headers(cls, headers: httpx2.Headers) -> RateLimit | None:
+        limit, remaining, reset = (
+            _header_num(headers, f"x-ratelimit-{name}") for name in ("limit", "remaining", "reset")
+        )
         if limit is None and remaining is None and reset is None:
             return None
-        return cls(limit=limit, remaining=remaining, reset_seconds=reset, observed_at=time.time())
+        return cls(
+            limit=None if limit is None else int(limit),
+            remaining=None if remaining is None else int(remaining),
+            reset_seconds=reset,
+            observed_at=time.time(),
+        )
 
 
 @dataclass(slots=True)
@@ -101,7 +108,6 @@ class BrainResponse:
     """A completed BRAIN response with the bits callers actually need."""
 
     status: int
-    headers: httpx.Headers
     body: Any
     retry_after: float | None
     rate_limit: RateLimit | None
@@ -113,11 +119,11 @@ class BrainResponse:
         return self.retry_after is not None
 
 
-def _parse_retry_after(headers: httpx.Headers) -> float | None:
+def _parse_retry_after(headers: httpx2.Headers) -> float | None:
     """Seconds to wait, or ``None`` when the header is absent and the result is ready.
 
-    Exactly the documented parser (``docs/wqb-api/endpoints/osmosis.md``): numeric seconds,
-    or an HTTP-date; zero, negative, a past date or anything unreadable means poll now.
+    Exactly the documented parser: numeric seconds, or an HTTP-date; zero, negative, a past
+    date or anything unreadable means poll now.
     """
     raw = headers.get("retry-after")
     if raw is None:
@@ -142,19 +148,15 @@ class BrainClient:
     it so a restart does not cost another proof-of-work solve.
     """
 
+    # forge: `transport` is Forge's only seam for intercepting the socket. The offline test
+    # suite answers every BRAIN call from an httpx2.MockTransport, and scripts/smoke_brain.py
+    # wraps a transport that refuses anything but GET/OPTIONS so it cannot spend a simulation.
+    # Both are required by CLAUDE.md rules 4 and 10. Defaults to None, which is exactly
+    # upstream's behaviour, so nothing else changes.
     def __init__(
-        self,
-        base_url: str = "https://api.worldquantbrain.com",
-        *,
-        timeout: float = 30.0,
-        poll_timeout: float = 300.0,
-        default_attempts: int = 5,
-        transport: httpx.AsyncBaseTransport | None = None,
+        self, base_url: str, *, transport: httpx2.AsyncBaseTransport | None = None
     ) -> None:
         self.base_url = base_url.rstrip("/") + "/"
-        self._default_attempts = max(1, default_attempts)
-        self._poll_timeout = poll_timeout
-        self._timeout = timeout
         #: Seconds between sends per endpoint, learned from its own rate-limit headers, and
         #: the next free slot in each. Measured: BRAIN meters each endpoint separately, and
         #: asking faster than it allows buys 429s rather than throughput.
@@ -164,14 +166,15 @@ class BrainClient:
         #: behind it pace on measurements rather than on an assumption.
         self._measured: dict[str, asyncio.Event] = {}
         self._pace_lock = asyncio.Lock()
-        #: Monotonic time before which no request is sent: set by a ``429`` so every caller
-        #: backs off together instead of each retrying into a server that said stop.
-        self._resume_at = 0.0
-        self._client = httpx.AsyncClient(
+        #: Monotonic time per endpoint before which nothing is sent to it: set by a ``429`` so
+        #: its callers back off together instead of each retrying into a server that said
+        #: stop. Per endpoint, so a throttled catalog crawl never holds up a simulation poll.
+        self._resume_at: dict[str, float] = {}
+        self._client = httpx2.AsyncClient(
             base_url=self.base_url,
-            timeout=httpx.Timeout(timeout, connect=10.0),
+            timeout=httpx2.Timeout(TIMEOUT, connect=10.0),
             follow_redirects=False,
-            transport=transport,
+            transport=transport,  # forge: see __init__
             headers={"User-Agent": "alpha-harness/0.1 (local research studio)"},
         )
 
@@ -212,8 +215,18 @@ class BrainClient:
 
     @staticmethod
     def _bucket(path: str) -> str:
-        """The endpoint a path is metered under: ``/simulations/{id}`` shares ``simulations``."""
-        return path.strip("/").split("/", 1)[0]
+        """The window a path is metered under: ``/simulations/{id}`` shares ``simulations``.
+
+        Measured: an Alpha and its recordsets share one window, but its correlations have
+        their own, much tighter one, and its check reports none.
+        """
+        parts = path.strip("/").split("/")
+        if parts[0] == "alphas" and len(parts) > 2 and parts[2] in ("correlations", "check"):
+            return f"alphas/{parts[2]}"
+        return parts[0]
+
+    def _pause(self, bucket: str, seconds: float) -> None:
+        self._resume_at[bucket] = max(self._resume_at.get(bucket, 0.0), time.monotonic() + seconds)
 
     async def _reserve(self, bucket: str) -> None:
         """Hold the caller until this endpoint's next free slot.
@@ -239,19 +252,24 @@ class BrainClient:
         if (wait := slot - time.monotonic()) > 0:
             await asyncio.sleep(wait)
 
-    def _measure(self, bucket: str, headers: httpx.Headers) -> None:
+    def _measure(self, bucket: str, headers: httpx2.Headers) -> None:
         """Read this endpoint's window off the response: how many, and how long until reset."""
         limit = _header_num(headers, "ratelimit-limit")
+        left = _header_num(headers, "ratelimit-remaining")
         reset = _header_num(headers, "ratelimit-reset")
         if reset is not None and reset > EPOCH_SECONDS:
             # Some gateways report the moment the window rolls over rather than how long
             # until it does. Taken literally that is a sleep measured in decades.
             reset = max(0.0, reset - time.time())
-        if limit and limit > 0 and reset and 0 < reset <= MAX_MEASURED_GAP:
-            # Paces starts, not finishes. ``remaining`` is deliberately unused: a one-slot
-            # window reports nothing left after every request, and deferring from the moment
-            # a slow download *ends* would queue the next start behind its transfer.
-            self._gap[bucket] = reset / limit
+        if left is None:
+            left = limit
+        if limit and limit > 0 and left is not None and reset and reset > 0:
+            # What is left of the window over what is left of its time, pacing starts rather
+            # than finishes. ``reset / limit`` speeds up as the window runs down, whatever was
+            # spent: BRAIN's hour of 2,000 then runs dry with a third of it to go. Capped, not
+            # dropped: past the cap the window is all but spent, and unpaced only draws the 429
+            # sooner. ``max``: a one-slot window reports none left after every request.
+            self._gap[bucket] = min(reset / max(left, 1.0), MAX_MEASURED_GAP)
         else:
             # Not metered this way, or a window we cannot make sense of. Left unpaced and
             # left to the Retry-After gate, which is safer than obeying a nonsense number.
@@ -265,7 +283,6 @@ class BrainClient:
         version: str = DEFAULT_VERSION,
         params: dict[str, Any] | None = None,
         json_body: Any = None,
-        headers: dict[str, str] | None = None,
         auth: tuple[str, str] | None = None,
         raise_for_status: bool = True,
         raw: bool = False,
@@ -279,18 +296,14 @@ class BrainClient:
 
         ``params`` values that are ``None`` are dropped.
         """
-        merged = {"Accept": f"application/json;version={version}"}
-        if headers:
-            merged.update(headers)
-
         clean_params = {k: v for k, v in params.items() if v is not None} if params else None
 
+        bucket = self._bucket(path)
         # Re-checked after each sleep: another 429 may have pushed the pause further out.
         # Jittered so every waiter does not re-send in the same tick and draw another 429.
-        while (wait := self._resume_at - time.monotonic()) > 0:  # noqa: ASYNC110
+        while (wait := self._resume_at.get(bucket, 0.0) - time.monotonic()) > 0:  # noqa: ASYNC110
             await asyncio.sleep(wait + random.uniform(0.05, 0.25))
 
-        bucket = self._bucket(path)
         await self._reserve(bucket)
 
         try:
@@ -299,24 +312,24 @@ class BrainClient:
                 path.lstrip("/"),
                 params=clean_params,
                 json=json_body,
-                headers=merged,
-                auth=auth or httpx.USE_CLIENT_DEFAULT,
+                headers={"Accept": f"application/json;version={version}"},
+                auth=auth or httpx2.USE_CLIENT_DEFAULT,
                 # Only the read is stretched: passing read_timeout as the default would
                 # make the pool wait that long for a free connection too.
-                timeout=httpx.Timeout(self._timeout, connect=10.0, read=read_timeout)
+                timeout=httpx2.Timeout(TIMEOUT, connect=10.0, read=read_timeout)
                 if read_timeout is not None
-                else httpx.USE_CLIENT_DEFAULT,
+                else httpx2.USE_CLIENT_DEFAULT,
             )
             # Before the finally below releases anyone waiting on this endpoint.
             self._measure(bucket, response.headers)
         # Not connected, or no pooled connection free: the request never left.
-        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout) as exc:
+        except (httpx2.ConnectError, httpx2.ConnectTimeout, httpx2.PoolTimeout) as exc:
             raise BrainTransportError(
                 f"{method} {path} could not connect: {exc}", maybe_delivered=False
             ) from exc
-        except httpx.TimeoutException as exc:
+        except httpx2.TimeoutException as exc:
             raise BrainTransportError(f"{method} {path} timed out", maybe_delivered=True) from exc
-        except httpx.HTTPError as exc:
+        except httpx2.HTTPError as exc:
             raise BrainTransportError(
                 f"{method} {path} failed: {exc}", maybe_delivered=True
             ) from exc
@@ -327,7 +340,6 @@ class BrainClient:
 
         result = BrainResponse(
             status=response.status_code,
-            headers=response.headers,
             # A refusal is always decoded, so error handling still reads its body.
             body=response.content if raw and response.status_code < 400 else _decode(response),
             retry_after=_parse_retry_after(response.headers),
@@ -335,11 +347,10 @@ class BrainClient:
             location=response.headers.get("location"),
         )
         if result.status == 429 and result.retry_after:
-            # The server named its own wait: nobody sends before it is over.
+            # The server named its own wait: nobody sends to this endpoint before it is over.
             # Capped: every request waits on this, polls included, and a day-long Retry-After
             # would stop finished alphas being read.
-            pause = min(result.retry_after, MAX_MEASURED_GAP)
-            self._resume_at = max(self._resume_at, time.monotonic() + pause)
+            self._pause(bucket, min(result.retry_after, MAX_MEASURED_GAP))
 
         if raise_for_status and response.status_code >= 400:
             raise self.to_error(method, path, result)
@@ -364,7 +375,7 @@ class BrainClient:
         return None, None
 
     def to_error(self, method: str, path: str, r: BrainResponse) -> BrainError:
-        """Map a failed response to a typed error (``docs/wqb-api/04-error-handling.md``)."""
+        """Map a failed response to a typed error."""
         where = f"{method} {path}"
         body = r.body
         detail = body.get("detail") if isinstance(body, dict) else None
@@ -427,38 +438,30 @@ class BrainClient:
         self,
         method: Method,
         path: str,
-        *,
-        attempts: int | None = None,
-        base_backoff: float = 2.0,
-        max_backoff: float = 60.0,
         **kwargs: Any,
     ) -> BrainResponse:
         """Issue a request, retrying ``429``, ``503``, other ``5xx`` and transport errors.
 
         Waits the server's ``Retry-After`` when it sends one, otherwise exponential backoff
         with jitter. The thresholds behind a ``429`` are server-side, so nothing here
-        guesses a request rate: a ``429`` pauses every caller of this client for the wait.
+        guesses a request rate: a ``429`` pauses every caller of that endpoint for the wait.
         Never retries the daily cap.
         """
-        attempts = attempts or self._default_attempts
-        last: BrainError | None = None
-
-        for attempt in range(1, attempts + 1):
+        for attempt in range(1, ATTEMPTS):
             try:
                 return await self.request(method, path, **kwargs)
             except BrainError as exc:
-                if not exc.retryable or attempt == attempts:
+                if not exc.retryable:
                     raise
-                last = exc
 
                 delay = getattr(exc, "retry_after", None)
                 if delay is None:
-                    delay = min(base_backoff * (2 ** (attempt - 1)), max_backoff)
-                delay = min(float(delay), max_backoff)
+                    delay = BASE_BACKOFF * (2 ** (attempt - 1))
+                delay = min(float(delay), MAX_BACKOFF)
                 # Jitter so parallel callers do not resynchronise on the same instant.
                 delay += random.uniform(0, max(delay, 1.0) * 0.25)
                 if isinstance(exc, BrainRateLimited):
-                    self._resume_at = max(self._resume_at, time.monotonic() + delay)
+                    self._pause(self._bucket(path), delay)
 
                 params = kwargs.get("params") or {}
                 # Which scope is being throttled: without it a slow market and a starved one
@@ -471,30 +474,28 @@ class BrainClient:
                     path=path,
                     scope=scope or None,
                     attempt=attempt,
-                    of=attempts,
+                    of=ATTEMPTS,
                     delay=round(delay, 2),
                     reason=type(exc).__name__,
                 )
                 await asyncio.sleep(delay)
-
-        if last is None:
-            raise RuntimeError("retry loop ran zero attempts")
-        raise last
+        # The last attempt's failure is the caller's to handle.
+        return await self.request(method, path, **kwargs)
 
     # -- the asynchronous job protocol -----------------------------------
 
-    async def poll(self, path: str, *, version: str = DEFAULT_VERSION) -> BrainResponse:
+    async def poll(self, path: str) -> BrainResponse:
         """Drive an asynchronous ``GET`` job to completion.
 
         Re-issues the request while the response carries ``Retry-After``, waiting what the
         server asks. Returns the first response *without* that header.
         """
-        deadline = time.monotonic() + self._poll_timeout
+        deadline = time.monotonic() + POLL_TIMEOUT
         attempt = 0
 
         while True:
             # Retrying: a 429 or 503 between polls says nothing about the job.
-            response = await self.request_retrying("GET", path, version=version)
+            response = await self.request_retrying("GET", path)
             attempt += 1
 
             if not response.pending:
@@ -514,7 +515,7 @@ class BrainClient:
             await asyncio.sleep(delay)
 
 
-def _decode(response: httpx.Response) -> Any:
+def _decode(response: httpx2.Response) -> Any:
     """Best-effort body decode. Some endpoints return empty bodies or non-JSON."""
     if not response.content:
         return None

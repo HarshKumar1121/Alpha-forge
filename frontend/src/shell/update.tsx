@@ -7,13 +7,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { DownloadIcon, LoaderCircleIcon, TriangleAlertIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
+import { create } from 'zustand'
 import { update } from '@/api/core'
 import { errorMessage } from '@/api/http'
+import { telemetry } from '@/lib/ws'
 import { Button, ErrorNotice } from '@/ui/kit'
 import { Dialog } from '@/ui/overlay'
 
-/** The backend caches GitHub for an hour, so asking more often than this only costs a hop. */
+/** Reads the backend's last answer; GitHub itself is asked only as often as Settings allow. */
 const POLL_MS = 15 * 60 * 1000
+/** Until the backend has looked once: it waits up to half a minute after starting first. */
+const FIRST_LOOK_MS = 40_000
 /** How often the overlay knocks while the backend is down being replaced. */
 const RECONNECT_MS = 1500
 /** Past this the install is stuck, and saying so beats a spinner that never resolves. */
@@ -67,13 +71,79 @@ function Installing({ version }: { version: string }) {
   )
 }
 
-/** One polling policy for the shared `['update']` query, so both badges cannot disagree. */
-function useUpdateStatus() {
+/** The version that served this page's code: the first one the backend names. */
+let servedBy: string | null = null
+
+// An install while this page is open (auto-install needs nobody there) restarts the backend
+// under code built for the version before. Each time the socket connects, a different version
+// answering means reload.
+telemetry.onStatus((connected) => {
+  if (!connected) return
+  fetch('/api/health', { cache: 'no-store' })
+    .then((response) => (response.ok ? response.json() : null))
+    .then((body: { version?: string } | null) => {
+      if (!body?.version) return
+      servedBy ??= body.version
+      if (body.version !== servedBy) window.location.reload()
+    })
+    .catch(() => {})
+})
+
+/** The version being installed, once Update was pressed anywhere, for the one overlay. */
+const useInstalling = create<{ version: string | null; closed: boolean }>(() => ({
+  version: null,
+  closed: false,
+}))
+
+/** Holds the screen while an update installs, or once the app was quit. Mounted once. */
+export function InstallingOverlay() {
+  const version = useInstalling((s) => s.version)
+  const closed = useInstalling((s) => s.closed)
+  if (closed)
+    return (
+      <div className="fixed inset-0 z-100 flex flex-col items-center justify-center gap-3 bg-canvas/95 p-6 text-center">
+        <p className="text-title text-ink">Alpha Harness is closed</p>
+        <p className="max-w-prose text-body text-ink-subtle">
+          Queued simulations wait until you open it again, the same way you opened it this time. You
+          can close this tab.
+        </p>
+      </div>
+    )
+  return version === null ? null : <Installing version={version} />
+}
+
+/** Closes the app for good; the overlay says so, since every query is about to fail. */
+export function useQuitApp() {
+  return useMutation({
+    mutationFn: update.quit,
+    onSuccess: () => useInstalling.setState({ closed: true }),
+  })
+}
+
+/** Hands the install to the launcher; the overlay takes the screen until the new one answers. */
+export function useApplyUpdate() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: update.apply,
+    onSuccess: (started) => {
+      // The backend is about to stop answering, so every other query is about to fail. Take
+      // the screen before they do and wait for the new one, rather than leaving a dead page
+      // behind a toast that says everything is fine.
+      useInstalling.setState({ version: started.version })
+      void queryClient.invalidateQueries({ queryKey: ['update'] })
+    },
+  })
+}
+
+/** One polling policy for the shared `['update']` query, so every reader agrees. */
+export function useUpdateStatus() {
   return useQuery({
     queryKey: ['update'],
     queryFn: () => update.status(),
     staleTime: POLL_MS,
-    refetchInterval: POLL_MS,
+    refetchInterval: (query) => (query.state.data?.checkedAt ? POLL_MS : FIRST_LOOK_MS),
+    // The desktop app spends most of its life hidden in the tray, and still has news to give.
+    refetchIntervalInBackground: true,
     // A check that fails is not worth a retry storm: the next poll is the retry.
     retry: false,
   })
@@ -132,10 +202,13 @@ export function VersionBadge() {
 /** The one thing the in-app updater cannot fix for you. */
 function LauncherNotice({
   version,
+  file,
   url,
   collapsed,
 }: {
   version: string | null
+  /** The release download for this machine, e.g. `AlphaHarness-macOS-arm64.dmg`. */
+  file: string
   url: string
   collapsed: boolean
 }) {
@@ -147,8 +220,8 @@ function LauncherNotice({
           size="icon-sm"
           variant="secondary"
           className="self-center"
-          aria-label="Update AlphaHarness.exe"
-          title="A newer AlphaHarness.exe is out"
+          aria-label={`Update ${file}`}
+          title={`A newer ${file} is out`}
           onClick={() => setOpen(true)}
         >
           <TriangleAlertIcon aria-hidden />
@@ -156,13 +229,13 @@ function LauncherNotice({
       ) : (
         <Button size="sm" variant="secondary" className="w-full" onClick={() => setOpen(true)}>
           <TriangleAlertIcon aria-hidden />
-          Update AlphaHarness.exe
+          Update {file}
         </Button>
       )}
       <Dialog
         open={open}
         onOpenChange={setOpen}
-        title="A newer AlphaHarness.exe is out"
+        title={`A newer ${file} is out`}
         description={version ? `Yours is ${version}.` : 'Yours is from before they were dated.'}
         footer={
           <>
@@ -180,8 +253,10 @@ function LauncherNotice({
       >
         <p className="text-body-compact text-ink-subtle">
           Alpha Harness updates itself, but it cannot replace the program that starts it. Download{' '}
-          <span className="num">AlphaHarness.exe</span> from the release, put it where the old one
-          is, and run it. Nothing you have is lost — your data, alphas and sign-in all stay.
+          <span className="num">{file}</span> from the release, quit this one, then install and open
+          the new one. Nothing you have is lost — your data, alphas and sign-in all stay. If you had
+          the old <span className="num">AlphaHarness</span> program, or a shortcut you made to it,
+          that can then go in the bin.
         </p>
       </Dialog>
     </>
@@ -190,38 +265,25 @@ function LauncherNotice({
 
 /** ``collapsed`` is the sidebar's icon rail, where there is room for a button but not a word. */
 export function UpdateBadge({ collapsed = false }: { collapsed?: boolean }) {
-  const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
   const status = useUpdateStatus()
-
-  const [installing, setInstalling] = useState<string | null>(null)
-  const apply = useMutation({
-    mutationFn: update.apply,
-    onSuccess: (started) => {
-      // The backend is about to stop answering, so every other query is about to fail. Take
-      // the screen before they do and wait for the new one, rather than leaving a dead page
-      // behind a toast that says everything is fine.
-      setOpen(false)
-      setInstalling(started.version)
-      void queryClient.invalidateQueries({ queryKey: ['update'] })
-    },
-    onError: (error) => toast.error(errorMessage(error)),
-  })
+  const apply = useApplyUpdate()
 
   const data = status.data
-  if (installing !== null) return <Installing version={installing} />
-  // An update installs the wheel and never AlphaHarness.exe, so a launcher change — the
+  // An update installs the wheel and never the launcher, so a launcher change — the
   // system tray, say — reaches nobody until they fetch the exe themselves. Nothing else in
   // the app can say so: from inside, an out-of-date launcher looks exactly like a current one.
-  if (data?.launcherOutdated)
-    return (
-      <LauncherNotice
-        version={data.launcher}
-        url={data.url || data.releasesUrl}
-        collapsed={collapsed}
-      />
-    )
-  if (!data?.available) return null
+  // Beside the update, never instead of it: an older exe still installs one, and hiding the
+  // button sent everyone with an early exe to GitHub for every release.
+  const notice = data?.launcherOutdated ? (
+    <LauncherNotice
+      version={data.launcher}
+      file={data.launcherFile}
+      url={data.url || data.releasesUrl}
+      collapsed={collapsed}
+    />
+  ) : null
+  if (!data?.available) return notice
 
   return (
     <>
@@ -298,6 +360,7 @@ export function UpdateBadge({ collapsed = false }: { collapsed?: boolean }) {
           )}
         </div>
       </Dialog>
+      {notice}
     </>
   )
 }

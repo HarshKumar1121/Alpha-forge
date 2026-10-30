@@ -13,10 +13,8 @@ Three platform behaviours are mirrored deliberately, because not mirroring them 
 which alphas come back: ``hidden`` defaults to false, so omitting it silently excludes
 hidden alphas; a comma in a value is the multi-value separator ``%1F``, so a literal comma
 matches nothing; and the v4 list refuses a bare date, so a date becomes the start of its
-day in ``America/New_York`` (``docs/wqb-api/03-conventions.md``, "Date filters").
+day in ``America/New_York``.
 """
-
-from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -24,8 +22,10 @@ from typing import Any, Literal
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
+from .platform import PLATFORM_TIMEZONE
+
 #: Where the platform's calendar lives, for both quota and date filters.
-PLATFORM_TZ = ZoneInfo("America/New_York")
+PLATFORM_TZ = ZoneInfo(PLATFORM_TIMEZONE)
 
 
 def platform_midnight() -> datetime:
@@ -71,21 +71,24 @@ class AlphaQuery:
 
     #: Tri-state on purpose. ``False`` excludes hidden alphas, ``True`` returns only
     #: hidden ones, and ``None`` means "do not filter" — which the platform does *not*
-    #: default to, so it has to be sent explicitly.
+    #: default to, so it is sent as both values.
     hidden: bool | None = False
 
     #: Convenience bounds, normalised to the platform's calendar.
     created_after: date | datetime | None = None
     created_before: date | datetime | None = None
 
-    def tokens(self) -> list[str]:
+    def path(self) -> str:
+        """This query against your own alphas."""
         tokens = [f"limit={self.limit}", f"offset={self.offset}"]
         if self.order:
             tokens.append(f"order={quote(self.order, safe='-.')}")
 
         tokens.extend(entry.token() for entry in self.filters or [])
 
-        if self.hidden is not None:
+        if self.hidden is None:
+            tokens.append("hidden=true%1Ffalse")
+        else:
             tokens.append(f"hidden={'true' if self.hidden else 'false'}")
 
         if self.created_after is not None:
@@ -97,13 +100,7 @@ class AlphaQuery:
                 Filter("dateCreated", "<", _bound(self.created_before, next_day=True)).token()
             )
 
-        return tokens
-
-    def query(self) -> str:
-        return "&".join(self.tokens())
-
-    def path(self, user_id: str = "self") -> str:
-        return f"/users/{user_id}/alphas?{self.query()}"
+        return f"/users/self/alphas?{'&'.join(tokens)}"
 
 
 def _bound(value: date | datetime, *, next_day: bool) -> datetime:

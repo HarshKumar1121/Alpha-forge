@@ -5,38 +5,17 @@ answer, a sentence in someone's own words does not. What comes back is a list of
 fields, checked against the catalogue, ready to hand to a lab that runs them.
 """
 
-from __future__ import annotations
-
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
 from ..catalog.queries import Tuple4
-from ..llm.chat import DEFAULT_REASONING, reasoning_options
-from ..llm.registry import LLMModels
+from ..llm.chat import DEFAULT_REASONING, Reasoning, reasoning_options
 from ..schemas import Out
 from .deps import State, refuse
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
-
-
-class Scope(BaseModel):
-    instrument_type: str = "EQUITY"
-    region: str
-    delay: int
-    universe: str
-
-    def to_tuple(self) -> Tuple4:
-        return Tuple4(
-            instrument_type=self.instrument_type,
-            region=self.region,
-            delay=self.delay,
-            universe=self.universe,
-        )
-
-
-Reasoning = Literal["quick", "normal", "careful", "deep"]
 
 
 class ReasoningOption(Out):
@@ -47,7 +26,6 @@ class ReasoningOption(Out):
 
 
 class ChatOptions(Out):
-    models: LLMModels
     reasoning: list[ReasoningOption]
     default_reasoning: Reasoning
     note: str
@@ -106,11 +84,11 @@ class ChatReply(Out):
 
 
 @router.get("/options")
-async def options(state: State) -> ChatOptions:
-    """The two choices a conversation offers: which model, and how hard to think."""
+async def options() -> ChatOptions:
+    """How hard a conversation may think. Its other choice, the model, is one of those a Key
+    can run, which the screen reads with the Keys."""
     return ChatOptions.model_validate(
         {
-            "models": state.llm.registry.to_dict(),
             "reasoning": reasoning_options(),
             "defaultReasoning": DEFAULT_REASONING,
             "note": (
@@ -177,10 +155,10 @@ class Say(BaseModel):
     """One message. Everything except the text has a sensible default."""
 
     text: str = Field(description="Your idea, in your own words")
-    scope: Scope
+    scope: Tuple4
     thread_id: int | None = Field(default=None, description="Omit to start a new conversation")
     model: str | None = None
-    reasoning: str = Field(default=DEFAULT_REASONING, description="quick | normal | careful | deep")
+    reasoning: Reasoning = DEFAULT_REASONING
     dataset_ids: list[str] = Field(
         default_factory=list, description="Narrow it to particular datasets"
     )
@@ -198,13 +176,13 @@ async def say(body: Say, state: State) -> ChatReply:
         answered = await state.chat.say(
             body.thread_id,
             body.text,
-            scope=body.scope.to_tuple(),
+            scope=body.scope,
             model=body.model,
             reasoning=body.reasoning,
             dataset_ids=body.dataset_ids,
         )
     except ValueError as exc:
-        # A market with nothing downloaded, an unknown conversation, a reasoning setting
-        # that does not exist: each phrases itself, so say it rather than raising a bare 500.
+        # A market with nothing downloaded or an unknown conversation: each phrases itself,
+        # so say it rather than raising a bare 500.
         raise refuse(400, "cannot_answer", str(exc)) from exc
     return ChatReply.model_validate(answered)

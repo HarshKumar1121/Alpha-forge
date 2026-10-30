@@ -8,7 +8,9 @@ import type { Scope } from '@/api/types'
 import { type Choice, useScopeOptions } from '@/lib/scope'
 import { Select } from './overlay'
 
-type ScopePart = 'region' | 'delay' | 'universe'
+export type ScopePart = 'region' | 'delay' | 'universe'
+
+const PARTS: ScopePart[] = ['region', 'delay', 'universe']
 
 const LABELS: Record<ScopePart, string> = {
   region: 'Region',
@@ -19,13 +21,14 @@ const LABELS: Record<ScopePart, string> = {
 export function ScopePicker({
   scope,
   onChange,
-  parts = ['region', 'delay', 'universe'],
   disabled,
+  parts = PARTS,
 }: {
   scope: Scope
   onChange: (change: Partial<Scope>) => void
-  parts?: ScopePart[]
   disabled?: boolean
+  /** Which of Region, Delay and Universe to offer; a screen that searches universes leaves it out. */
+  parts?: readonly ScopePart[]
 }) {
   const options = useScopeOptions(scope)
 

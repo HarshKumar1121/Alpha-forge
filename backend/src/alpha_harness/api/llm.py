@@ -1,49 +1,29 @@
-"""The assistant: keys, models, prompts, and the context it is shown.
+"""The assistant: keys, models and the prompts it sends.
 
 Prompts are served in full on purpose: one decides what an answer looks like and is
 otherwise invisible. Keys are the only secret here, and leave only as a masked hint.
 """
 
-from __future__ import annotations
+from typing import Any, Literal
 
-from typing import Annotated, Any, Literal
-
-from fastapi import APIRouter, Query
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from ..catalog.queries import Tuple4
 from ..llm.keys import serialise
 from ..llm.prompts import PROMPTS
-from ..llm.providers import catalogue
-from ..llm.registry import LLMModel, LLMModels
+from ..llm.providers import LLMProviders, catalogue
+from ..llm.registry import LLMModels, ModelInfo
+from ..llm.text import estimate_tokens
 from ..schemas import Out
 from .deps import State
 
 router = APIRouter(prefix="/api/llm", tags=["assistant"])
 
 
-class Scope(BaseModel):
-    instrument_type: str = "EQUITY"
-    region: str
-    delay: int
-    universe: str
-
-    def to_tuple(self) -> Tuple4:
-        return Tuple4(
-            instrument_type=self.instrument_type,
-            region=self.region,
-            delay=self.delay,
-            universe=self.universe,
-        )
-
-
 class PromptInfo(Out):
     slug: str
     label: str
     purpose: str
-    context: Literal["none", "catalog_tree", "dataset_fields"]
-    model: str | None
-    temperature: float
     body: str
     characters: int
     estimated_tokens: int
@@ -56,7 +36,7 @@ class PromptList(Out):
 class LLMKeyUsage(Out):
     key_id: int
     model: str
-    #: Pacific day, YYYY-MM-DD.
+    #: The model's own day, YYYY-MM-DD in its reset time zone.
     day: str
     requests: int
     tokens: int
@@ -75,52 +55,37 @@ class LLMKey(Out):
     last_error: str | None
     created_at: str | None
     usage: list[LLMKeyUsage]
+    #: Requests this key may still send each set-up model today, by model id: the model's
+    #: own limit or the key's cap, whichever runs out first. A cap counts every model.
+    remaining_today: dict[str, int]
 
 
 class LLMBudget(Out):
     model: str
-    label: str
+    #: How requests name this model: its provider and id together.
+    ref: str
     provider: str
-    per_key_per_day: int
+    #: Requests today across every enabled key, each held to its model limit or its cap.
+    allowed_today: int
     remaining_today: int
-    bulk: bool
+    reset_timezone: str
+    #: Until midnight in ``reset_timezone``, when this model's allowance comes back.
+    reset_in_seconds: int
 
 
 class LLMKeyStatus(Out):
     keys: list[LLMKey]
     enabled: int
     budget: list[LLMBudget]
-    reset_in_seconds: int
-    quota_timezone: str
-
-
-class LLMProvider(Out):
-    id: str
-    label: str
-    base_url: str
-    onboarding_url: str
-    key_hint: str
-    tier_note: str
-    #: True for a provider that bills the user rather than offering a free tier.
-    paid: bool
-    openai_compatible: bool
-    #: Empty for google: its models are in the roster.
-    models: list[LLMModel]
-
-
-class LLMProviders(Out):
-    providers: list[LLMProvider]
-    default: str
-    note: str
-    paid_note: str
+    #: The soonest any set-up model's day turns over, or null with none set up.
+    reset_in_seconds: int | None
 
 
 class KeyWorks(Out):
     key_id: int
     ok: Literal[True]
-    #: How many models the key can reach, and those new to the roster.
+    #: How many models the key can reach.
     models: int
-    new_models: list[str]
 
 
 class KeyFailed(Out):
@@ -135,39 +100,60 @@ def _check(result: dict[str, Any]) -> KeyWorks | KeyFailed:
     return KeyFailed.model_validate(result)
 
 
-class ContextCounts(Out):
-    fields: int
-    datasets: int
-    categories: int
-    subcategories: int
-
-
-class LLMContextRendered(Out):
-    text: str
-    scope: str
-    counts: ContextCounts
-    characters: int
-    estimated_tokens: int
-
-
-class LLMContextTree(Out):
-    scope: str
-    counts: ContextCounts
-    #: category -> subcategory -> dataset, with metadata and no fields.
-    categories: list[dict[str, Any]]
-
-
 # --- setup ----------------------------------------------------------------
 
 
 @router.get("/models")
 async def models(state: State) -> LLMModels:
-    """The model roster with each one's daily budget.
+    """The models set up, each with the limits its user gave it."""
+    return state.llm.registry.roster()
 
-    Requests-per-day is the limit that ends a session, so it travels with every entry
-    rather than sitting in a help page.
-    """
-    return LLMModels.model_validate(state.llm.registry.to_dict())
+
+class SetModel(BaseModel):
+    provider: str
+    model: str = Field(min_length=1, max_length=200, description="The provider's model id")
+    requests_per_minute: int = Field(ge=1)
+    requests_per_day: int = Field(ge=1)
+    reset_timezone: str = Field(
+        min_length=1, max_length=64, description="IANA time zone whose midnight starts a new day"
+    )
+    max_prompt_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        description="Most tokens one Power Pool prompt may use; null for default",
+    )
+
+
+@router.put("/models")
+async def set_model(body: SetModel, state: State) -> ModelInfo:
+    """Set a model up with its limits, or change the limits of one already set up."""
+    return await state.llm.registry.set(
+        body.provider,
+        body.model,
+        body.requests_per_minute,
+        body.requests_per_day,
+        body.reset_timezone,
+        body.max_prompt_tokens,
+    )
+
+
+@router.delete("/models", status_code=204)
+async def remove_model(provider: str, model: str, state: State) -> None:
+    """Query parameters, not a path: model ids carry slashes."""
+    await state.llm.registry.remove(provider, model)
+
+
+class OfferedModels(Out):
+    #: Model ids the provider lists for this account, sorted. Empty when it would not say.
+    models: list[str]
+    #: Why the list is empty, when it is. The id can still be typed.
+    error: str | None
+
+
+@router.get("/providers/{provider}/models")
+async def offered_models(provider: str, state: State) -> OfferedModels:
+    """What a provider's Key can reach, asked live. Costs no generation request."""
+    return OfferedModels.model_validate(await state.llm.offered(provider))
 
 
 # --- prompts --------------------------------------------------------------
@@ -175,26 +161,20 @@ async def models(state: State) -> LLMModels:
 
 @router.get("/prompts")
 async def list_prompts() -> PromptList:
-    """Every prompt, in full."""
-    return PromptList.model_validate(
-        {
-            "prompts": [
-                {
-                    "slug": p.slug,
-                    "label": p.label,
-                    "purpose": p.purpose,
-                    "context": p.context,
-                    "model": p.model,
-                    "temperature": p.temperature,
-                    "body": p.body,
-                    "characters": len(p.body),
-                    # Roughly four characters to a token. Shown because prompt tokens come
-                    # out of the same per-minute budget as the answer.
-                    "estimatedTokens": max(1, len(p.body) // 4),
-                }
-                for p in PROMPTS.values()
-            ],
-        }
+    """Every system prompt the application sends, in full. The token estimate is shown
+    because prompt tokens come out of the same per-minute budget as the answer."""
+    return PromptList(
+        prompts=[
+            PromptInfo(
+                slug=p.slug,
+                label=p.label,
+                purpose=p.purpose,
+                body=p.body,
+                characters=len(p.body),
+                estimated_tokens=estimate_tokens(p.body),
+            )
+            for p in PROMPTS
+        ]
     )
 
 
@@ -211,7 +191,7 @@ async def providers() -> LLMProviders:
     All of them are free and need no card — the assistant is optional here, so asking for
     payment details would turn a convenience into a purchase decision.
     """
-    return LLMProviders.model_validate(catalogue())
+    return catalogue()
 
 
 class AddKey(BaseModel):
@@ -246,7 +226,7 @@ async def check_key(key_id: int, state: State) -> KeyWorks | KeyFailed:
 
 @router.post("/keys/check")
 async def check_all_keys(state: State) -> list[KeyWorks | KeyFailed]:
-    return [_check(c) for c in await state.llm.check_all()]
+    return [_check(await state.llm.check_key(k.id)) for k in await state.llm.keys.list_keys()]
 
 
 class KeyToggle(BaseModel):
@@ -271,32 +251,3 @@ async def toggle_key(key_id: int, body: KeyToggle, state: State) -> LLMKey:
 @router.delete("/keys/{key_id}", status_code=204)
 async def remove_key(key_id: int, state: State) -> None:
     await state.llm.keys.remove(key_id)
-    state.llm.forget(key_id)
-
-
-# --- context --------------------------------------------------------------
-
-
-@router.get("/context")
-async def context(
-    state: State,
-    region: str,
-    delay: int,
-    universe: str,
-    instrument_type: str = "EQUITY",
-    rendered: Annotated[
-        bool, Query(description="Return the exact text the model receives")
-    ] = False,
-) -> LLMContextRendered | LLMContextTree:
-    """Exactly what the model is shown about your data.
-
-    The hierarchy with metadata, and no individual fields — tens of thousands of field
-    names would fill the context window. Set ``rendered`` to read the literal text.
-    """
-    scope = Scope(
-        instrument_type=instrument_type, region=region, delay=delay, universe=universe
-    ).to_tuple()
-    if rendered:
-        text, meta = await state.llm.context.render(scope)
-        return LLMContextRendered.model_validate({"text": text, **meta})
-    return LLMContextTree.model_validate(await state.llm.context.tree(scope))

@@ -6,12 +6,11 @@ proof-of-work — should happen rarely. The flow is always:
     restore the cookie jar -> GET /authentication -> still valid? done.
                                                   -> expired? solve captcha, sign in.
 
-The captcha is required on sign-in (``docs/wqb-api/02-authentication.md``), and repeated
-failures lock the account, so sign-in is never attempted speculatively.
+The captcha is required on sign-in, and repeated failures lock the account, so sign-in
+is never attempted speculatively.
 """
 
-from __future__ import annotations
-
+import asyncio
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -19,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from ..schemas import camel_dict
+from .altcha import solve
 from .errors import (
     INQUIRY_INCOMPLETE_DETAIL,
     PERSONA_PATH,
@@ -44,19 +44,17 @@ class SessionInfo:
     full_name: str | None = None
     permissions: list[str] = field(default_factory=list)
     expires_at: float | None = None
-    restored_from_cache: bool = False
     verification_url: str | None = None
     #: The Persona inquiry of a pending verification; closed by :meth:`Authenticator.verify`.
     inquiry: str | None = None
     detail: str | None = None
+    #: BRAIN refused the login itself (wrong password, throttled, locked), so trying the same
+    #: one again can only spend the lockout budget. A rejected captcha is not a refusal.
+    refused: bool = False
 
     @property
     def can_multi_simulate(self) -> bool:
         return "MULTI_SIMULATION" in self.permissions
-
-    @property
-    def is_consultant(self) -> bool:
-        return "CONSULTANT" in self.permissions
 
     @property
     def expires_in_seconds(self) -> int | None:
@@ -65,18 +63,18 @@ class SessionInfo:
         return max(0, round(self.expires_at - time.time()))
 
     def to_dict(self) -> dict[str, Any]:
-        return camel_dict(self) | {
+        # The countdown, not the moment: the page's clock need not agree with this one.
+        return camel_dict(self, exclude=("refused", "expires_at")) | {
             "canMultiSimulate": self.can_multi_simulate,
-            "isConsultant": self.is_consultant,
             "expiresInSeconds": self.expires_in_seconds,
         }
 
     @classmethod
-    def anonymous(cls, detail: str | None = None) -> SessionInfo:
-        return cls(authenticated=False, detail=detail)
+    def anonymous(cls, detail: str | None = None, *, refused: bool = False) -> SessionInfo:
+        return cls(authenticated=False, detail=detail, refused=refused)
 
     @classmethod
-    def from_state(cls, state: AuthState, *, restored: bool = False) -> SessionInfo:
+    def from_state(cls, state: AuthState) -> SessionInfo:
         expires_at = None
         if state.token and state.token.expiry:
             expires_at = time.time() + float(state.token.expiry)
@@ -85,7 +83,6 @@ class SessionInfo:
             user_id=state.user_id,
             permissions=list(state.permissions),
             expires_at=expires_at,
-            restored_from_cache=restored,
         )
 
 
@@ -117,12 +114,12 @@ class Authenticator:
             return None
 
         log.info("brain.session.restored", user_id=state.user_id)
-        return SessionInfo.from_state(state, restored=True)
+        return SessionInfo.from_state(state)
 
     async def login(self, email: str, password: str) -> SessionInfo:
         """Full sign-in: solve the proof-of-work, then exchange Basic auth for a cookie."""
         started = time.monotonic()
-        solution = await self.endpoints.solve_captcha()
+        solution = await asyncio.to_thread(solve, await self.endpoints.get_captcha())
         log.info(
             "brain.captcha.solved",
             number=solution.number,
@@ -147,7 +144,7 @@ class Authenticator:
                 if not detail
                 else sign_in_message(detail if isinstance(detail, str) else None)
             )
-            return SessionInfo.anonymous(detail=message)
+            return SessionInfo.anonymous(detail=message, refused=bool(detail))
 
         if state.user_id is None:
             return SessionInfo.anonymous(detail="BRAIN accepted the request but returned no user.")
@@ -164,8 +161,8 @@ class Authenticator:
         """Close a completed identity verification: ``POST /authentication/persona``.
 
         A POST back to the 401's ``Location``: the inquiry as a query parameter, no body and
-        no captcha (``docs/wqb-api/02-authentication.md``). ``None`` means the platform did
-        not accept it and the caller should fall back to a full sign-in.
+        no captcha. ``None`` means the platform did not accept it and the caller should fall
+        back to a full sign-in.
         """
         try:
             r = await self.endpoints.client.request(
@@ -214,10 +211,6 @@ class Authenticator:
         if state is None or state.user_id is None:
             return SessionInfo.anonymous()
         return SessionInfo.from_state(state)
-
-    async def logout(self) -> None:
-        await self.endpoints.logout()
-        log.info("brain.session.ended")
 
 
 def _verification_pending(inquiry: str, url: str, detail: str | None = None) -> SessionInfo:

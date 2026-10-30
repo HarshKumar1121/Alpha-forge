@@ -6,23 +6,22 @@ input; a field list is the output; the labs take it from there.
 
 Two controls:
 
-* **Model.** The daily budget varies twenty-five-fold across the roster, and running out
+* **Model.** One of those the user set up, each with its own daily budget; running out
   is the thing that ends a session. See :mod:`.registry`.
-* **Reasoning.** Thinking tokens are billed against the same per-minute budget as the
-  answer, so "think harder" is a real cost rather than a free upgrade.
+* **Reasoning.** Thinking tokens are billed like the answer's, so "think harder" is a real
+  cost rather than a free upgrade.
 
 History lives in the database so a conversation survives a restart.
 """
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
 from sqlalchemy import select
 
 from ..db.models import ChatMessage, ChatThread, utcnow
-from .context import clip, loads_or
+from .prompts import ASSISTANT
+from .text import CHARS_PER_TOKEN, clip, loads_or
 
 if TYPE_CHECKING:
     from ..catalog.queries import CatalogQueries, Tuple4
@@ -35,9 +34,11 @@ log = structlog.get_logger(__name__)
 #: short enough that prompt tokens do not eat the per-minute budget.
 HISTORY_TURNS = 12
 
+type Reasoning = Literal["quick", "normal", "careful", "deep"]
+
 #: Reasoning effort, in words rather than token counts. The mapping is to Google's own
 #: thinking levels; the labels are what a consultant sees.
-REASONING: dict[str, dict[str, Any]] = {
+REASONING: dict[Reasoning, dict[str, Any]] = {
     "quick": {
         "level": "MINIMAL",
         "label": "Quick",
@@ -63,7 +64,7 @@ REASONING: dict[str, dict[str, Any]] = {
     },
 }
 
-DEFAULT_REASONING = "normal"
+DEFAULT_REASONING: Reasoning = "normal"
 
 
 def reasoning_options() -> list[dict[str, Any]]:
@@ -91,29 +92,6 @@ FIELD_PICK_SCHEMA: dict[str, Any] = {
     },
     "required": ["reply"],
 }
-
-
-SYSTEM = """\
-You are the research assistant inside Alpha Harness. The person talking to you has no \
-background in finance and will give this ten minutes. Write for them: short sentences, \
-no jargon without a plain-language gloss, never "simply" or "just".
-
-Your job is to turn a hunch into something runnable. They describe an idea in ordinary \
-words; you find the data that could measure it.
-
-You are given a list of the data fields available to them. Use ONLY those names. Never \
-invent one — a made-up field becomes a simulation that fails, and they have a limited \
-number each day.
-
-Return JSON with:
-  "reply"    — two or three sentences. What you think they mean, and what you picked.
-  "picks"    — the fields worth running, each with one plain sentence on why.
-  "datasets" — the dataset ids those fields came from.
-
-Pick between three and ten fields. Fewer is better than padding the list. If nothing in \
-the data fits the idea, say so plainly in "reply", return an empty "picks", and suggest \
-the nearest thing that does exist.
-"""
 
 
 class ChatService:
@@ -181,49 +159,48 @@ class ChatService:
         text: str,
         *,
         scope: Tuple4,
-        model: str | None = None,
-        reasoning: str = DEFAULT_REASONING,
-        dataset_ids: list[str] | None = None,
+        model: str | None,
+        reasoning: Reasoning,
+        dataset_ids: list[str],
     ) -> dict[str, Any]:
-        """One exchange: their words in, a reply and a set of field picks out."""
-        if reasoning not in REASONING:
-            raise ValueError(
-                f"{reasoning!r} is not a reasoning setting. Choose one of: "
-                + ", ".join(REASONING)
-                + "."
-            )
+        """One exchange: their words in, a reply and a set of field picks out.
 
-        thread = None
+        Nothing is stored until the model has answered, so a failed exchange leaves no
+        conversation behind that holds only the question.
+        """
+        history: list[ChatMessage] = []
         if thread_id is not None:
             found = await self.thread(thread_id)
             if found is None:
                 raise ValueError(f"No conversation {thread_id}.")
-            thread, history = found
-        else:
-            thread = await self.start(text, scope)
-            history = []
+            _, history = found
 
-        fields, available, catalog_note = await self._field_menu(scope, dataset_ids)
+        info = self.llm.model_for(model)
+        transcript = _transcript(history)
+        message = f"THEIR MESSAGE:\n{text}"
+        # The fields get what the model's prompt allows once everything else is in.
+        room = (
+            info.prompt_tokens * CHARS_PER_TOKEN
+            - len(ASSISTANT)
+            - len(transcript)
+            - len(message)
+            - 200
+        )
+        fields, available, catalog_note = await self._field_menu(scope, dataset_ids, room)
         if not fields:
             raise ValueError(
                 f"No data has been downloaded for {scope.label} yet, so there is nothing "
                 "for the assistant to choose from. Download this market first."
             )
 
-        await self._append(thread.id, "user", text)
-
         prompt = "\n\n---\n\n".join(
-            [
-                f"DATA FIELDS AVAILABLE IN {scope.label}:\n{fields}",
-                _transcript(history),
-                f"THEIR MESSAGE:\n{text}",
-            ]
+            [f"DATA FIELDS AVAILABLE IN {scope.label}:\n{fields}", transcript, message]
         )
 
         answer = await self.llm.generate(
-            system=SYSTEM,
+            system=ASSISTANT,
             user=prompt,
-            model_id=model,
+            model_ref=info.ref,
             temperature=0.6,
             response_schema=FIELD_PICK_SCHEMA,
             thinking=REASONING[reasoning]["level"],
@@ -237,8 +214,11 @@ class ChatService:
         if dropped:
             log.warning("chat.invented_fields", fields=dropped[:10], scope=scope.label)
 
+        if thread_id is None:
+            thread_id = (await self.start(text, scope)).id
+        await self._append(thread_id, "user", text)
         await self._append(
-            thread.id,
+            thread_id,
             "assistant",
             parsed["reply"],
             picks=kept,
@@ -251,16 +231,16 @@ class ChatService:
             reasoning=reasoning,
             tokens=answer.total_tokens,
         )
-        await self._touch(thread.id)
+        await self._touch(thread_id)
 
         return {
-            "threadId": thread.id,
+            "threadId": thread_id,
             "reply": parsed["reply"],
             "picks": kept,
             "datasets": parsed["datasets"],
             "dropped": dropped,
             "catalogNote": catalog_note,
-            "usage": answer.to_dict()["usage"],
+            "usage": answer.usage,
             "model": answer.model,
             "reasoning": reasoning,
         }
@@ -268,9 +248,10 @@ class ChatService:
     # -- helpers ---------------------------------------------------------
 
     async def _field_menu(
-        self, scope: Tuple4, dataset_ids: list[str] | None
+        self, scope: Tuple4, dataset_ids: list[str] | None, room: int
     ) -> tuple[str, set[str], str | None]:
-        """The fields the assistant may choose from: the text, their ids, and a note.
+        """The fields the assistant may choose from, as many as fit in ``room`` characters:
+        the text, their ids, and a note.
 
         Capped, and ordered by coverage: a field present on 4% of the market cannot carry a
         signal about it however good the idea, and listing thousands would spend the whole
@@ -293,17 +274,25 @@ class ChatService:
         if not rows:
             return "", set(), None
 
-        lines = [
-            f"  {r['field_id']} ({r.get('dataset_id')}): {clip(r.get('description'), 110)}"
-            for r in rows
-        ]
+        lines: list[str] = []
+        for r in rows:
+            line = f"  {r['field_id']} ({r.get('dataset_id')}): {clip(r.get('description'), 110)}"
+            if room - len(line) < 0:
+                break
+            room -= len(line) + 1
+            lines.append(line)
+        if not lines:
+            raise ValueError(
+                "The model's Max Prompt Tokens leave no room for a single field. Raise it "
+                "under LLM Integration › Models."
+            )
         note = None
-        if int(page["total"]) > len(rows):
+        if int(page["total"]) > len(lines):
             note = (
-                f"The assistant was shown the {len(rows)} widest-coverage fields of "
+                f"The assistant was shown the {len(lines)} widest-coverage fields of "
                 f"{page['total']} in this market."
             )
-        return "\n".join(lines), {str(r["field_id"]) for r in rows}, note
+        return "\n".join(lines), {str(r["field_id"]) for r in rows[: len(lines)]}, note
 
     async def _append(self, thread_id: int, role: str, text: str, **meta: Any) -> None:
         async with self.db.session() as session:
@@ -356,7 +345,12 @@ def _parse(text: str) -> dict[str, Any]:
     datasets = payload.get("datasets")
     return {
         "reply": str(payload.get("reply") or "").strip() or text.strip(),
-        "picks": [p for p in picks if isinstance(p, dict) and p.get("field")]
+        # A field named by anything but a string is no field: kept, it fails the catalog lookup.
+        "picks": [
+            p
+            for p in picks
+            if isinstance(p, dict) and isinstance(p.get("field"), str) and p["field"]
+        ]
         if isinstance(picks, list)
         else [],
         "datasets": [str(d) for d in datasets if d] if isinstance(datasets, list) else [],

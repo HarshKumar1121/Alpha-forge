@@ -8,13 +8,10 @@ import { http } from '@/api/http'
 
 type Schemas = components['schemas']
 
-/** A market holding unsubmitted Alphas, and how many. */
-export type EvolutionMarket = Schemas['EvolutionMarket']
 export type EvolutionOptions = Schemas['EvolutionOptions']
 export type SeedRow = Schemas['SeedRow']
 export type SeedReason = Schemas['SeedReason']
 export type EvolutionPreview = Schemas['EvolutionPreview']
-export type AutoSeeds = Schemas['AutoSeeds']
 export type AutoSeedsJob = Schemas['AutoSeedsJob']
 
 export interface EvolutionRequest {
@@ -35,10 +32,11 @@ export interface EvolutionRequest {
 const B = '/api/evolution-lab'
 
 export const evolutionLab = {
-  /** Reads the account's operators, syncing them from BRAIN when missing, and the markets holding Alphas. */
+  /** The markets holding Alphas, and what a task can be set to. */
   options: () => http.get<EvolutionOptions>(`${B}/options`),
   /** Free; queues nothing. */
-  preview: (body: EvolutionRequest) => http.post<EvolutionPreview>(`${B}/preview`, body),
+  preview: (body: EvolutionRequest, signal?: AbortSignal) =>
+    http.post<EvolutionPreview>(`${B}/preview`, body, signal),
   /** Chooses seeds in the background. Downloads daily PnL where missing; never simulates. */
   autoSeeds: (body: { region: string; delay: number; universe: string; count: number }) =>
     http.post<Schemas['AutoSeedsStarted']>(`${B}/seeds/auto`, body),

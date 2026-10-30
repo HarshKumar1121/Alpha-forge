@@ -5,7 +5,6 @@ import { RefreshCwIcon } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { tasks } from '@/api/core'
-import { errorMessage } from '@/api/http'
 import { cn } from '@/lib/cn'
 import { fmt } from '@/lib/format'
 import { useLive } from '@/lib/live'
@@ -29,7 +28,6 @@ export function SyncAlphasButton() {
       )
       void queryClient.invalidateQueries({ queryKey: ['pool'] })
     },
-    onError: (e) => toast.error(errorMessage(e)),
     onSettled: () => setOpen(false),
   })
 
@@ -67,7 +65,7 @@ export function AlphaCounts() {
   })
   const liveTasks = useLive((s) => s.tasks)
   const polled = useQuery({
-    queryKey: ['pool', 'tasks'],
+    queryKey: ['background-tasks'],
     queryFn: tasks.list,
     enabled: liveTasks == null,
     refetchInterval: 5000,
@@ -115,7 +113,7 @@ export function AlphaCounts() {
                   <span
                     className={
                       t.state === 'failed'
-                        ? 'min-w-0 break-words text-pnl-negative'
+                        ? 'min-w-0 break-words text-pnl-negative-text'
                         : 'min-w-0 text-ink-subtle'
                     }
                   >

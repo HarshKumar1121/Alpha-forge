@@ -1,13 +1,10 @@
 """Pydantic models of BRAIN API objects.
 
-Shapes are taken from ``docs/wqb-api``. The wire format is camelCase; models accept either
-spelling and serialise back to camelCase.
+The wire format is camelCase; models accept either spelling and serialise back to camelCase.
 
 Deliberately permissive — ``extra="allow"`` everywhere — because the platform adds fields
 over time and unknown ones should survive into the UI rather than be silently dropped.
 """
-
-from __future__ import annotations
 
 from datetime import date, datetime
 from enum import StrEnum
@@ -16,6 +13,19 @@ from typing import Any, Self
 import msgspec
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.alias_generators import to_camel
+
+from .platform import (
+    DEFAULT_DECAY,
+    DEFAULT_NAN_HANDLING,
+    DEFAULT_NEUTRALIZATION,
+    DEFAULT_PASTEURIZATION,
+    DEFAULT_TRUNCATION,
+    DEFAULT_UNIT_HANDLING,
+    INSTRUMENT_TYPE,
+    LANGUAGE,
+    REGION_AGNOSTIC_REGION,
+    TEST_PERIOD,
+)
 
 
 class BrainModel(BaseModel):
@@ -35,9 +45,8 @@ class SimulationType(StrEnum):
     """What a simulation is, and what the Alphas it makes are.
 
     ``REGION_AGNOSTIC`` is a request type only; it produces one ``RA_PARENT`` Alpha holding
-    up to four ``RA_CHILD`` Alphas, one per region (``docs/learn/advanced-topics/
-    region-agnostic-alpha.json``). Measured live: the simulation answers with the parent's
-    id, and the parent carries ``children``.
+    up to four ``RA_CHILD`` Alphas, one per region. Measured live: the simulation answers
+    with the parent's id, and the parent carries ``children``.
     """
 
     REGULAR = "REGULAR"
@@ -47,32 +56,30 @@ class SimulationType(StrEnum):
     RA_CHILD = "RA_CHILD"
 
 
-#: The region that means "all of them at once". BRAIN offers it only under the
-#: ``REGION_AGNOSTIC`` simulation type, so choosing it *is* choosing that type.
-REGION_AGNOSTIC_REGION = "ALL"
-
-
 #: The simulation mode whose Alphas BRAIN refuses to submit — and refuses even to check:
 #: ``GET /alphas/{id}/check`` answers ``400 Cannot check submission for QUICK mode alphas``.
 #:
-#: Measured against the same expression run both ways: every figure is identical to the last
-#: decimal, daily PnL series included. What a quick Alpha does *not* get is the
-#: investability-constrained and risk-neutralized blocks, the yearly-stats recordset, and
-#: every submission check. It costs one simulation and one concurrent core, exactly like a
-#: full one, and finishes in the same time — so there is nothing to spend it on.
+#: Measured against the same expressions run both ways: every figure is identical, train and
+#: test years included. What a quick Alpha does *not* get is the investability-constrained and
+#: risk-neutralized blocks, the yearly-stats recordset, and twelve of the nineteen checks: it
+#: keeps the seven that score it and loses correlation, Theme and Competition. It costs one
+#: simulation and one concurrent core, like a full one, but can finish sooner: a GLB batch of
+#: ten took 334 s against 478 s, sent side by side.
 QUICK_MODE = "QUICK"
-
-
-#: The Alpha a request of each type comes back as. Only region-agnostic differs: it is asked
-#: for as ``REGION_AGNOSTIC`` and returns an ``RA_PARENT`` carrying its children, so the two
-#: never compare equal by name and anything matching a request against its result has to
-#: translate first.
-PRODUCES: dict[str, str] = {SimulationType.REGION_AGNOSTIC: SimulationType.RA_PARENT}
+#: BRAIN's default mode: a request that names it is the same request as one that does not.
+FULL_MODE = "FULL"
 
 
 def produced_type(requested: str) -> str:
-    """The Alpha type a request of ``requested`` produces."""
-    return PRODUCES.get(requested, requested)
+    """The Alpha type a request of ``requested`` comes back as.
+
+    Only region-agnostic differs: it is asked for as ``REGION_AGNOSTIC`` and returns an
+    ``RA_PARENT`` carrying its children, so the two never compare equal by name and anything
+    matching a request against its result has to translate first.
+    """
+    if requested == SimulationType.REGION_AGNOSTIC:
+        return SimulationType.RA_PARENT
+    return requested
 
 
 def region_label(region: str) -> str:
@@ -81,7 +88,7 @@ def region_label(region: str) -> str:
 
 
 class SimulationStatus(StrEnum):
-    """Every simulation ``status`` (``docs/wqb-documentation/brain-api/brain-api.md``).
+    """Every simulation ``status``.
 
     ``WAITING`` and ``SIMULATING`` are still running; the rest are final.
     """
@@ -126,15 +133,6 @@ class AuthState(BrainModel):
     def user_id(self) -> str | None:
         return self.user.id if self.user else None
 
-    @property
-    def is_consultant(self) -> bool:
-        return "CONSULTANT" in self.permissions
-
-    @property
-    def can_multi_simulate(self) -> bool:
-        """Gates batching."""
-        return "MULTI_SIMULATION" in self.permissions
-
 
 # --- simulation -----------------------------------------------------------
 
@@ -147,39 +145,31 @@ class SimulationSettings(BrainModel):
     ``OPTIONS /simulations`` rather than trusting these types.
     """
 
-    instrument_type: str = "EQUITY"
+    instrument_type: str = INSTRUMENT_TYPE
     region: str
     universe: str
     delay: int
-    decay: int = 0
-    neutralization: str = "NONE"
-    truncation: float = 0.08
-    pasteurization: str = "ON"
-    unit_handling: str = "VERIFY"
+    decay: int = DEFAULT_DECAY
+    neutralization: str = DEFAULT_NEUTRALIZATION
+    truncation: float = DEFAULT_TRUNCATION
+    pasteurization: str = DEFAULT_PASTEURIZATION
+    unit_handling: str = DEFAULT_UNIT_HANDLING
     #: Always ``ON`` in what this application sends; see :class:`SimulationRequest`.
-    nan_handling: str = "ON"
-    language: str = "FASTEXPR"
+    nan_handling: str = DEFAULT_NAN_HANDLING
+    language: str = LANGUAGE
     visualization: bool = False
     test_period: str | None = None
     max_trade: str | None = None
     max_position: str | None = None
-    #: ``FULL`` or ``QUICK``; BRAIN defaults it to ``FULL`` and this application never sends
-    #: ``QUICK`` (see :data:`QUICK_MODE`). Read back off an Alpha, where it matters.
+    #: ``FULL`` or ``QUICK``; BRAIN defaults it to ``FULL``. Left unset, the engine sends
+    #: ``QUICK`` in the regions Settings name (see :data:`QUICK_MODE`).
     simulation_mode: str | None = None
-
-    @property
-    def batch_key(self) -> tuple[str, str, int, str]:
-        """The fields a multi-simulation's children must agree on.
-
-        ``type`` is held on the request rather than the settings, so the packer combines
-        this with it (``docs/wqb-documentation/consultant-information/
-        multi-alpha-simulation.md``).
-        """
-        return (self.instrument_type, self.region, self.delay, self.language)
-
-
-#: BRAIN's test period: the last two of the ten years are held out.
-TEST_PERIOD = "P2Y0M0D"
+    #: SUPER only. Which selection weights count (``POSITIVE`` is BRAIN's default), how many
+    #: of the top-ranked Alphas are kept (at least 10), and whether each component counts
+    #: from its in-sample start (``IS``) or only from its out-of-sample start (``OS``).
+    selection_handling: str | None = None
+    selection_limit: int | None = None
+    component_activation: str | None = None
 
 
 class SimulationRequest(BrainModel):
@@ -223,18 +213,8 @@ class SimulationRequest(BrainModel):
             self.type = SimulationType.REGION_AGNOSTIC
         return self
 
-    @property
-    def is_region_agnostic(self) -> bool:
-        return self.type is SimulationType.REGION_AGNOSTIC
-
     def to_wire(self) -> dict[str, Any]:
         return self.model_dump(by_alias=True, exclude_none=True)
-
-    @property
-    def batch_key(self) -> tuple[str, str, str, int, str]:
-        """5-tuple that all children of one multi-simulation must share."""
-        instrument, region, delay, language = self.settings.batch_key
-        return (str(self.type), instrument, region, delay, language)
 
 
 # --- alpha ----------------------------------------------------------------
@@ -281,6 +261,10 @@ class SampleStats(BrainModel):
     fitness: float | None = None
     sharpe: float | None = None
     start_date: str | None = None
+    #: On a submitted Alpha only: BRAIN's Production and Self-Correlation, as its Submitted
+    #: Alphas page shows them.
+    prod_correlation: float | None = None
+    self_correlation: float | None = None
     checks: list[Check] = Field(default_factory=list)
 
 
@@ -306,7 +290,7 @@ class Alpha(BrainModel):
     date_submitted: datetime | None = None
     date_modified: datetime | None = None
     name: str | None = None
-    #: Nullable on the wire (``docs/api/schemas/alpha.md``), so a null must not fail the page.
+    #: Nullable on the wire, so a null must not fail the page.
     favorite: bool | None = None
     hidden: bool | None = None
     color: str | None = None
@@ -442,7 +426,9 @@ class BulkField(msgspec.Struct, rename="camel"):
     user_count: int | None = None
     alpha_count: int | None = None
     pyramid_multiplier: float | None = None
-    themes: list[str] | None = None
+    #: Untyped: plain names once, ``{id, name, multiplier}`` objects since. Stored as JSON
+    #: and read by name, so either shape works and a third cannot fail a market's sync.
+    themes: list[Any] | None = None
     #: When BRAIN first offered the field here. New fields are uncrowded by construction.
     date_created: date | None = None
     #: How many regions hold this field. Only region ``ALL`` sends it, and it is the one
@@ -464,36 +450,6 @@ BULK_FIELDS = msgspec.json.Decoder(list[BulkField])
 BULK_FIELDS_ENVELOPE = msgspec.json.Decoder(BulkFields)
 
 
-class DataField(BrainModel):
-    """An entry of ``GET /data-fields``."""
-
-    id: str
-    description: str | None = None
-    dataset: DataCategoryRef | None = None
-    category: DataCategoryRef | None = None
-    subcategory: DataCategoryRef | None = None
-    region: str | None = None
-    delay: int | None = None
-    universe: str | None = None
-    type: str | None = None
-    coverage: float | None = None
-    user_count: int | None = None
-    alpha_count: int | None = None
-    themes: list[Any] = Field(default_factory=list)
-    pyramid_multiplier: float | None = None
-
-
-class DataCategory(BrainModel):
-    """An entry of ``GET /data-categories``. Categories nest one level."""
-
-    id: str
-    name: str | None = None
-    subcategories: list[DataCategory] = Field(default_factory=list)
-    dataset_count: int | None = None
-    field_count: int | None = None
-    value_score: float | None = None
-
-
 class Operator(BrainModel):
     """An entry of ``GET /operators`` — the language reference."""
 
@@ -504,18 +460,3 @@ class Operator(BrainModel):
     description: str | None = None
     documentation: str | None = None
     level: str | None = None
-
-
-class Page[T](BrainModel):
-    """DRF-standard ``limit``/``offset`` envelope."""
-
-    count: int = 0
-    next: str | None = None
-    previous: str | None = None
-    results: list[T] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def _count_defaults_to_len(self) -> Self:
-        if not self.count and self.results:
-            object.__setattr__(self, "count", len(self.results))
-        return self

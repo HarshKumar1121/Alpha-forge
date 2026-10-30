@@ -8,6 +8,7 @@ import { CheckIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { Today } from '@/api/types'
 import { cn } from '@/lib/cn'
+import { useRunnableModels } from '@/screens/ai/shared'
 import { Button, Panel, Progress } from '@/ui/kit'
 
 type Variant = 'primary' | 'secondary'
@@ -20,6 +21,7 @@ interface Step {
 }
 
 export function GettingStarted({ today }: { today: Today | undefined }) {
+  const models = useRunnableModels()
   // Nothing while pending: returning users (setup done) would otherwise see a skeleton collapse.
   if (!today) return null
 
@@ -29,7 +31,7 @@ export function GettingStarted({ today }: { today: Today | undefined }) {
       title: 'Sync BRAIN Datasets',
       done: today.catalog.anySynced,
       action: (variant) => (
-        <Button size="sm" variant={variant} render={<Link to="/pyramids" />}>
+        <Button size="sm" variant={variant} render={<Link to="/sync" />}>
           Sync
         </Button>
       ),
@@ -45,6 +47,21 @@ export function GettingStarted({ today }: { today: Today | undefined }) {
           render={<Link to="/ai/$tab" params={{ tab: 'providers' }} />}
         >
           Add a Key
+        </Button>
+      ),
+    },
+    {
+      // A Key alone runs nothing: the Assistant and Power Pool Lab need a model on it.
+      key: 'model',
+      title: 'Set Up a Model',
+      done: !models.ready || models.runnable.length > 0,
+      action: (variant) => (
+        <Button
+          size="sm"
+          variant={variant}
+          render={<Link to="/ai/$tab" params={{ tab: 'models' }} />}
+        >
+          Set Up a Model
         </Button>
       ),
     },
@@ -85,7 +102,7 @@ export function GettingStarted({ today }: { today: Today | undefined }) {
                 className={cn(
                   'flex size-7 shrink-0 items-center justify-center rounded-xs border text-body-compact',
                   step.done
-                    ? 'border-pnl-positive-edge bg-pnl-positive-tint text-pnl-positive'
+                    ? 'border-pnl-positive-edge bg-pnl-positive-tint text-pnl-positive-text'
                     : isNext
                       ? 'border-ink-subtle text-ink'
                       : 'border-hairline-strong text-ink-subtle',

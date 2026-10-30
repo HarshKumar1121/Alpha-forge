@@ -1,7 +1,8 @@
 /** Every field in the market: server-sorted, offset-paged, filtered; a row opens its detail. */
 
-import { keepPreviousData, skipToken, useQuery } from '@tanstack/react-query'
-import { GlobeIcon, MaximizeIcon, MinimizeIcon, SparklesIcon } from 'lucide-react'
+import { keepPreviousData, skipToken, useMutation, useQuery } from '@tanstack/react-query'
+import { useNavigate } from '@tanstack/react-router'
+import { CopyIcon, MaximizeIcon, MinimizeIcon, SparklesIcon } from 'lucide-react'
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {
@@ -11,29 +12,34 @@ import {
   type FieldFilter,
   type FieldSortKey,
 } from '@/api/catalog'
+import { errorMessage } from '@/api/http'
 import { type Scope, scopeLabel } from '@/api/types'
 import { cn } from '@/lib/cn'
 import { DASH, fmt } from '@/lib/format'
-import { runsRegionAgnostic } from '@/lib/scope'
 import { useDebounced } from '@/lib/use-debounced'
-import { useDatasetPick } from '@/screens/data/dataset-pick'
+import { useDatasetPick, useFieldPick } from '@/screens/data/dataset-pick'
+import { LAB_TABS } from '@/shell/nav'
 import {
   Badge,
   Button,
   Chips,
   Disclosure,
   ErrorNotice,
-  Field,
   Fieldset,
   Input,
   KV,
+  Metric,
   Panel,
   Skeleton,
 } from '@/ui/kit'
-import { Sheet } from '@/ui/overlay'
+import { Select, Sheet, SheetSteps } from '@/ui/overlay'
 import { useMediaQuery } from '@/ui/panels'
 import { type Column, DataTable, Pager, type Sort } from '@/ui/table'
+import { AvailabilityFilters } from './availability'
+import { datasetNames } from './dataset-tree'
 import {
+  describeFilter,
+  endDatasetPick,
   type FieldFilterState,
   isActive,
   multiplier,
@@ -47,6 +53,8 @@ import {
 import { DatasetTree } from './tree-view'
 
 const LIMIT = 100
+/** The backend's own cap: enough for one focused idea, short enough for any chat LLM. */
+const MAX_PICKED = 100
 const TYPES = ['MATRIX', 'VECTOR', 'GROUP']
 
 /** Two ways to read the search box, because neither answers the other's questions. */
@@ -139,7 +147,7 @@ const COLUMNS: Column<DataFieldRow>[] = [
   {
     key: 'field_type',
     header: 'Type',
-    width: 'minmax(60px,0.6fr)',
+    width: 'minmax(68px,0.6fr)',
     sortable: true,
     cell: (r) => (
       <span
@@ -185,18 +193,19 @@ const COLUMNS: Column<DataFieldRow>[] = [
   {
     key: 'alpha_count',
     header: 'Alphas',
-    width: 'minmax(68px,0.5fr)',
+    // Wide enough for a 7-digit count: `close` alone passes 700,000.
+    width: 'minmax(92px,0.5fr)',
     align: 'right',
     sortable: true,
     cell: (r) => fmt.int(r.alpha_count),
   },
   {
     key: 'date_created',
-    header: 'Date added',
-    width: 'minmax(80px,0.8fr)',
+    header: 'Date Added',
+    width: 'minmax(108px,0.8fr)',
     align: 'right',
     sortable: true,
-    cell: (r) => fmt.date(r.date_created),
+    cell: (r) => fmt.month(r.date_created),
   },
 ]
 
@@ -209,6 +218,11 @@ const ADVANCED: (keyof FieldFilterState)[] = [
   'user_count_min',
   'user_count_max',
   'pyramid_multiplier_min',
+  'pyramid_multiplier_max',
+  'date_coverage_min',
+  'date_coverage_max',
+  'date_created_from',
+  'date_created_to',
 ]
 
 /**
@@ -219,9 +233,9 @@ const ADVANCED: (keyof FieldFilterState)[] = [
  * detail sheet.
  */
 function useFittingColumns(): Column<DataFieldRow>[] {
-  const roomForCategory = useMediaQuery('(min-width: 1280px)')
-  const roomForType = useMediaQuery('(min-width: 1152px)')
-  const roomForDataset = useMediaQuery('(min-width: 1024px)')
+  const roomForCategory = useMediaQuery('(min-width: 1340px)')
+  const roomForType = useMediaQuery('(min-width: 1212px)')
+  const roomForDataset = useMediaQuery('(min-width: 1084px)')
   return useMemo(() => {
     const dropped = new Set(
       [
@@ -269,6 +283,33 @@ export function FieldsTab({ scope }: { scope: Scope }) {
   const full = useFullscreen()
   const active: FieldFilterState = { ...filter, dataset_ids: datasetIds }
   const [openId, setOpenId] = useState<string | null>(null)
+  const [picked, setPicked] = useState<ReadonlySet<string>>(() => new Set())
+  const pick = (ids: string[], on: boolean) => {
+    const next = new Set(picked)
+    for (const id of ids) {
+      if (on) next.add(id)
+      else next.delete(id)
+    }
+    if (next.size > MAX_PICKED) {
+      toast.error(`Select at most ${MAX_PICKED} fields at once`)
+      return
+    }
+    setPicked(next)
+  }
+  const copy = useMutation({
+    mutationFn: async () => {
+      const outline = await catalog.outline(scope, { field_ids: [...picked] })
+      await navigator.clipboard.writeText(outline.text)
+      return outline
+    },
+    onSuccess: (outline) =>
+      toast.success(`Copied ${fmt.int(picked.size - outline.missing.length)} Data Fields`, {
+        description: outline.missing.length
+          ? `Not in this market, so left out: ${outline.missing.join(', ')}`
+          : 'Grouped by Category, Subcategory and Dataset, ready to paste into any LLM.',
+      }),
+    onError: (e) => toast.error('Could not copy the Data Fields', { description: errorMessage(e) }),
+  })
 
   // A new market starts at its first page.
   const label = scopeLabel(scope)
@@ -277,6 +318,7 @@ export function FieldsTab({ scope }: { scope: Scope }) {
     if (seen.current !== label) {
       seen.current = label
       page(0)
+      setPicked(new Set())
     }
   }, [label, page])
 
@@ -289,66 +331,137 @@ export function FieldsTab({ scope }: { scope: Scope }) {
   }
   const query = useQuery({
     queryKey: ['catalog', 'fields', scope, body],
-    queryFn: () => catalog.fields(scope, body),
+    queryFn: ({ signal }) => catalog.fields(scope, body, signal),
     placeholderData: keepPreviousData,
   })
   const filtered = Object.values(active).some(isActive)
+  const picking = useDatasetPick((s) => s.active)
+  const labFields = useFieldPick((s) => s.fields)
+  const forLab = useMemo(() => new Set(Object.keys(labFields)), [labFields])
+  const pickForLab = (ids: string[], on: boolean) => {
+    const datasetOf = new Map(query.data?.results.map((r) => [r.field_id, r.dataset_id ?? '']))
+    useFieldPick.setState(({ fields }) => {
+      const next = { ...fields }
+      for (const id of ids) {
+        if (on) next[id] = datasetOf.get(id) ?? next[id] ?? ''
+        else delete next[id]
+      }
+      return { fields: next }
+    })
+  }
 
   return (
-    // The fullscreen element paints its own ground: the page behind it is gone, and an
-    // unpainted one shows through as the browser's default black.
-    <div ref={full.ref} className={cn(full.on && 'h-full overflow-auto bg-canvas p-4')}>
-      <Panel
-        className={cn(full.on && 'rounded-none border-0')}
-        title="Fields"
-        actions={
-          <>
-            <Button variant="ghost" size="sm" onClick={full.toggle}>
-              {full.on ? <MinimizeIcon /> : <MaximizeIcon />}
-              {full.on ? 'Exit Full Screen' : 'Full Screen'}
-            </Button>
-            {query.data && (
-              <span className={STAT}>
-                <span className="num text-ink">{fmt.int(query.data.total)}</span>
-                fields
-              </span>
+    <>
+      {picking && <PickBar matching={query.data?.total} />}
+      {/* The fullscreen element paints its own ground: the page behind it is gone, and an
+        unpainted one shows through as the browser's default black. */}
+      <div ref={full.ref} className={cn(full.on && 'h-full overflow-auto bg-canvas p-4')}>
+        <Panel
+          className={cn(full.on && 'rounded-none border-0')}
+          title="Fields"
+          actions={
+            <>
+              {picked.size > 0 && (
+                <>
+                  <Button variant="ghost" size="sm" onClick={() => setPicked(new Set())}>
+                    Clear
+                  </Button>
+                  <Button size="sm" onClick={() => copy.mutate()} disabled={copy.isPending}>
+                    <CopyIcon aria-hidden />
+                    Copy Selected Data Fields ({fmt.int(picked.size)})
+                  </Button>
+                </>
+              )}
+              <Button variant="ghost" size="sm" onClick={full.toggle}>
+                {full.on ? <MinimizeIcon /> : <MaximizeIcon />}
+                {full.on ? 'Exit Full Screen' : 'Full Screen'}
+              </Button>
+              {query.data && (
+                <span className={STAT}>
+                  <span className="num text-ink">{fmt.int(query.data.total)}</span>
+                  fields
+                </span>
+              )}
+            </>
+          }
+        >
+          <div className="flex flex-col gap-4">
+            <FieldFilters scope={scope} />
+            {query.isError && (query.data?.results.length ?? 0) > 0 && (
+              <ErrorNotice error={query.error} title="Could not load fields" />
             )}
-          </>
-        }
-      >
-        <div className="flex flex-col gap-4">
-          <FieldFilters scope={scope} />
-          {query.isError && (query.data?.results.length ?? 0) > 0 && (
-            <ErrorNotice error={query.error} title="Could not load fields" />
-          )}
-          <DataTable
-            label="Data fields"
-            rows={query.data?.results ?? []}
-            columns={columns}
-            rowKey={(r) => r.field_id}
-            sort={sort}
-            onSort={setSort}
-            onRowClick={(r) => setOpenId(r.field_id)}
-            loading={query.isPending}
-            error={query.error}
-            maxHeight={full.on ? 'calc(100vh - 17rem)' : undefined}
-            empty={
-              filtered
-                ? 'No fields match these filters.'
-                : 'No fields in this market yet. Download it in Sync with BRAIN.'
-            }
+            <DataTable
+              label="Data fields"
+              rows={query.data?.results ?? []}
+              columns={columns}
+              rowKey={(r) => r.field_id}
+              sort={sort}
+              onSort={setSort}
+              onRowClick={(r) => setOpenId(r.field_id)}
+              activeKey={openId}
+              page={offset}
+              // While a lab picks datasets, its ticks are the only ones on the page.
+              // While a lab picks, a tick hands it that field; otherwise it is for copying.
+              {...(picking
+                ? { selected: forLab, onSelect: pickForLab }
+                : { selected: picked, onSelect: pick })}
+              loading={query.isPending || query.isPlaceholderData}
+              error={query.error}
+              maxHeight={full.on ? 'calc(100vh - 17rem)' : undefined}
+              empty={
+                filtered
+                  ? 'No fields match these filters.'
+                  : 'No fields in this market yet. Download it in BRAIN › Sync.'
+              }
+            />
+            {query.data && (
+              <Pager total={query.data.total} offset={offset} limit={LIMIT} onChange={page} />
+            )}
+          </div>
+          <FieldSheet
+            scope={scope}
+            id={openId}
+            ids={(query.data?.results ?? []).map((r) => r.field_id)}
+            onStep={setOpenId}
+            onClose={() => setOpenId(null)}
+            container={full.on ? full.ref : undefined}
           />
-          {query.data && (
-            <Pager total={query.data.total} offset={offset} limit={LIMIT} onChange={page} />
-          )}
-        </div>
-        <FieldSheet
-          scope={scope}
-          id={openId}
-          onClose={() => setOpenId(null)}
-          container={full.on ? full.ref : undefined}
-        />
-      </Panel>
+        </Panel>
+      </div>
+    </>
+  )
+}
+
+/** While a lab picks datasets: what is ticked, what it leaves, and the way back to the lab. */
+function PickBar({ matching }: { matching: number | undefined }) {
+  const navigate = useNavigate()
+  const count = useDatasetPick((s) => s.ids.length)
+  const fields = useFieldPick((s) => Object.keys(s.fields).length)
+  const from = useDatasetPick((s) => s.from)
+  const back = (done: boolean) => {
+    // The filter goes with the datasets: the lab searches only the fields it shows.
+    endDatasetPick(done)
+    void navigate({ to: from })
+  }
+
+  return (
+    <div className="sticky top-0 z-10 flex flex-wrap items-center gap-3 rounded-lg border border-hairline bg-surface-1 p-3">
+      <Metric boxed size="sm" label="Datasets Selected" value={fmt.int(count)} />
+      {fields > 0 ? (
+        <Metric boxed size="sm" label="Fields Selected" value={fmt.int(fields)} />
+      ) : (
+        <Metric boxed size="sm" label="Matching Fields" value={fmt.int(count ? matching : null)} />
+      )}
+      <span className="min-w-0 flex-1 text-body-compact text-pretty text-ink-subtle">
+        Tick whole categories, subcategories or datasets in More Filters, or single fields in the
+        table: with fields ticked, the lab uses only those.
+      </span>
+      <Button variant="ghost" onClick={() => back(false)}>
+        Cancel
+      </Button>
+      <Button variant="primary" disabled={count === 0 && fields === 0} onClick={() => back(true)}>
+        Use in {LAB_TABS.find((lab) => lab.to === from)?.label ?? 'the Lab'}
+      </Button>
     </div>
   )
 }
@@ -360,22 +473,19 @@ function FieldFilters({ scope }: { scope: Scope }) {
   const active: FieldFilterState = { ...filter, dataset_ids: datasetIds }
   const facets = useQuery({
     queryKey: ['catalog', 'facets', scope, active],
-    queryFn: () => catalog.facets(scope, active),
+    queryFn: ({ signal }) => catalog.facets(scope, active, signal),
     placeholderData: keepPreviousData,
   })
   // The market's whole tree whatever else is filtered, so ticking a category takes every dataset in it.
   const tree = useQuery({
     queryKey: ['catalog', 'facets', scope, {}],
-    queryFn: () => catalog.facets(scope, {}),
+    queryFn: ({ signal }) => catalog.facets(scope, {}, signal),
   })
   const datasets = useQuery({
     queryKey: ['catalog', 'datasets', scope, ''],
     queryFn: () => catalog.datasets(scope),
   })
-  const names = useMemo(
-    () => new Map((datasets.data ?? []).map((d) => [d.dataset_id, d.name ?? d.dataset_id])),
-    [datasets.data],
-  )
+  const names = useMemo(() => datasetNames(datasets.data ?? []), [datasets.data])
   const categoryNames = useMemo(
     () => new Map((tree.data?.categories ?? []).map((c) => [c.id, c.name ?? c.id])),
     [tree.data],
@@ -388,7 +498,7 @@ function FieldFilters({ scope }: { scope: Scope }) {
   /**
    * A Pyramid Multiplier cell hands over a category; the Datasets tree speaks dataset ids.
    * Translating as soon as this market's tree is known leaves one selection in one place —
-   * ticked in the tree and summarised as "All of Other" — rather than two that disagree.
+   * ticked in the tree and summarised as "Other" — rather than two that disagree.
    */
   const chosenCategories = filter.category_ids
   const [landed, setLanded] = useState(false)
@@ -424,9 +534,19 @@ function FieldFilters({ scope }: { scope: Scope }) {
     ]),
   ]
   const advancedOn = ADVANCED.filter((k) => isActive(active[k])).length
+  // What More Filters narrows by, said on it while it is closed.
+  const narrowed = [
+    ...(datasetIds.length
+      ? [`${fmt.int(datasetIds.length)} Dataset${datasetIds.length === 1 ? '' : 's'}`]
+      : []),
+    ...describeFilter(
+      Object.fromEntries(ADVANCED.map((k) => [k, active[k]])) as FieldFilterState,
+      scope.region,
+    ),
+  ]
   const s = stats.data
 
-  // A lab choosing datasets lands here: More filters opens, lit, and scrolls into view.
+  // A lab choosing datasets lands here: More Filters opens, lit, and scrolls into view.
   const more = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (picking) more.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
@@ -476,21 +596,6 @@ function FieldFilters({ scope }: { scope: Scope }) {
             ),
           }))}
         />
-        {/* The fields this market shares with region ALL: the ones an idea here could also be
-            run region-agnostically on. Offered only where such a run is possible — a JPN field
-            being in ALL says nothing a JPN researcher can act on. */}
-        {runsRegionAgnostic(scope) && (
-          <Button
-            variant={filter.region_agnostic ? 'primary' : 'secondary'}
-            size="sm"
-            aria-pressed={Boolean(filter.region_agnostic)}
-            title="Only Fields that also exist in region ALL"
-            onClick={() => set({ region_agnostic: !filter.region_agnostic })}
-          >
-            <GlobeIcon />
-            Region Agnostic
-          </Button>
-        )}
         {/* Only ever arrived at from the Pyramid Multiplier Map, so it shows only when set —
             but it has to show, or the table is narrowed by something invisible. */}
         {(filter.category_ids?.length ?? 0) > 0 && (
@@ -522,6 +627,7 @@ function FieldFilters({ scope }: { scope: Scope }) {
           Reset filters
         </Button>
       </div>
+      <AvailabilityFilters scope={scope} counts={facets.data?.availability} />
       {facets.isError && <ErrorNotice error={facets.error} title="Could not load filter choices" />}
       {stats.isError && <ErrorNotice error={stats.error} title="Could not load field statistics" />}
       {datasets.isError && (
@@ -540,8 +646,13 @@ function FieldFilters({ scope }: { scope: Scope }) {
           className={cn(picking && 'border-primary ring-1 ring-primary-subtle')}
           summary={
             <>
-              More filters
+              More Filters
               {advancedOn > 0 && <Badge className="num">{advancedOn}</Badge>}
+              {narrowed.length > 0 && (
+                <span className="min-w-0 truncate text-body-compact text-ink-subtle group-open:hidden">
+                  {narrowed.join(' · ')}
+                </span>
+              )}
             </>
           }
         >
@@ -549,6 +660,7 @@ function FieldFilters({ scope }: { scope: Scope }) {
             <div className="min-w-0 md:col-span-2 xl:col-span-3">
               {tree.data ? (
                 <DatasetTree
+                  scope={scope}
                   source={tree.data}
                   counts={facets.data}
                   names={names}
@@ -559,41 +671,62 @@ function FieldFilters({ scope }: { scope: Scope }) {
                 !tree.isError && <Skeleton className="h-40" />
               )}
             </div>
+            {/* In the table's own column order, so a filter sits where its column does. Each
+                box shows this market's own bound until something is typed in it. */}
             <Range
-              label="Coverage (%)"
-              hint={s && `In this market: ${fmt.pct(s.coverage_min)} – ${fmt.pct(s.coverage_max)}`}
+              label="Pyramid Theme Multiplier"
+              bounds={s && [ratio(s.pyramid_multiplier_min), ratio(s.pyramid_multiplier_max)]}
+              step={0.1}
+              min={filter.pyramid_multiplier_min}
+              max={filter.pyramid_multiplier_max}
+              onChange={(pyramid_multiplier_min, pyramid_multiplier_max) =>
+                set({ pyramid_multiplier_min, pyramid_multiplier_max })
+              }
+            />
+            <Range
+              label="Instrument Coverage (%)"
+              bounds={s && [percent(s.coverage_min), percent(s.coverage_max)]}
               scale={100}
               min={filter.coverage_min}
               max={filter.coverage_max}
               onChange={(coverage_min, coverage_max) => set({ coverage_min, coverage_max })}
             />
             <Range
-              label="Alpha Count"
-              hint={s && `Highest in this market: ${fmt.int(s.alpha_count_max)}`}
+              label="Date Coverage (%)"
+              bounds={s && [percent(s.date_coverage_min), percent(s.date_coverage_max)]}
+              scale={100}
+              min={filter.date_coverage_min}
+              max={filter.date_coverage_max}
+              onChange={(date_coverage_min, date_coverage_max) =>
+                set({ date_coverage_min, date_coverage_max })
+              }
+            />
+            <Range
+              label="Users"
+              bounds={s && [count(s.user_count_min), count(s.user_count_max)]}
+              min={filter.user_count_min}
+              max={filter.user_count_max}
+              onChange={(user_count_min, user_count_max) => set({ user_count_min, user_count_max })}
+            />
+            <Range
+              label="Alphas"
+              bounds={s && [count(s.alpha_count_min), count(s.alpha_count_max)]}
               min={filter.alpha_count_min}
               max={filter.alpha_count_max}
               onChange={(alpha_count_min, alpha_count_max) =>
                 set({ alpha_count_min, alpha_count_max })
               }
             />
-            <Range
-              label="User Count"
-              hint={s && `Highest in this market: ${fmt.int(s.user_count_max)}`}
-              min={filter.user_count_min}
-              max={filter.user_count_max}
-              onChange={(user_count_min, user_count_max) => set({ user_count_min, user_count_max })}
+            <MonthRange
+              label="Date Added"
+              months={s?.date_added ?? []}
+              counts={facets.data?.date_added}
+              from={filter.date_created_from}
+              to={filter.date_created_to}
+              onChange={(date_created_from, date_created_to) =>
+                set({ date_created_from, date_created_to })
+              }
             />
-            <Field
-              label="Pyramid Multiplier at least"
-              hint={s && `Highest in this market: ${multiplier(s.pyramid_multiplier_max)}`}
-            >
-              <NumberBox
-                label="Pyramid Multiplier at least"
-                step={0.1}
-                value={filter.pyramid_multiplier_min}
-                onChange={(v) => set({ pyramid_multiplier_min: v })}
-              />
-            </Field>
           </div>
         </Disclosure>
       </div>
@@ -618,9 +751,13 @@ function NumberBox({
 }) {
   const shown = value == null ? '' : String(+(value * scale).toFixed(6))
   const [text, setText] = useState(shown)
+  // Passed on once typing pauses, so "0.75" asks for the fields once rather than per key.
+  const [waiting, setWaiting] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  useEffect(() => () => clearTimeout(timer.current), [])
   // Typed text stands while it still means the number held above: "1.0" typed on the way to
   // "1.05" parses to 1, and rewriting the box to "1" would eat the zero the user just typed.
-  const same = text === '' ? value == null : Number(text) / scale === value
+  const same = waiting || (text === '' ? value == null : Number(text) / scale === value)
   return (
     <Input
       type="number"
@@ -630,45 +767,156 @@ function NumberBox({
       placeholder={placeholder}
       value={same ? text : shown}
       onChange={(e) => {
-        setText(e.target.value)
-        onChange(e.target.value === '' ? null : Number(e.target.value) / scale)
+        const typed = e.target.value
+        setText(typed)
+        setWaiting(true)
+        clearTimeout(timer.current)
+        timer.current = setTimeout(() => {
+          setWaiting(false)
+          onChange(typed === '' ? null : Number(typed) / scale)
+        }, 400)
       }}
     />
   )
 }
 
+/** A bound as a box shows it: a plain number, never a unit, and empty when unknown. */
+const ratio = (v: number | null | undefined) => (v == null ? '' : v.toFixed(1))
+const percent = (v: number | null | undefined) => (v == null ? '' : String(Math.round(v * 100)))
+const count = (v: number | null | undefined) => (v == null ? '' : fmt.int(v))
+
 function Range({
   label,
-  hint,
+  bounds,
   min,
   max,
   onChange,
   scale,
+  step,
 }: {
   label: string
-  hint?: string | null | undefined
+  /** This market's lowest and highest, shown in the empty boxes. */
+  bounds?: [string, string] | null | undefined
   min: number | null | undefined
   max: number | null | undefined
   onChange: (min: number | null, max: number | null) => void
   scale?: number | undefined
+  step?: number
 }) {
   return (
-    <Fieldset legend={label} hint={hint}>
+    <Fieldset legend={label}>
       <div className="grid grid-cols-2 gap-2">
         <NumberBox
           label={`${label} minimum`}
-          placeholder="min"
+          placeholder={bounds?.[0] || 'min'}
           scale={scale}
+          {...(step === undefined ? {} : { step })}
           value={min}
           onChange={(v) => onChange(v, max ?? null)}
         />
         <NumberBox
           label={`${label} maximum`}
-          placeholder="max"
+          placeholder={bounds?.[1] || 'max'}
           scale={scale}
+          {...(step === undefined ? {} : { step })}
           value={max}
           onChange={(v) => onChange(min ?? null, v)}
         />
+      </div>
+    </Fieldset>
+  )
+}
+
+const ANY = 'any'
+
+/**
+ * From and To months, both inclusive. BRAIN dates a field by month, so the choices are the
+ * months this market actually has, each counted under the other filters, as the table would
+ * show it; neither end can pass the other.
+ */
+/** Starts the Date Added filter offers in one click, counted back from this month. */
+const SINCE = [
+  { label: 'Last month', back: 1 },
+  { label: 'Last 3 months', back: 3 },
+  { label: 'Last 6 months', back: 6 },
+  { label: 'Last year', back: 12 },
+] as const
+
+/** The first day of the month `back` months before this one, as BRAIN dates a month. */
+function monthsAgo(back: number): string {
+  const now = new Date()
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - back, 1))
+    .toISOString()
+    .slice(0, 10)
+}
+
+function MonthRange({
+  label,
+  months,
+  counts,
+  from,
+  to,
+  onChange,
+}: {
+  label: string
+  /** Every month this market has, so a month the other filters empty stays choosable. */
+  months: { month: string; fields: number }[]
+  /** Fields per month under the other filters: what choosing each would show. */
+  counts: { month: string; fields: number }[] | undefined
+  from: string | null | undefined
+  to: string | null | undefined
+  onChange: (from: string | null, to: string | null) => void
+}) {
+  const shown = new Map(counts?.map((c) => [c.month, c.fields]))
+  const fieldsIn = (m: { month: string; fields: number }) =>
+    counts ? (shown.get(m.month) ?? 0) : m.fields
+  const choices = (keep: (month: string) => boolean) => [
+    { value: ANY, label: 'Any' },
+    ...months
+      .filter((m) => keep(m.month))
+      .map((m) => ({ value: m.month, label: `${fmt.month(m.month)} (${fmt.int(fieldsIn(m))})` })),
+  ]
+  const pick = (value: string) => (value === ANY ? null : value)
+  return (
+    <Fieldset legend={label}>
+      <div className="grid grid-cols-2 gap-2">
+        <Select
+          label={`${label} from`}
+          className="w-full"
+          value={from ?? ANY}
+          items={choices((m) => !to || m <= to)}
+          onChange={(v) => onChange(pick(v), to ?? null)}
+          disabled={months.length === 0}
+        />
+        <Select
+          label={`${label} to`}
+          className="w-full"
+          value={to ?? ANY}
+          items={choices((m) => !from || m >= from)}
+          onChange={(v) => onChange(from ?? null, pick(v))}
+          disabled={months.length === 0}
+        />
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1">
+        {SINCE.map(({ label: since, back }) => {
+          // The first month on offer that recent: a start outside the list would leave the
+          // From menu showing nothing, and none at all means nothing here is that new.
+          const start = monthsAgo(back)
+          const first = months.find((m) => m.month >= start)?.month
+          const on = first !== undefined && from === first && !to
+          return (
+            <Button
+              key={since}
+              size="sm"
+              variant={on ? 'secondary' : 'ghost'}
+              aria-pressed={on}
+              disabled={first === undefined}
+              onClick={() => first && onChange(first, null)}
+            >
+              {since}
+            </Button>
+          )
+        })}
       </div>
     </Fieldset>
   )
@@ -713,11 +961,16 @@ const AVAILABILITY_COLUMNS: Column<FieldAvailabilityRow>[] = [
 function FieldSheet({
   scope,
   id,
+  ids,
+  onStep,
   onClose,
   container,
 }: {
   scope: Scope
   id: string | null
+  /** The fields on this page, in the order shown, to step through. */
+  ids: string[]
+  onStep: (id: string) => void
   onClose: () => void
   /** While the panel is fullscreen, the sheet has to live inside it to be drawn at all. */
   container?: RefObject<HTMLElement | null> | undefined
@@ -740,6 +993,11 @@ function FieldSheet({
   )
   const d = detail.data
   const themes = parseThemes(d?.themes ?? null)
+  // While a lab picks datasets, a field read here can bring its dataset into the pick.
+  const picking = useDatasetPick((s) => s.active)
+  const [chosen, choose] = useDatasetChoice()
+  const dataset = d?.dataset_id
+  const ticked = dataset != null && chosen.includes(dataset)
 
   return (
     <Sheet
@@ -747,6 +1005,7 @@ function FieldSheet({
       onOpenChange={(open) => !open && onClose()}
       container={container}
       title={<span className="num">{id}</span>}
+      actions={<SheetSteps ids={ids} id={id} onStep={onStep} noun="Field" />}
       description={d?.description ?? (detail.isPending ? 'Loading…' : 'No description.')}
     >
       <div className="flex flex-col gap-4">
@@ -756,6 +1015,18 @@ function FieldSheet({
           <Skeleton className="h-56" />
         ) : (
           <div className="flex flex-col gap-3">
+            {picking && dataset && (
+              <Button
+                size="sm"
+                variant={ticked ? 'secondary' : 'primary'}
+                className="self-start"
+                onClick={() =>
+                  choose(ticked ? chosen.filter((x) => x !== dataset) : [...chosen, dataset])
+                }
+              >
+                {ticked ? `Untick Dataset ${dataset}` : `Tick Dataset ${dataset}`}
+              </Button>
+            )}
             <KV
               items={[
                 ['Dataset', d.dataset_id ?? DASH],
@@ -768,7 +1039,7 @@ function FieldSheet({
                 ['User Count', fmt.int(d.user_count)],
                 ['Pyramid Theme Multiplier', multiplier(d.pyramid_multiplier)],
                 ['Scope', `${d.region} · D${d.delay} · ${d.universe}`],
-                ['Date added', fmt.date(d.date_created)],
+                ['Date Added', fmt.month(d.date_created)],
                 ['Downloaded', fmt.dateTime(d.synced_at)],
               ]}
             />

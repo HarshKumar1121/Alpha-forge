@@ -12,28 +12,50 @@ import { cn } from '@/lib/cn'
 import { fmt } from '@/lib/format'
 import { useCores, useLive } from '@/lib/live'
 import { coreBlocks } from '@/lib/matrix'
+import { useNow } from '@/lib/now'
 import { useRefetchOn } from '@/lib/ws'
-import { Button, STATUS } from '@/ui/kit'
+import { Button, Kbd, STATUS } from '@/ui/kit'
 import { Tooltip } from '@/ui/overlay'
 import { useCommandMenu } from './command-menu'
+import { inDesktop, MOD, onMac, WindowControls } from './desktop'
+import { SidebarToggle } from './sidebar'
 
 export function Header() {
   const openMenu = useCommandMenu((s) => s.setOpen)
 
   return (
-    <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-hairline bg-canvas px-4">
-      <HeaderCores />
-      <div className="flex items-center gap-4">
+    // In the desktop app this is the title bar: dragged by any part that is not a control, with
+    // the window's buttons at its right end, or macOS's own over its left.
+    <header
+      data-tauri-drag-region={inDesktop ? 'deep' : undefined}
+      className={cn(
+        'flex h-12 shrink-0 items-center justify-between gap-3 border-b border-hairline bg-canvas px-4',
+        inDesktop && (onMac ? 'pl-20' : 'pr-0'),
+      )}
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <SidebarToggle />
+        <HeaderCores />
+      </div>
+      <div className="flex shrink-0 items-center gap-4">
         <Clocks />
         <ConnectionNotice />
-        <Button
-          size="icon-sm"
-          aria-label="Go to a screen or lab (⌘K)"
-          title="Go to a screen or lab (⌘K)"
-          onClick={() => openMenu(true)}
+        <Tooltip
+          content={
+            <span className="flex items-center gap-2">
+              Go to a screen or lab <Kbd>{MOD}K</Kbd>
+            </span>
+          }
         >
-          <SearchIcon />
-        </Button>
+          <Button
+            size="icon-sm"
+            aria-label={`Go to a screen or lab (${MOD}K)`}
+            onClick={() => openMenu(true)}
+          >
+            <SearchIcon />
+          </Button>
+        </Tooltip>
+        {inDesktop && !onMac && <WindowControls />}
       </div>
     </header>
   )
@@ -67,7 +89,8 @@ function HeaderCores() {
   return (
     <nav
       aria-label={`${slots} simulation cores execution matrix`}
-      className="flex items-center gap-1.5 rounded-md border border-hairline bg-surface-1 p-1"
+      // Scrolls rather than overlaps the clocks when a phone-width bar cannot hold all eight.
+      className="flex min-w-0 items-center gap-1.5 overflow-x-auto rounded-md border border-hairline bg-surface-1 p-1 [scrollbar-width:none]"
     >
       <Link
         to="/matrix"
@@ -89,7 +112,8 @@ function HeaderCores() {
             running: 'bg-status-running text-white',
             queued: 'bg-status-queued text-ink',
             warning: 'bg-status-warning text-ink',
-            idle: 'bg-status-idle text-ink-subtle border border-hairline hover:border-hairline-strong hover:text-ink',
+            // A hollow socket rather than a grey tile, which read as a disabled button.
+            idle: 'border border-dashed border-status-idle bg-surface-1 text-ink-subtle hover:text-ink',
           }[state]
 
           const where =
@@ -103,7 +127,7 @@ function HeaderCores() {
                 ? 'Running'
                 : state === 'warning'
                   ? 'Warning'
-                  : 'Queued'
+                  : 'Pending'
 
           const tooltipContent = (
             <div className="flex flex-col gap-1 text-caption">
@@ -129,7 +153,10 @@ function HeaderCores() {
           )
 
           return (
-            <Tooltip key={block.start} content={tooltipContent}>
+            <Tooltip
+              key={holder ? `sim-${holder.id}` : `idle-${block.start}`}
+              content={tooltipContent}
+            >
               {/* A hair between a block's own cores and the full gap between blocks, so two
                   cores held by one simulation read as one wide mark rather than two. */}
               <span className="flex gap-px">
@@ -139,7 +166,7 @@ function HeaderCores() {
                     role="status"
                     aria-label={`${where}: ${label}`}
                     className={cn(
-                      'num flex size-7 shrink-0 items-center justify-center text-caption font-medium select-none transition-colors max-sm:size-5',
+                      'num relative flex size-7 shrink-0 items-center justify-center overflow-hidden text-caption font-medium select-none transition-colors max-sm:size-5',
                       stateClasses,
                       block.span === 1
                         ? 'rounded-xs'
@@ -152,6 +179,18 @@ function HeaderCores() {
                   >
                     <span className="max-sm:hidden">C{block.start + k + 1}</span>
                     <span className="sm:hidden">{block.start + k + 1}</span>
+                    {/* Not by colour alone: a warning says so, and a running core fills
+                        along its bottom as its simulation goes. */}
+                    {state === 'warning' && <span aria-hidden>!</span>}
+                    {state === 'running' && holder && (
+                      <span
+                        aria-hidden
+                        className="absolute inset-x-0 bottom-0 h-0.5 origin-left bg-ink transition-transform"
+                        style={{
+                          transform: `scaleX(${Math.min(1, Math.max(0, holder.progress ?? 0))})`,
+                        }}
+                      />
+                    )}
                   </span>
                 ))}
               </span>
@@ -193,16 +232,6 @@ function ConnectionNotice() {
   )
 }
 
-/** Seconds since the last fetch, so countdowns tick between polls. */
-function useElapsed(since: number): number {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(timer)
-  }, [])
-  return Math.max(0, Math.floor((now - since) / 1000))
-}
-
 function Clocks() {
   const bar = useQuery({
     queryKey: ['bar'],
@@ -211,7 +240,8 @@ function Clocks() {
   })
   useRefetchOn('simulations', ['bar'], 3000)
   useRefetchOn('session', ['bar'])
-  const elapsed = useElapsed(bar.dataUpdatedAt)
+  // Seconds since the last fetch, so the countdowns tick between polls.
+  const elapsed = Math.max(0, Math.floor((useNow(1000) - bar.dataUpdatedAt) / 1000))
   if (!bar.data) return null
 
   const session =

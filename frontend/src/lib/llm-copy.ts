@@ -5,7 +5,7 @@
  * a value is only moved to where it is said once.
  */
 
-import { fmt } from '@/lib/format'
+import { CORE_METRICS, CORE_ORDER } from '@/lib/format'
 
 export interface CopyAlpha {
   expression: string | null
@@ -69,14 +69,14 @@ export function kvMarkdown({
   for (const section of extra) lines.push(...section, '')
 
   let count = 0
+  const ownTraits = traits.labels.filter((l) => !traits.shared.includes(l))
   const alpha = (r: CopyAlpha, level: number) => {
     count += 1
     // Headed by what sets it apart from its section; numbered when nothing does.
     const heading = inline.map((l) => `${l}: ${settings.value(r, l)}`).join(' · ')
     lines.push(`${'#'.repeat(level)} ${heading || `${unit} ${count}`}`)
     if (!oneExpression) lines.push(`- Expression: \`${(r.expression ?? '').replace(/\s+/g, ' ')}\``)
-    for (const label of traits.labels.filter((l) => !traits.shared.includes(l)))
-      lines.push(`- ${label}: ${traits.value(r, label)}`)
+    for (const label of ownTraits) lines.push(`- ${label}: ${traits.value(r, label)}`)
     for (const [label, value] of r.metrics) lines.push(`- ${label}: ${value}`)
     lines.push('')
   }
@@ -90,7 +90,9 @@ export function kvMarkdown({
     const groups = new Map<string, CopyAlpha[]>()
     for (const r of group) {
       const value = settings.value(r, branch)
-      groups.set(value, [...(groups.get(value) ?? []), r])
+      const members = groups.get(value)
+      if (members) members.push(r)
+      else groups.set(value, [r])
     }
     for (const [value, members] of groups) {
       lines.push(`${'#'.repeat(depth + 2)} ${branch}: ${value}`, '')
@@ -114,12 +116,7 @@ export function coreMetrics(r: {
 }): [string, string][] {
   const count = (v: number | null | undefined) => (v == null ? '—' : String(v))
   return [
-    ['Sharpe', fmt.ratio(r.sharpe)],
-    ['Turnover', fmt.pct(r.turnover, 2)],
-    ['Fitness', fmt.ratio(r.fitness)],
-    ['Returns', fmt.pct(r.returns, 2)],
-    ['Drawdown', fmt.pct(r.drawdown, 2)],
-    ['Margin', fmt.bps(r.margin, 2)],
+    ...CORE_ORDER.map((k): [string, string] => [CORE_METRICS[k].label, CORE_METRICS[k].show(r[k])]),
     ['Long Count', count(r.longCount)],
     ['Short Count', count(r.shortCount)],
   ]

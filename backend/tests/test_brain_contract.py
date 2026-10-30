@@ -8,7 +8,7 @@ here, with no network and no simulations.
 
 from __future__ import annotations
 
-import httpx
+import httpx2
 import pytest
 from conftest import json_response, make_endpoints, route
 from fixtures import (
@@ -38,9 +38,9 @@ async def test_get_auth_parses_a_live_session() -> None:
 
     assert state is not None
     assert state.user_id == "AB12345"
-    assert state.is_consultant is True
+    assert "CONSULTANT" in state.permissions
     # Gates batching in the engine; a wrong read here silently drops throughput to 1.
-    assert state.can_multi_simulate is True
+    assert "MULTI_SIMULATION" in state.permissions
 
 
 async def test_get_auth_reads_an_account_without_consultant_rights() -> None:
@@ -51,14 +51,14 @@ async def test_get_auth_reads_an_account_without_consultant_rights() -> None:
 
     assert state is not None
     assert state.user_id == "CD67890"
-    assert state.is_consultant is False
-    assert state.can_multi_simulate is False
+    assert "CONSULTANT" not in state.permissions
+    assert "MULTI_SIMULATION" not in state.permissions
 
 
 @pytest.mark.parametrize("status", [204, 401])
 async def test_get_auth_reports_no_session(status: int) -> None:
     """No session is ``None``, not an exception: the UI shows a sign-in screen for it."""
-    endpoints, _ = make_endpoints(route({("GET", "/authentication"): httpx.Response(status)}))
+    endpoints, _ = make_endpoints(route({("GET", "/authentication"): httpx2.Response(status)}))
     assert await endpoints.get_auth() is None
 
 
@@ -169,8 +169,8 @@ async def test_alpha_filter_operator_survives_url_encoding() -> None:
     nothing — which looks like "no alphas", not like a bug. Hence the DSL, and hence this.
     """
     query = AlphaQuery(limit=50, filters=[Filter("is.sharpe", ">=", 1.58)])
-    assert "is.sharpe>=1.58" in query.query()
-    assert "%3E%3D" not in query.query()
+    assert "is.sharpe>=1.58" in query.path()
+    assert "%3E%3D" not in query.path()
 
 
 async def test_alpha_list_tolerates_nulls_the_codec_allows() -> None:

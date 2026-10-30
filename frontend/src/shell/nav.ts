@@ -8,6 +8,8 @@ import {
   ListChecksIcon,
   RefreshCwIcon,
   SparklesIcon,
+  TriangleIcon,
+  TrophyIcon,
   WrenchIcon,
 } from 'lucide-react'
 
@@ -20,6 +22,7 @@ export const POOL_TABS = [
 export const AI_TABS = [
   { tab: 'providers', label: 'Providers' },
   { tab: 'keys', label: 'Keys' },
+  { tab: 'models', label: 'Models' },
   { tab: 'budget', label: 'Budget' },
   { tab: 'prompts', label: 'Prompts' },
   { tab: 'assistant', label: 'Assistant' },
@@ -33,85 +36,94 @@ export const LAB_TABS = [
   { tab: 'template', label: 'Template Lab', to: '/labs/template' },
   { tab: 'evolution', label: 'Evolution Lab', to: '/labs/evolution' },
   { tab: 'power-pool', label: 'LLM Power Pool Lab', to: '/labs/power-pool' },
+  { tab: 'super-alpha', label: 'Super Alpha Lab', to: '/labs/super-alpha' },
 ] as const
 
 /** The tools, each with its own route. Listed on the Tools screen and in ⌘K rather than
  *  under the sidebar entry, for the same reason as the labs. */
 export const TOOL_TABS = [
   { tab: 'settings-sampler', label: 'Settings Sampler', to: '/tools/settings-sampler' },
-  { tab: 'submission-planner', label: 'Submission Planner', to: '/tools/submission-planner' },
   { tab: 'correlation-breaker', label: 'Correlation Breaker', to: '/tools/correlation-breaker' },
+  { tab: 'fields-sampler', label: 'Fields Sampler', to: '/tools/fields-sampler' },
 ] as const
 
+/** `group` heads a run of items in the sidebar; empty sits above every heading. An item's
+ *  area is its path, `to` without the slash. */
 export const NAV = [
   {
     to: '/dashboard',
-    area: 'dashboard',
+    group: '',
     label: 'Dashboard',
     icon: LayoutGridIcon,
-    tabs: [],
   },
   {
     to: '/matrix',
-    area: 'matrix',
+    group: '',
     label: 'Simulation Matrix',
     icon: Grid3x3Icon,
-    tabs: [],
   },
   {
     to: '/data',
-    area: 'data',
+    group: 'Research',
     label: 'Data Explorer',
     icon: DatabaseIcon,
-    tabs: [],
   },
   {
     to: '/labs',
-    area: 'labs',
+    group: 'Research',
     label: 'Research Labs',
     icon: FlaskConicalIcon,
     tabs: LAB_TABS,
   },
   {
     to: '/tools',
-    area: 'tools',
+    group: 'Research',
     label: 'Tools',
     icon: WrenchIcon,
     tabs: TOOL_TABS,
   },
   {
     to: '/tasks',
-    area: 'tasks',
+    group: 'Results',
     label: 'Tasks',
     icon: ListChecksIcon,
-    tabs: [],
   },
   {
     to: '/pool',
-    area: 'pool',
+    group: 'Results',
     label: 'Alphas',
     icon: LayersIcon,
     tabs: POOL_TABS,
   },
   {
     to: '/portfolio',
-    area: 'portfolio',
+    group: 'Results',
     label: 'Portfolio',
     icon: ChartPieIcon,
-    tabs: [],
   },
   {
-    to: '/ai',
-    area: 'ai',
-    label: 'LLM Integration',
-    icon: SparklesIcon,
-    tabs: AI_TABS,
+    to: '/competitions',
+    group: 'BRAIN',
+    label: 'Competitions',
+    icon: TrophyIcon,
   },
   {
     to: '/pyramids',
-    area: 'pyramids',
-    label: 'Sync with BRAIN',
+    group: 'BRAIN',
+    label: 'Pyramids',
+    icon: TriangleIcon,
+  },
+  {
+    to: '/sync',
+    group: 'BRAIN',
+    label: 'Sync',
     icon: RefreshCwIcon,
-    tabs: [],
+  },
+  {
+    to: '/ai',
+    group: 'Setup',
+    label: 'LLM Integration',
+    icon: SparklesIcon,
+    tabs: AI_TABS,
   },
 ] as const

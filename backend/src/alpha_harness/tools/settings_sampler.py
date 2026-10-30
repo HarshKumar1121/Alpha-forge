@@ -1,58 +1,46 @@
 """Settings Sampler: run one proven expression everywhere BRAIN will accept it.
 
-The expression, decay and truncation are held exactly as the source Alpha has them. What
+The expression, decay and truncation are held exactly as the source Alpha has them, unless
+the Truncation Agent sets truncation market by market. What
 varies is the market — region, delay, universe — plus neutralization and the
 maxTrade/maxPosition pair. A market only counts when every data field the expression reads
 is downloaded there, so a two-field Alpha is judged on the intersection.
 """
 
-from __future__ import annotations
-
 import asyncio
-import contextlib
 import math
 import random
-from datetime import timedelta
-from itertools import product
+from itertools import batched, product
 from typing import TYPE_CHECKING, Any
 
 import structlog
 from sqlalchemy import func, select
 
-from ..brain.errors import BrainError, BrainValidationError
-from ..brain.schemas import (
+from ..brain.platform import (
+    DEFAULT_NAN_HANDLING,
+    DEFAULT_PASTEURIZATION,
+    DEFAULT_TRUNCATION,
+    GROUPING_FIELDS,
+    INSTRUMENT_TYPE,
+    MULTI_SIMULATION_SIZE,
+    RA_CHILDREN,
     REGION_AGNOSTIC_REGION,
     TEST_PERIOD,
-    SimulationRequest,
-    SimulationSettings,
 )
+from ..brain.schemas import SimulationRequest, SimulationSettings
 from ..brain.settings_schema import valid_values
-from ..db.models import MetadataCache, SimStatus, StudyStatus, Trial, TrialState, utcnow
-from ..engine.packer import MAX_BATCH
-from ..labs import scheduler
-from ..labs.fastexpr import GROUPING, ParseError, data_fields, parse
+from ..db.models import StudyStatus, Trial, TrialState
+from ..labs import scheduler, template
+from ..labs.fastexpr import ParseError, data_fields, parse
+from ..labs.truncation import truncation_for
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from ..db.models import Study
     from ..labs.study import Optimizer
 
 log = structlog.get_logger(__name__)
 
-#: Parks a written simulation outside every count until a core is free.
-PENDING_SEND = "Waiting for cores."
-
-#: Which regions accept Max Position is not in any schema, so it is measured. It changes only
-#: when BRAIN adds a market, so the answer keeps for a day.
-POSITION_CACHE_KEY = "max_position_regions"
-POSITION_MAX_AGE = timedelta(hours=24)
-#: Probes in flight at once. Measured 3.3x faster than one at a time with no throttling, but
-#: bounded so the burst does not grow with the number of markets BRAIN offers.
-PROBE_CONCURRENCY = 4
-#: One probing sweep at a time. Two previews opened together would otherwise each fan a probe
-#: at every market, and a rate-limited probe is an unusable reading rather than a slow one.
-_PROBE_LOCK = asyncio.Lock()
+PENDING_SEND = scheduler.PENDING_SEND
 
 
 def pairs_for(position_ok: bool) -> list[tuple[str, str]]:
@@ -66,119 +54,6 @@ def pairs_for(position_ok: bool) -> list[tuple[str, str]]:
     return [(t, p) for t in ("OFF", "ON") for p in positions if not (t == "ON" and p == "ON")]
 
 
-async def position_regions(state: Any) -> set[str]:
-    """Regions whose Alphas may set Max Position, asked of BRAIN and cached.
-
-    Probing costs nothing: ``maxTrade=ON`` with ``maxPosition=ON`` is *always* rejected, and
-    a rejected simulation spends no quota. Only the reason differs — a complaint about the
-    pair means Max Position exists in that region, a complaint about the field means it does
-    not. Measured rather than listed, so a new market needs no code change.
-    """
-    if (cached := await _cached_regions(state)) is not None:
-        return cached
-    async with _PROBE_LOCK:
-        # Asked again behind the lock: whoever held it was probably probing this, and its
-        # answer is as good as a fresh sweep.
-        if (cached := await _cached_regions(state)) is not None:
-            return cached
-        return await _probe_regions(state)
-
-
-async def _cached_regions(state: Any) -> set[str] | None:
-    """The cached answer, or ``None`` when it is missing or too old to trust."""
-    async with state.db.session() as session:
-        row = await session.get(MetadataCache, POSITION_CACHE_KEY)
-        if row is not None and utcnow() - _aware(row.fetched_at) < POSITION_MAX_AGE:
-            return {str(r) for r in (row.value or {}).get("regions", [])}
-    return None
-
-
-async def _probe_regions(state: Any) -> set[str]:
-    schema = await state.metadata.cached_settings_schema()
-    if not schema:
-        return set()
-    base = {"instrumentType": "EQUITY"}
-    # All regions never reaches the sampler (see `_plan`), so there is nothing to probe.
-    regions = [str(r) for r in valid_values(schema, "region", base) if r != REGION_AGNOSTIC_REGION]
-    gate = asyncio.Semaphore(PROBE_CONCURRENCY)
-
-    async def ask(region: str) -> bool | None:
-        async with gate:
-            return await _accepts_position(state, schema, region)
-
-    answers = await asyncio.gather(*(ask(region) for region in regions))
-    found = {region for region, answer in zip(regions, answers, strict=True) if answer}
-    if not all(answer is not None for answer in answers):
-        # Offering fewer pairs for a day because BRAIN was busy for one request is worse than
-        # asking again on the next preview.
-        log.warning("settings_sampler.position_probe_incomplete", regions=sorted(found))
-        return found
-
-    async with state.db.session() as session:
-        row = await session.get(MetadataCache, POSITION_CACHE_KEY)
-        if row is None:
-            session.add(MetadataCache(key=POSITION_CACHE_KEY, value={"regions": sorted(found)}))
-        else:
-            row.value = {"regions": sorted(found)}
-            row.fetched_at = utcnow()
-    return found
-
-
-def _aware(moment: Any) -> Any:
-    from datetime import UTC
-
-    return moment.replace(tzinfo=UTC) if moment.tzinfo is None else moment
-
-
-async def _accepts_position(state: Any, schema: dict[str, Any], region: str) -> bool | None:
-    """Whether BRAIN takes Max Position here, or ``None`` when the probe could not tell.
-
-    Both flags ON is refused everywhere, so the probe spends nothing; the answer is in *which*
-    refusal comes back. Anything else — a rate limit, a complaint about some other field — is
-    not an answer, and saying so keeps a bad reading out of the day-long cache.
-    """
-    market = {"instrumentType": "EQUITY", "region": region}
-    delays = valid_values(schema, "delay", market)
-    if not delays:
-        return False
-    market["delay"] = delays[0]
-    universes = valid_values(schema, "universe", market)
-    neutralizations = valid_values(schema, "neutralization", market)
-    if not universes or not neutralizations:
-        return None
-    request = SimulationRequest(
-        settings=SimulationSettings(
-            region=region,
-            universe=str(universes[0]),
-            delay=int(delays[0]),
-            neutralization=str(neutralizations[0]),
-            max_trade="ON",
-            max_position="ON",
-        ),
-        regular="close",
-    )
-    try:
-        response = await state.endpoints.create_simulation(request)
-    except BrainValidationError as exc:
-        settings = (getattr(exc, "fields", None) or {}).get("settings") or {}
-        if "maxPosition" in settings:
-            return False
-        # Only the pair rule proves the field exists here. Any other complaint is about
-        # something else entirely and says nothing either way.
-        if any("max position and max trade" in str(m).lower() for m in settings.get("errors", [])):
-            return True
-        return None
-    except BrainError:
-        return None
-    # Not expected — BRAIN took a pair it documents as illegal. Cancel it rather than leave
-    # a simulation running that nothing is tracking.
-    location = (response.headers or {}).get("location", "")
-    if sim_id := location.rstrip("/").rsplit("/", 1)[-1]:
-        with contextlib.suppress(BrainError):
-            await state.endpoints.cancel_simulation(sim_id)
-    return True
-
-
 async def plan(
     state: Any,
     alpha_id: str,
@@ -186,15 +61,16 @@ async def plan(
     expression: str | None = None,
     decay: int | None = None,
     truncation: float | None = None,
+    pasteurization: str | None = None,
     nan_handling: str | None = None,
     test_period: str | None = None,
 ) -> dict[str, Any]:
     """Everything the screen needs: the expression, its fields, and the space they open up.
 
     From an Alpha, the expression and every setting are its own to begin with. Each of decay,
-    truncation, NaN handling and the test period can be overridden anyway: re-running a proven
-    expression at a different decay is as much a sweep as re-running it in another market, and
-    refusing to let the source Alpha be varied would be an arbitrary line.
+    truncation, pasteurization, NaN handling and the test period can be overridden anyway:
+    re-running a proven expression at a different decay is as much a sweep as re-running it in
+    another market, and refusing to let the source Alpha be varied would be an arbitrary line.
     """
     problems: list[str] = []
     warnings: list[str] = []
@@ -209,8 +85,13 @@ async def plan(
     # An override supplied stands; anything left out keeps the Alpha's own, or the platform
     # default when there is no Alpha to inherit from.
     source["decay"] = source.get("decay", 0) if decay is None else decay
-    source["truncation"] = source.get("truncation", 0.08) if truncation is None else truncation
-    source["nanHandling"] = nan_handling or source.get("nanHandling") or "ON"
+    source["truncation"] = (
+        source.get("truncation", DEFAULT_TRUNCATION) if truncation is None else truncation
+    )
+    source["pasteurization"] = (
+        pasteurization or source.get("pasteurization") or DEFAULT_PASTEURIZATION
+    )
+    source["nanHandling"] = nan_handling or source.get("nanHandling") or DEFAULT_NAN_HANDLING
     source["testPeriod"] = test_period or source.get("testPeriod") or TEST_PERIOD
     if not expression:
         problems.append(f"{alpha_id or 'The expression'} has no expression to re-run.")
@@ -237,11 +118,7 @@ async def plan(
         here = {
             (str(r["region"]), int(r["delay"]), str(r["universe"])): float(r["coverage"] or 0.0)
             for r in rows
-            # All regions is left out: the catalog holds it once it has been synced, but a
-            # sweep there sends region-agnostic simulations, which cost four of the day's
-            # allowance each. A sampler that quietly spends four times its estimate is worse
-            # than one that does not offer the market.
-            if r["instrument_type"] == "EQUITY" and r["region"] != REGION_AGNOSTIC_REGION
+            if r["instrument_type"] == INSTRUMENT_TYPE
         }
         if not here:
             problems.append(f"{field} is not downloaded in any market. Sync from BRAIN first.")
@@ -265,8 +142,7 @@ async def plan(
             "your catalog can see rather than everything BRAIN offers."
         )
 
-    accepts = await position_regions(state)
-    regions = _regions(held, schema, accepts)
+    regions = _regions(held, schema)
     totals = _totals(regions)
     return {
         "alphaId": alpha_id,
@@ -284,7 +160,6 @@ async def plan(
 def _regions(
     held: dict[tuple[str, int, str], float],
     schema: dict[str, Any],
-    accepts: set[str],
 ) -> list[dict[str, Any]]:
     by_region: dict[str, dict[int, dict[str, float]]] = {}
     for (region, delay, universe), coverage in held.items():
@@ -292,9 +167,10 @@ def _regions(
 
     out: list[dict[str, Any]] = []
     for region, delays in by_region.items():
-        market = {"instrumentType": "EQUITY", "region": region, "delay": next(iter(delays))}
+        market = {"instrumentType": INSTRUMENT_TYPE, "region": region, "delay": next(iter(delays))}
         neutralizations = [str(n) for n in valid_values(schema, "neutralization", market)]
-        pairs = pairs_for(region in accepts)
+        position = template.takes_max_position(region)
+        pairs = pairs_for(position)
         markets: list[dict[str, Any]] = [
             {
                 "region": region,
@@ -302,6 +178,7 @@ def _regions(
                 "universe": universe,
                 "coverage": coverage,
                 "total": len(neutralizations) * len(pairs),
+                "agentTruncation": truncation_for(region, delay, universe),
             }
             for delay in sorted(delays)
             for universe, coverage in sorted(delays[delay].items())
@@ -313,7 +190,10 @@ def _regions(
                 "universes": sorted({m["universe"] for m in markets}),
                 "neutralizations": neutralizations,
                 "pairs": [{"maxTrade": t, "maxPosition": p} for t, p in pairs],
-                "positionAvailable": region in accepts,
+                "positionAvailable": position,
+                # All regions sends region-agnostic simulations, each charged per region it
+                # reaches. Said per region so every estimate can count it, not hide it.
+                "cost": simulation_cost(region),
                 "markets": markets,
                 "total": sum(int(m["total"]) for m in markets),
             }
@@ -323,6 +203,16 @@ def _regions(
     return out
 
 
+def simulation_cost(region: str) -> int:
+    """Simulations of the day's allowance one run in this region uses."""
+    return RA_CHILDREN if region == REGION_AGNOSTIC_REGION else 1
+
+
+def batch_size(region: str) -> int:
+    """How many runs one multi-simulation carries: BRAIN fails a batch of region-agnostic ones."""
+    return 1 if region == REGION_AGNOSTIC_REGION else MULTI_SIMULATION_SIZE
+
+
 def _totals(regions: list[dict[str, Any]]) -> dict[str, Any]:
     batches = 0
     for region in regions:
@@ -330,8 +220,9 @@ def _totals(regions: list[dict[str, Any]]) -> dict[str, Any]:
         for market in region["markets"]:
             delay = int(market["delay"])
             per_delay[delay] = per_delay.get(delay, 0) + int(market["total"])
-        batches += sum(math.ceil(n / MAX_BATCH) for n in per_delay.values())
-    return {"total": sum(int(r["total"]) for r in regions), "batches": batches}
+        size = batch_size(str(region["region"]))
+        batches += sum(math.ceil(n / size) for n in per_delay.values())
+    return {"total": sum(int(r["total"]) * int(r["cost"]) for r in regions), "batches": batches}
 
 
 def _settings(source: dict[str, Any]) -> dict[str, Any]:
@@ -344,14 +235,15 @@ def _settings(source: dict[str, Any]) -> dict[str, Any]:
         "truncation": source.get("truncation"),
         "maxTrade": source.get("maxTrade") or "OFF",
         "maxPosition": source.get("maxPosition") or "OFF",
-        "nanHandling": source.get("nanHandling") or "ON",
+        "pasteurization": source.get("pasteurization") or DEFAULT_PASTEURIZATION,
+        "nanHandling": source.get("nanHandling") or DEFAULT_NAN_HANDLING,
         "testPeriod": source.get("testPeriod") or TEST_PERIOD,
     }
 
 
 def _grouping(placed: list[str]) -> list[str]:
     """The grouping fields among those read: shown, though BRAIN counts none as data."""
-    return [f for f in placed if f in GROUPING]
+    return [f for f in placed if f in GROUPING_FIELDS]
 
 
 def _empty(
@@ -386,17 +278,32 @@ async def _unsynced(state: Any, schema: dict[str, Any]) -> int:
     synced = {
         (str(r["region"]), int(r["delay"]), str(r["universe"]))
         for r in await state.queries.synced_tuples()
-        if r["instrument_type"] == "EQUITY"
+        if r["instrument_type"] == INSTRUMENT_TYPE
     }
-    base = {"instrumentType": "EQUITY"}
+    base = {"instrumentType": INSTRUMENT_TYPE}
     offered = {
         (str(region), int(delay), str(universe))
         for region in valid_values(schema, "region", base)
-        if region != "ALL"
+        if region != REGION_AGNOSTIC_REGION
         for delay in valid_values(schema, "delay", {**base, "region": region})
         for universe in valid_values(schema, "universe", {**base, "region": region, "delay": delay})
     }
     return len(offered - synced)
+
+
+#: Neutralization that neutralizes against nothing.
+NO_NEUTRALIZATION = "NONE"
+
+
+def market_neutral(neutralization: str, trade: str, position: str) -> bool:
+    """Whether this combination holds the book against the market at all.
+
+    ``NONE`` with neither Max Trade nor Max Position is the one combination that does not:
+    nothing is projected out and nothing is capped, so the Alpha carries the market's own
+    direction. Either constraint on its own is enough, which is why this is not simply
+    "neutralization is not NONE".
+    """
+    return neutralization != NO_NEUTRALIZATION or trade == "ON" or position == "ON"
 
 
 def expand(
@@ -405,6 +312,9 @@ def expand(
     neutralizations: set[str],
     pairs: set[tuple[str, str]],
     source: dict[str, Any],
+    *,
+    market_neutral_only: bool = True,
+    truncation_agent: bool = False,
 ) -> list[SimulationRequest]:
     """Every simulation the selection asks for, ordered for both packing and watching.
 
@@ -416,27 +326,17 @@ def expand(
     So the shuffling happens a batch at a time: each ten stay in one market, and the order
     those tens go out is random. Packing is untouched and no region waits its turn.
 
-    The Alpha's own settings lead, whatever the shuffle says: it is the reference the rest of
-    the sweep is read against. It leads its *own* batch rather than travelling alone — pulled
-    out of its market, it would go first as a batch of one and strand its nine fellows in a
-    tail at the very back.
+    With ``truncation_agent`` each market takes the agent's truncation.
     """
     expression = str(source.get("expression") or "")
     decay = int(source.get("decay") or 0)
-    truncation = float(source.get("truncation") or 0.08)
-    nan_handling = str(source.get("nanHandling") or "ON")
+    held = source.get("truncation")
+    truncation = DEFAULT_TRUNCATION if held is None else float(held)
+    pasteurization = str(source.get("pasteurization") or DEFAULT_PASTEURIZATION)
+    nan_handling = str(source.get("nanHandling") or DEFAULT_NAN_HANDLING)
     test_period = str(source.get("testPeriod") or TEST_PERIOD)
-    origin = (
-        str(source.get("region") or ""),
-        int(source.get("delay") or 0),
-        str(source.get("universe") or ""),
-        str(source.get("neutralization") or ""),
-        str(source.get("maxTrade") or "OFF"),
-        str(source.get("maxPosition") or "OFF"),
-    )
 
     groups: dict[tuple[str, int], list[SimulationRequest]] = {}
-    first: SimulationRequest | None = None
     for region in plan_rows:
         legal_pairs = [
             (str(p["maxTrade"]), str(p["maxPosition"]))
@@ -454,6 +354,8 @@ def expand(
         for market, neutralization, (trade, position) in product(
             markets, legal_neutral, legal_pairs
         ):
+            if market_neutral_only and not market_neutral(neutralization, trade, position):
+                continue
             key = (str(market["region"]), int(market["delay"]))
             request = SimulationRequest(
                 settings=SimulationSettings(
@@ -462,7 +364,12 @@ def expand(
                     delay=key[1],
                     neutralization=neutralization,
                     decay=decay,
-                    truncation=truncation,
+                    truncation=(
+                        truncation_for(*key, str(market["universe"]))
+                        if truncation_agent
+                        else truncation
+                    ),
+                    pasteurization=pasteurization,
                     nan_handling=nan_handling,
                     test_period=test_period,
                     max_trade=trade,
@@ -471,8 +378,6 @@ def expand(
                 regular=expression,
             )
             groups.setdefault(key, []).append(request)
-            if (*key, str(market["universe"]), neutralization, trade, position) == origin:
-                first = request
 
     # Whole batches, so every ten still share a market, then those batches interleaved.
     #
@@ -481,38 +386,25 @@ def expand(
     # packs as it was built; a short tail let into the middle would straddle one and split
     # into two part-full batches. Tails therefore go last, where they cost nothing that the
     # remainder was not already going to cost.
-    head: list[SimulationRequest] = []
-    full: list[list[SimulationRequest]] = []
-    tails: list[list[SimulationRequest]] = []
+    full: list[tuple[SimulationRequest, ...]] = []
+    tails: list[tuple[SimulationRequest, ...]] = []
     for members in groups.values():
-        for at in range(0, len(members), MAX_BATCH):
-            chunk = members[at : at + MAX_BATCH]
-            # Identity, not equality: two requests differing in nothing the key holds are
-            # equal to Pydantic, and hoisting the wrong one would leave the reference buried.
-            if first is not None and any(request is first for request in chunk):
-                head = [first, *(r for r in chunk if r is not first)]
-            else:
-                (full if len(chunk) == MAX_BATCH else tails).append(chunk)
+        for chunk in batched(members, MULTI_SIMULATION_SIZE, strict=False):
+            (full if len(chunk) == MULTI_SIMULATION_SIZE else tails).append(chunk)
     random.shuffle(full)
     random.shuffle(tails)
-    return [*head, *(request for chunk in (*full, *tails) for request in chunk)]
+    return [request for chunk in (*full, *tails) for request in chunk]
 
 
-def seed_trials(requests: list[SimulationRequest], *, has_source: bool = True) -> Any:
-    """Parked trials for every simulation, written with the task in one transaction.
-
-    ``has_source`` is false for a sweep of a bare expression: it has no Alpha of its own, so no
-    simulation is the reference.
-    """
+def seed_trials(requests: list[SimulationRequest]) -> Any:
+    """Parked trials for every simulation, written with the task in one transaction."""
 
     def build(study_id: int) -> list[Trial]:
         return [
             Trial(
                 study_id=study_id,
                 number=number,
-                # The first is the Alpha's own settings (``expand`` puts it there): the
-                # reference every other row is read against.
-                params={"source": True} if has_source and number == 0 else {},
+                params={},
                 distributions={},
                 expression=request.regular,
                 settings=request.settings.model_dump(by_alias=True, exclude_none=True),
@@ -546,7 +438,7 @@ async def refill(optimizer: Optimizer, row: Study, want: int, waiting: bool) -> 
             if want > 0
             else []
         )
-        sent = await _send(optimizer, row, batch) if batch else 0
+        sent = await scheduler.send_parked(optimizer, row, batch) if batch else 0
         # Counted, not loaded, and after the send so it sees what is left. A task cannot be
         # finished by ``advance`` alone: trials answered from the dedup cache are excluded
         # from its committed count, so one that never spends quota would otherwise run on.
@@ -555,27 +447,3 @@ async def refill(optimizer: Optimizer, row: Study, want: int, waiting: bool) -> 
         # No message: the status is the news, and a notice repeating it is noise.
         await scheduler.finish(optimizer, row.id, StudyStatus.COMPLETE, "")
     return sent
-
-
-async def _send(optimizer: Optimizer, row: Study, batch: Sequence[Trial]) -> int:
-    """Send one batch and record what came back.
-
-    ``batch`` must still be attached to the caller's session: the outcome is written by
-    assigning to those rows, which is what saves a round trip per trial.
-    """
-    requests = [
-        SimulationRequest(
-            settings=SimulationSettings.model_validate(t.settings), regular=t.expression
-        )
-        for t in batch
-    ]
-    outcomes = (await optimizer.engine.enqueue(requests, task=row.task, skip_duplicates=True)).get(
-        "outcomes", []
-    )
-    for index, trial in enumerate(batch):
-        outcome = outcomes[index] if index < len(outcomes) else {}
-        trial.state = TrialState.QUEUED
-        trial.simulation_record_id = outcome.get("recordId")
-        trial.alpha_id = outcome.get("alphaId")
-        trial.message = scheduler.FREE if outcome.get("status") == str(SimStatus.SKIPPED) else None
-    return len(batch)

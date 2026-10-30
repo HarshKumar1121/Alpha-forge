@@ -5,11 +5,12 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { PlusIcon, Trash2Icon } from 'lucide-react'
+import { CopyIcon, FlaskConicalIcon, PlusIcon, Trash2Icon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { catalog } from '@/api/catalog'
 import { errorMessage } from '@/api/http'
-import { scopeLabel, toScopeBody } from '@/api/types'
+import { type Scope, scopeLabel, toScopeBody } from '@/api/types'
 import { cn } from '@/lib/cn'
 import { fmt } from '@/lib/format'
 import { useScope } from '@/lib/scope'
@@ -21,8 +22,11 @@ import {
   chat,
   type Reasoning,
 } from '@/screens/ai/api'
+import { DatasetChips, useDatasetTree } from '@/screens/data/dataset-chips'
+import { useFieldFilter } from '@/screens/data/state'
+import { useSearchLab } from '@/screens/research-labs/search/state'
+import { onMac } from '@/shell/desktop'
 import {
-  Badge,
   Button,
   Empty,
   ErrorNotice,
@@ -37,12 +41,13 @@ import {
 import { Confirm, Select } from '@/ui/overlay'
 import { SplitPane } from '@/ui/panels'
 import { ScopePicker } from '@/ui/scope-picker'
-import { useKeys } from './shared'
+import { useKeys, useProviderLabel, useRunnableModels } from './shared'
 
 export function Assistant({ threadId }: { threadId: number | null }) {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const keys = useKeys()
+  const providerLabel = useProviderLabel()
   const options = useQuery({
     queryKey: ['ai', 'chat', 'options'],
     queryFn: chat.options,
@@ -57,10 +62,8 @@ export function Assistant({ threadId }: { threadId: number | null }) {
     queryFn: () => chat.thread(threadId as number),
     enabled: threadId !== null,
   })
-  const scopes = useQuery({
-    queryKey: ['ai', 'downloaded-scopes'],
-    queryFn: chat.downloadedScopes,
-  })
+  // The catalog's own key, which a finished download refreshes.
+  const scopes = useQuery({ queryKey: ['catalog', 'scopes'], queryFn: catalog.scopes })
   const [scope, setScope] = useScope('ai-chat')
   const [text, setText] = useState('')
   const [model, setModel] = useState<string | null>(null)
@@ -75,14 +78,14 @@ export function Assistant({ threadId }: { threadId: number | null }) {
     if (threadScope) setScope(threadScope)
   }, [threadScope, setScope])
 
-  const enabledProviders = new Set(keys.data?.keys.filter((k) => k.enabled).map((k) => k.provider))
-  const modelItems = (options.data?.models.models ?? [])
-    .filter((m) => m.kind !== 'embedding' && enabledProviders.has(m.provider))
-    .map((m) => ({ value: m.id, label: `${m.label} · ${m.provider}` }))
-  const defaultModel = options.data?.models.defaults.chat
+  const runnable = useRunnableModels()
+  const modelItems = runnable.runnable.map((m) => ({
+    value: m.ref,
+    label: `${m.id} · ${providerLabel(m.provider)}`,
+  }))
   const modelValue =
     (model && modelItems.some((m) => m.value === model) ? model : null) ??
-    (modelItems.some((m) => m.value === defaultModel) ? defaultModel : modelItems[0]?.value) ??
+    modelItems[0]?.value ??
     null
   const reasoningValue = reasoning ?? options.data?.defaultReasoning ?? 'normal'
   const reasoningHelp = options.data?.reasoning.find((r) => r.value === reasoningValue)?.description
@@ -99,6 +102,7 @@ export function Assistant({ threadId }: { threadId: number | null }) {
     )
 
   const say = useMutation({
+    meta: { inline: true },
     mutationFn: (message: string) =>
       chat.say({
         text: message,
@@ -137,7 +141,6 @@ export function Assistant({ threadId }: { threadId: number | null }) {
       })
       void navigate({ to: '/ai/$tab', params: { tab: 'assistant' } })
     },
-    onError: (e) => toast.error(errorMessage(e)),
   })
 
   const messages = threadId !== null ? (thread.data?.messages ?? []) : []
@@ -156,6 +159,19 @@ export function Assistant({ threadId }: { threadId: number | null }) {
           an idea in your own words and get back real data fields.{' '}
           <Link to="/ai/$tab" params={{ tab: 'providers' }} className={LINK}>
             Choose a provider
+          </Link>
+        </Empty>
+      </Panel>
+    )
+  }
+  if (runnable.ready && modelItems.length === 0) {
+    return (
+      <Panel>
+        <Empty title="The assistant needs a model">
+          Your Key is in. Now pick a model it can reach and give it the limits your provider shows
+          you.{' '}
+          <Link to="/ai/$tab" params={{ tab: 'models' }} className={LINK}>
+            Set up a model
           </Link>
         </Empty>
       </Panel>
@@ -263,12 +279,32 @@ export function Assistant({ threadId }: { threadId: number | null }) {
                 <Skeleton className="h-24" />
               ) : (
                 <Empty title="Start with an idea" className="m-auto">
-                  For example: “companies whose analysts keep raising their earnings estimates”.
-                  Each message uses one request from your assistant budget.
+                  <p>
+                    About <span className="num text-ink">{scopeLabel(scope)}</span>: the market is
+                    set when the conversation starts, so choose it above first. Each message uses
+                    one request from your assistant budget.
+                  </p>
+                  <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+                    {EXAMPLES.map((example) => (
+                      <button
+                        key={example}
+                        type="button"
+                        onClick={() => setText(example)}
+                        className="rounded-sm border border-hairline-strong bg-surface-2 px-2.5 py-1 text-body-compact text-ink-muted transition-colors hover:bg-surface-3 hover:text-ink"
+                      >
+                        {example}
+                      </button>
+                    ))}
+                  </div>
                 </Empty>
               ))}
             {messages.map((m) => (
-              <Turn key={m.id} message={m} reply={m.id === lastAssistantId ? extrasFor : null} />
+              <Turn
+                key={m.id}
+                message={m}
+                reply={m.id === lastAssistantId ? extrasFor : null}
+                scope={scope}
+              />
             ))}
             {say.isPending && (
               <>
@@ -292,7 +328,7 @@ export function Assistant({ threadId }: { threadId: number | null }) {
             <Notice tone="warn" title="Download this market first">
               <span className="num">{scopeLabel(scope)}</span> is not in the local catalogue, so the
               assistant has no fields to choose from.{' '}
-              <Link to="/data/$tab" params={{ tab: 'fields' }} className={LINK}>
+              <Link to="/data" className={LINK}>
                 Download it in Data
               </Link>
             </Notice>
@@ -348,7 +384,7 @@ export function Assistant({ threadId }: { threadId: number | null }) {
                 disabled={say.isPending}
               />
               <span className="ml-auto hidden items-center gap-1 sm:inline-flex">
-                <Kbd>Ctrl</Kbd>
+                <Kbd>{onMac ? '⌘' : 'Ctrl'}</Kbd>
                 <Kbd>Enter</Kbd>
               </span>
               <Button variant="primary" type="submit" loading={say.isPending} disabled={!canSend}>
@@ -380,6 +416,42 @@ export function Assistant({ threadId }: { threadId: number | null }) {
   )
 }
 
+/** The datasets a reply drew its fields from, placed in the chat's market, and the way to
+ *  search them in Search Lab. */
+function ReplyDatasets({ scope, ids }: { scope: Scope; ids: string[] }) {
+  const { tree, nameOf, ready } = useDatasetTree(scope)
+  const navigate = useNavigate()
+  const search = () => {
+    useSearchLab.setState({
+      region: scope.region,
+      delay: scope.delay,
+      universe: scope.universe,
+      datasetIds: ids,
+      fieldFilter: null,
+    })
+    void navigate({ to: '/labs/search' })
+  }
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-body-compact text-ink-subtle">Datasets</span>
+        <Button size="sm" variant="ghost" onClick={search}>
+          <FlaskConicalIcon aria-hidden />
+          Use in Search Lab
+        </Button>
+      </span>
+      <DatasetChips tree={tree} value={ids} nameOf={nameOf} ready={ready} />
+    </div>
+  )
+}
+
+/** Ideas to start from, put in the box to edit rather than sent. */
+const EXAMPLES = [
+  'Companies whose analysts keep raising their earnings estimates',
+  'Stocks with high operating cash flow relative to enterprise value',
+  'Short-term reversal after a spike in trading volume',
+]
+
 function UserBubble({ text }: { text: string }) {
   return (
     <div className="max-w-[85%] self-end rounded-lg bg-surface-2 px-3 py-2 text-body break-words whitespace-pre-wrap text-ink">
@@ -388,7 +460,15 @@ function UserBubble({ text }: { text: string }) {
   )
 }
 
-function Turn({ message, reply }: { message: ChatMessage; reply: ChatReply | null }) {
+function Turn({
+  message,
+  reply,
+  scope,
+}: {
+  message: ChatMessage
+  reply: ChatReply | null
+  scope: Scope
+}) {
   if (message.role === 'user') return <UserBubble text={message.text} />
 
   const { meta } = message
@@ -412,17 +492,8 @@ function Turn({ message, reply }: { message: ChatMessage; reply: ChatReply | nul
       <p className="text-body text-pretty break-words whitespace-pre-wrap text-ink-muted">
         {message.text}
       </p>
-      <Picks picks={reply?.picks ?? meta.picks ?? []} />
-      {datasets.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1 text-body-compact text-ink-subtle">
-          Datasets
-          {datasets.map((d) => (
-            <Badge key={d} tone="outline" className="num">
-              {d}
-            </Badge>
-          ))}
-        </div>
-      )}
+      <Picks picks={reply?.picks ?? meta.picks ?? []} scope={scope} />
+      {datasets.length > 0 && <ReplyDatasets scope={scope} ids={datasets} />}
       {dropped.length > 0 && (
         <Notice tone="warn" title="Named by the model but not in the catalogue, so dropped">
           <span className="num">{dropped.join(', ')}</span>
@@ -436,18 +507,41 @@ function Turn({ message, reply }: { message: ChatMessage; reply: ChatReply | nul
   )
 }
 
-function Picks({ picks }: { picks: ChatPick[] }) {
+function Picks({ picks, scope }: { picks: ChatPick[]; scope: Scope }) {
+  const [, setDataScope] = useScope('data')
+  const copy = useMutation({
+    mutationFn: async () => {
+      const outline = await catalog.outline(scope, { field_ids: picks.map((p) => p.field) })
+      await navigator.clipboard.writeText(outline.text)
+      return outline
+    },
+    onSuccess: (outline) =>
+      toast.success(`Copied ${fmt.int(picks.length - outline.missing.length)} Data Fields`, {
+        description: 'Grouped by Category, Subcategory and Dataset, ready to paste into any LLM.',
+      }),
+    onError: (e) => toast.error('Could not copy the Data Fields', { description: errorMessage(e) }),
+  })
   if (picks.length === 0) return null
   return (
     <div className="flex flex-col gap-1 rounded-md border border-hairline bg-surface-1 p-2">
-      <p className="text-body-compact text-ink-subtle">
-        Fields picked (<span className="num">{fmt.int(picks.length)}</span>)
-      </p>
+      <span className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-body-compact text-ink-subtle">
+          Fields picked (<span className="num">{fmt.int(picks.length)}</span>)
+        </span>
+        <Button size="sm" variant="ghost" loading={copy.isPending} onClick={() => copy.mutate()}>
+          {!copy.isPending && <CopyIcon aria-hidden />}
+          Copy Data Fields
+        </Button>
+      </span>
       {picks.map((p) => (
         <div key={p.field} className="flex flex-wrap items-baseline gap-2 text-body-compact">
+          {/* Opens the Explorer on this field, in the chat's market, wherever it was left. */}
           <Link
-            to="/data/$tab"
-            params={{ tab: 'fields' }}
+            to="/data"
+            onClick={() => {
+              setDataScope(scope)
+              useFieldFilter.getState().replace({ search: p.field, search_mode: 'text' })
+            }}
             className="num text-ink transition-colors hover:text-link"
           >
             {p.field}

@@ -4,8 +4,6 @@ Nothing here runs a search: a task is added not started and is run from Tasks. A
 reads the local store and downloads daily PnL where it is missing; it never simulates.
 """
 
-from __future__ import annotations
-
 import asyncio
 import time
 from typing import TYPE_CHECKING, Any, Literal
@@ -14,18 +12,18 @@ import structlog
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from ..brain.schemas import TEST_PERIOD
+from ..brain.platform import INSTRUMENT_TYPE, TEST_PERIOD
 from ..db.models import Trial, TrialState, utcnow
 from ..labs import ga, scheduler, search
 from ..labs.launch import (
+    NO_NEUTRALIZATION,
+    NO_SIMULATIONS,
     OPERATORS_UNREAD,
     AddedTask,
-    OperatorsRead,
     SampleAlpha,
     account_operators,
     add_study,
     neutralizations_for,
-    operators_read,
     preview_samples,
 )
 from ..labs.params import GA_SAMPLER, EvolutionParams
@@ -80,20 +78,11 @@ class EvolutionMarket(Out):
     alphas: int
 
 
-class EvolutionDefaults(Out):
-    population: int | None
-    mutation_rate: float
-
-
 class EvolutionOptions(Out):
-    operators: OperatorsRead
     markets: list[EvolutionMarket]
     populations: list[int]
     mutation_rates: list[float]
-    defaults: EvolutionDefaults
-    max_cores: int
     max_simulations: int
-    max_seeds: int
 
 
 class SeedRow(Out):
@@ -106,6 +95,8 @@ class SeedRow(Out):
     drawdown: float | None
     margin: float | None
     score: float | None
+    #: The limit each of BRAIN's figure checks names for this Alpha, by check name.
+    limits: dict[str, float] = Field(default_factory=dict)
 
 
 class SeedReason(Out):
@@ -120,7 +111,6 @@ class EvolutionPreview(Out):
     generations: int
     sample: list[SampleAlpha]
     problems: list[str]
-    warnings: list[str]
 
 
 class AutoSeedsStarted(Out):
@@ -148,7 +138,8 @@ async def _market(
 ) -> tuple[ga.Market | None, list[str]]:
     """The market children are bred in, and why it cannot be used if it cannot.
 
-    ``chosen`` narrows the neutralizations a gene may take; empty keeps the lab's default.
+    ``chosen`` is the neutralizations a gene may take. Empty keeps the lab's default, which
+    only Auto Select relies on: a task with none chosen is refused in ``_plan``.
     """
     problems: list[str] = []
     operators = await account_operators(state, refresh=False)
@@ -156,7 +147,11 @@ async def _market(
         problems.append(OPERATORS_UNREAD)
     neutralizations = await neutralizations_for(state, region, delay, chosen)
     if not neutralizations:
-        problems.append("BRAIN's settings list is not loaded. Sign in again.")
+        problems.append(
+            f"BRAIN offers none of the chosen neutralizations in {region} delay {delay}."
+            if chosen and await state.metadata.cached_settings_schema()
+            else "BRAIN's settings list is not loaded. Sign in again."
+        )
     market = await ga.market_for(state.catalog, operators, region, delay, universe, neutralizations)
     if market is None and operators:
         problems.append(
@@ -166,12 +161,10 @@ async def _market(
 
 
 @router.get("/options")
-async def options(state: State, refresh: bool = False) -> EvolutionOptions:
-    operators = await account_operators(state, refresh=refresh)
+async def options(state: State) -> EvolutionOptions:
     markets = await state.alphas.evolvable_markets()
     return EvolutionOptions.model_validate(
         {
-            "operators": operators_read(operators),
             "markets": [
                 {
                     "region": m["region"],
@@ -183,10 +176,7 @@ async def options(state: State, refresh: bool = False) -> EvolutionOptions:
             ],
             "populations": list(POPULATIONS),
             "mutationRates": list(MUTATION_RATES),
-            "defaults": {"population": None, "mutationRate": ga.MUTATION_RATE},
-            "maxCores": search.MAX_CORES,
             "maxSimulations": search.MAX_SIMULATIONS,
-            "maxSeeds": MAX_SEEDS,
         }
     )
 
@@ -196,8 +186,11 @@ async def _plan(body: EvolutionRequest, state: Any) -> dict[str, Any]:
     market, problems = await _market(
         state, body.region, body.delay, body.universe, body.neutralizations
     )
+    if not body.neutralizations:
+        problems.append(NO_NEUTRALIZATION)
     ids = list(dict.fromkeys(body.alpha_ids))
-    rows = await state.alphas.by_ids(ids)
+    # A region-agnostic parent stands as its family: the region it would be scored on.
+    rows = await state.alphas.with_families(await state.alphas.by_ids(ids))
     seeds: list[dict[str, Any]] = []
     skipped: list[dict[str, str]] = []
     for alpha_id in ids:
@@ -216,9 +209,11 @@ async def _plan(body: EvolutionRequest, state: Any) -> dict[str, Any]:
         run = EvolutionParams(region=body.region, delay=body.delay, universe=body.universe)
         parents = [p for r in seeds if (p := ga.Parent.of(str(r["alpha_id"]), r["expression"], r))]
         bred = market
+        shapes = {p.tree: ga.Shape.of(p.tree, bred) for p in parents}
 
         def draw(rng: random.Random) -> SimulationRequest | None:
-            made = ga.child(rng, rng.choice(parents), rng.choice(parents), bred, body.mutation_rate)
+            a, b = rng.choice(parents), rng.choice(parents)
+            made = ga.child(rng, a, b, bred, body.mutation_rate, shapes)
             return ga.request_for(*made, run) if made else None
 
         sample = preview_samples(draw, tries=50)
@@ -231,7 +226,6 @@ async def _plan(body: EvolutionRequest, state: Any) -> dict[str, Any]:
         "generations": body.simulations // population,
         "sample": sample,
         "problems": problems,
-        "warnings": [],
         "neutralizations": list(market.neutralizations) if market else [],
     }
 
@@ -272,16 +266,14 @@ async def auto_seeds(body: AutoSeedsRequest, state: State) -> AutoSeedsStarted:
         # Finished jobs are kept for a while rather than cleared: a screen still reading the
         # last run's seeds was told to start again the moment another market was chosen.
         cutoff = time.monotonic() - JOB_TTL_SECONDS
-        # A job whose task just finished may not have stamped ``finished_at`` yet; it stays.
-        ended = [i for i, j in _jobs.items() if j["finished_at"] is not None]
-        for stale in [i for i in ended if _jobs[i]["finished_at"] < cutoff]:
+        ended = {i: j["task"].finished for i, j in _jobs.items() if j["task"].finished is not None}
+        for stale in [i for i, finished in ended.items() if finished < cutoff]:
             del _jobs[stale]
         task = await state.tasks.start("evolution-seeds", "Choosing seeds")
         job: dict[str, Any] = {
             "task": task,
             "market": wanted,
             "result": None,
-            "finished_at": None,
         }
         _jobs[task.id] = job
 
@@ -306,9 +298,6 @@ async def auto_seeds(body: AutoSeedsRequest, state: State) -> AutoSeedsStarted:
         except Exception as exc:
             log.exception("evolution.auto_seeds_failed")
             await state.tasks.finish(task, state="failed", error=str(exc)[:300])
-        finally:
-            # However it ended, this is when it stops being current.
-            job["finished_at"] = time.monotonic()
 
     spawn(run(), name="evolution-seeds")
     return AutoSeedsStarted(job_id=task.id)
@@ -335,7 +324,7 @@ async def auto_seeds_job(job_id: str) -> AutoSeedsJob:
 async def add_task(body: EvolutionRequest, state: State) -> AddedTask:
     """Add the breeding to Tasks, not started. It spends nothing until it is run there."""
     if body.simulations < 1:
-        raise refuse(422, "no_simulations", "Assign the simulations for this task.")
+        raise refuse(422, "no_simulations", NO_SIMULATIONS)
     plan = await _plan(body, state)
     if plan["problems"]:
         raise refuse(422, "evolution_blocked", plan["problems"][0])
@@ -356,7 +345,7 @@ async def add_task(body: EvolutionRequest, state: State) -> AddedTask:
         trials: list[Trial] = []
         for number, seed in enumerate(seeds):
             settings = {
-                "instrumentType": "EQUITY",
+                "instrumentType": INSTRUMENT_TYPE,
                 "region": body.region,
                 "delay": body.delay,
                 "universe": body.universe,
@@ -389,11 +378,9 @@ async def add_task(body: EvolutionRequest, state: State) -> AddedTask:
             )
         return trials
 
-    row = await add_study(
+    return await add_study(
         state,
         now=now,
-        lab="Evolution Lab",
-        prefix="evolution",
         sampler=GA_SAMPLER,
         params=EvolutionParams(
             region=body.region,
@@ -406,10 +393,8 @@ async def add_task(body: EvolutionRequest, state: State) -> AddedTask:
             test_period=TEST_PERIOD,
             neutralizations=plan["neutralizations"],
         ),
-        objective="train_fitness",
         simulations=body.simulations,
         batch_size=body.cores * 10,
         template_source="# Evolution Lab breeds from seed Alphas; there is no template.",
         seeds=generation_zero,
     )
-    return AddedTask(id=row.id, name=row.name)

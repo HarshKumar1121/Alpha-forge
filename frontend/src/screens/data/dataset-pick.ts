@@ -1,72 +1,24 @@
-/**
- * Picking datasets in the Data Explorer's Fields filters for a lab, then going back to its own
- * route, where Done leaves the choice in `result` for that lab alone to take. Kept in
- * sessionStorage, so a reload in the middle of a pick keeps it.
- */
+/** Picking datasets in the Data Explorer's Fields filters for a lab. */
 
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
-import type { Scope } from '@/api/types'
+import { createPick } from '@/lib/pick'
+import type { FieldFilterState } from '@/screens/data/state'
 
 export type PickFrom = '/labs/search' | '/labs/template' | '/labs/power-pool'
 
-export interface PickResult {
-  scope: Scope
-  ids: string[]
-  from: PickFrom
-}
+/** The ids are the datasets; the extra is the filter they were chosen under, which the lab
+ *  applies to their fields. */
+export const useDatasetPick = createPick<PickFrom, FieldFilterState | null>(
+  'alpha-harness-dataset-pick',
+  '/labs/search',
+)
 
-interface DatasetPick {
-  active: boolean
-  scope: Scope | null
-  ids: string[]
-  from: PickFrom
-  result: PickResult | null
-  start: (scope: Scope, ids: string[], from: PickFrom) => void
-  setIds: (ids: string[]) => void
-  /** Datasets belong to a region and delay, so moving to another empties the pick; a universe change keeps it. */
-  follow: (scope: Scope) => void
-  finish: () => void
-  cancel: () => void
-  /** The finished pick, once, and only for the lab that started it. */
-  take: (from: PickFrom) => PickResult | null
-}
-
-export const useDatasetPick = create<DatasetPick>()(
-  persist(
-    (set, get) => ({
-      active: false,
-      scope: null,
-      ids: [],
-      from: '/labs/search',
-      result: null,
-      start: (scope, ids, from) => set({ active: true, scope, ids, from, result: null }),
-      setIds: (ids) => set({ ids }),
-      follow: (scope) => {
-        const current = get().scope
-        const moved = !current || current.region !== scope.region || current.delay !== scope.delay
-        set({ scope, ids: moved ? [] : get().ids })
-      },
-      finish: () => {
-        const { scope, ids, from } = get()
-        set({
-          active: false,
-          scope: null,
-          ids: [],
-          result: scope ? { scope, ids, from } : null,
-        })
-      },
-      cancel: () => set({ active: false, scope: null, ids: [], result: null }),
-      take: (from) => {
-        const result = get().result
-        if (!result || (result.from ?? '/labs/search') !== from) return null
-        set({ result: null })
-        return result
-      },
-    }),
-    {
-      name: 'alpha-harness-dataset-pick',
-      storage: createJSONStorage(() => sessionStorage),
-    },
-  ),
+/** Fields ticked one by one during that pick, each with its dataset: a lab searches only its
+ *  datasets, so Done brings each ticked field's along. Kept across a reload, as the pick is. */
+export const useFieldPick = create<{ fields: Record<string, string> }>()(
+  persist(() => ({ fields: {} }), {
+    name: 'alpha-harness-field-pick',
+    storage: createJSONStorage(() => sessionStorage),
+  }),
 )
