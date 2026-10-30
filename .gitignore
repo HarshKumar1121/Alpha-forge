@@ -2,7 +2,8 @@
 .env
 
 # References for Development
-CLAUDE.md
+# CLAUDE.md is tracked on purpose: it carries the hard rules and the upstream policy, which
+# have to travel with the repo. Upstream alpha-harness ships no CLAUDE.md, so it cannot conflict.
 /docs/
 /research-notes/
 
