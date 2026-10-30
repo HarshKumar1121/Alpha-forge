@@ -33,6 +33,8 @@ dev = [
     "basedpyright>=1.40.1",
     "pyproject-fmt>=2.29.4",
     "pyrefly>=1.3.0",
+    "pytest>=9.0.1",
+    "pytest-asyncio>=1.3.0",
     "ruff>=0.16.7",
 ]
 
@@ -72,6 +74,8 @@ lint.select = [
 # N818: exception names read as outcomes (BrainForbidden, SubmissionFailed, SyncCancelled);
 # an "Error" suffix would make them clumsier, not clearer.
 lint.ignore = [ "ANN401", "N818", "S311" ]
+# Operator scripts are run by hand and report to a terminal: printing is their output.
+lint.per-file-ignores."scripts/*" = [ "INP001", "T201" ]
 # S608 is suppressed per line (`# noqa: S608`), never per file, so new dynamic SQL still
 # trips the linter. Each noqa site is audited: values are bound `?` params; interpolated
 # SQL is only module constants, literal columns, placeholder lists, or whitelist lookups
@@ -101,6 +105,14 @@ generate_python_version_classifiers = false
 project-includes = [ "src" ]
 # Honor the audited `# pyright: ignore[...]` sites instead of duplicating them.
 permissive-ignores = true
+
+[tool.pytest]
+ini_options.testpaths = [ "tests" ]
+ini_options.addopts = "-q --strict-markers"
+ini_options.asyncio_default_fixture_loop_scope = "function"
+# Every test here is a coroutine driving the async BRAIN client; marking each one by hand
+# adds nothing a reader needs.
+ini_options.asyncio_mode = "auto"
 
 [tool.basedpyright]
 pythonVersion = "3.14"
