@@ -1,0 +1,48 @@
+# Regular Alpha, USA Delay-1. The base profile; the others `extends:` it.
+# Gates are LOCAL PRE-FILTERS that save your time. BRAIN's own checks are always final.
+name: regular
+description: Standard Regular Alpha. Any datasets, any operators.
+simulation:
+  type: REGULAR
+  settings:
+    instrumentType: EQUITY
+    region: USA
+    universe: TOP3000
+    delay: 1
+    decay: 4
+    neutralization: SUBINDUSTRY
+    truncation: 0.08
+    pasteurization: "ON"
+    unitHandling: VERIFY
+    nanHandling: "ON"
+    language: FASTEXPR
+    visualization: false
+    testPeriod: P2Y0M0D        # hold out 2 years; you search on train only
+lint:
+  max_operators: null
+  max_fields: null
+  single_dataset: false
+  max_depth: 8                 # deep nesting is a curve-fitting smell
+  allowed_lookbacks: [3, 5, 10, 20, 21, 42, 60, 63, 120, 126, 250, 252, 504]
+gates:
+  is.sharpe:     {min: 1.25}
+  is.fitness:    {min: 1.0}
+  is.turnover:   {min: 0.01, max: 0.70}
+  train.sharpe:  {min: 1.25}
+  test.sharpe:   {min: 0.8}    # out-of-sample must not collapse
+  checks_must_pass: [LOW_SHARPE, LOW_FITNESS, LOW_TURNOVER, HIGH_TURNOVER,
+                     CONCENTRATED_WEIGHT, LOW_SUB_UNIVERSE_SHARPE]
+correlation:
+  pool: regular                # compared locally against your submitted Regular Alphas
+  ceiling: 0.70
+  escape_sharpe_ratio: 1.10
+robustness:
+  hold_ratio: 0.70             # a perturbed run must keep >=70% of the Sharpe...
+  min_fraction_holding: 0.60   # ...in >=60% of the perturbations
+  perturb:
+    decay: [0, 8]
+    neutralization: [INDUSTRY, MARKET]
+    universe: [TOP1000]
+budget:
+  max_variants_per_hypothesis: 40   # multiple-testing budget: more trials => higher bar
+pipeline: [lint, simulate, gate, robustness, correlation, score, journal]

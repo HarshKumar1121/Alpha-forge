@@ -1,0 +1,9 @@
+name: arc
+extends: regular
+description: ARC competition Alpha. Points step at Sharpe 1.58 (1 pt) and 2.0 (2 pts).
+# Competition rules change every season: read the competition FAQ and edit this file.
+gates:
+  is.sharpe:    {min: 1.58}
+  train.sharpe: {min: 1.58}
+score_tiers:
+  is.sharpe: [[1.58, 1], [2.0, 2]]

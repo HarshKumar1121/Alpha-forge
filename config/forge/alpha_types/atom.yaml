@@ -1,0 +1,6 @@
+name: atom
+extends: regular
+description: ATOM Alpha. Every data field from ONE dataset (grouping fields excepted).
+# VERIFY against current BRAIN docs; rules for special types change.
+lint:
+  single_dataset: true

@@ -1,0 +1,19 @@
+name: super_alpha
+extends: regular
+description: SuperAlpha. Selection expression picks your submitted Alphas; combo weights them.
+simulation:
+  type: SUPER
+  settings:
+    selectionHandling: POSITIVE
+    selectionLimit: 20
+    componentActivation: IS
+lint:
+  max_operators: null
+gates:
+  is.sharpe:   {min: 1.5}
+  is.turnover: {min: 0.02, max: 0.40}
+  checks_must_pass: []
+robustness:
+  perturb:
+    decay: [2, 10]
+pipeline: [simulate, gate, score, journal]   # combos are few and slow: no robustness sweep

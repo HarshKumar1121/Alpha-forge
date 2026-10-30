@@ -1,0 +1,153 @@
+# Template library — price/volume, risk, liquidity, combination and complex structures.
+# Price-volume ideas are the most CROWDED: expect self/prod-correlation failures unless you add
+# a twist (a conditioning event, a peer definition, or a second dataset). Same slot rules as
+# core_fundamental.yaml.
+
+templates:
+  - id: pv_reversal_group
+    name: Short-term reversal within industry
+    category: price_volume/reversal
+    complexity: simple
+    slots:
+      W: {kind: window, values: [3, 5, 10]}
+      G: {kind: group, values: [industry, subindustry]}
+    expr: "group_rank(-ts_sum(returns, $W), $G)"
+    rationale: >
+      Liquidity providers are paid to absorb overreaction; prices partly snap back over days.
+      Within-industry removes industry momentum, which works the other way.
+
+  - id: pv_reversal_volume_conditioned
+    name: Reversal of low-volume moves
+    category: price_volume/reversal
+    complexity: medium
+    slots:
+      W: {kind: window, values: [3, 5]}
+    expr: "rank(-ts_sum(returns, $W) * (adv20 / (ts_mean(volume * close, $W) + 1)))"
+    rationale: >
+      Moves on thin volume are more likely noise or liquidity shocks and revert; moves on heavy
+      volume carry information and revert less (Campbell-Grossman-Wang 1993).
+
+  - id: pv_momentum_12_1
+    name: Intermediate momentum, skip last month
+    category: price_volume/momentum
+    complexity: simple
+    slots:
+      G: {kind: group, values: [market, industry]}
+    expr: "group_rank(ts_sum(returns, 252) - ts_sum(returns, 21), $G)"
+    rationale: >
+      Investors under-react to gradual news over months; skipping the last month avoids the
+      short-term reversal that fights momentum. Crowded — use as a building block.
+
+  - id: pv_industry_momentum
+    name: Industry momentum
+    category: price_volume/momentum
+    complexity: simple
+    slots:
+      W: {kind: window, values: [21, 63]}
+    expr: "rank(group_mean(ts_sum(returns, $W), industry))"
+    rationale: >
+      Industry-wide news diffuses slowly across related firms (Moskowitz-Grinblatt 1999).
+
+  - id: pv_low_volatility
+    name: Low volatility anomaly
+    category: risk/low_vol
+    complexity: simple
+    slots:
+      W: {kind: window, values: [63, 252]}
+      G: {kind: group, values: [industry, sector]}
+    expr: "group_rank(-ts_std_dev(returns, $W), $G)"
+    rationale: >
+      Leverage-constrained investors chase high-volatility 'lottery' stocks, so low-risk stocks
+      earn more per unit of risk (Frazzini-Pedersen 'Betting Against Beta').
+
+  - id: pv_liquidity_shock
+    name: Abnormal turnover
+    category: price_volume/liquidity
+    complexity: simple
+    slots:
+      W: {kind: window, values: [21, 63]}
+    expr: "-rank(ts_zscore(volume / (adv20 / close + 1), $W))"
+    rationale: >
+      Spikes in attention and turnover tend to precede lower returns as overpriced attention
+      fades (high-volume premium/discount literature). Check the sign with the Court.
+
+  - id: pv_vwap_pressure
+    name: Close vs VWAP pressure
+    category: price_volume/microstructure
+    complexity: simple
+    slots:
+      W: {kind: window, values: [3, 5]}
+    expr: "rank(-ts_mean(close / vwap - 1, $W))"
+    rationale: >
+      Closing well above the day's average price signals late buying pressure that tends to be
+      temporary.
+
+  - id: combo_signal_x_quality
+    name: Signal tilted toward liquid names
+    category: combination/liquidity_tilt
+    complexity: simple
+    slots:
+      X: {kind: field}
+    expr: "rank($X) * rank(adv20)"
+    rationale: >
+      Many effects live in illiquid small caps. Tilting toward liquid names gives up some Sharpe
+      for capacity, and often fixes LOW_SUB_UNIVERSE_SHARPE.
+
+  - id: combo_two_datasets
+    name: Agreement of two independent signals
+    category: combination/confirmation
+    complexity: medium
+    slots:
+      X: {kind: field}
+      Y: {kind: field, different_dataset_from: X}
+      G: {kind: group, values: [industry, subindustry]}
+    expr: "group_rank(rank($X) + rank($Y), $G)"
+    rationale: >
+      Two independent sources agreeing (e.g. fundamentals improving AND sentiment rising) raises
+      confidence; different datasets keep the two legs uncorrelated.
+
+  - id: combo_conditional_regime
+    name: Signal only where it should work
+    category: combination/conditional
+    complexity: medium
+    slots:
+      X: {kind: field}
+      W: {kind: window, values: [63, 126]}
+    expr: "trade_when(ts_rank(ts_std_dev(returns, 21), $W) < 0.8, rank($X), -1)"
+    rationale: >
+      Many signals break during a stock's own extreme-volatility episodes (news shocks); skip
+      those periods and hold the previous position.
+
+  - id: complex_residual_vs_size
+    name: Signal with the size effect removed
+    category: complex/residual
+    complexity: complex
+    slots:
+      X: {kind: field}
+      G: {kind: group, values: [industry, subindustry]}
+    expr: "a = rank($X); s = rank(cap); r = regression_neut(a, s); group_rank(r, $G)"
+    rationale: >
+      Many fundamental signals are partly size in disguise. Regressing out size leaves only the
+      new information. (Verify regression_neut exists on your account; the Studio checks.)
+
+  - id: complex_residual_vs_momentum
+    name: Signal with momentum removed
+    category: complex/residual
+    complexity: complex
+    slots:
+      X: {kind: field}
+    expr: "a = rank($X); m = rank(ts_sum(returns, 252) - ts_sum(returns, 21)); rank(regression_neut(a, m))"
+    rationale: >
+      If your signal mostly re-labels past winners, it collides with the momentum pool. The
+      residual is what you actually add.
+
+  - id: complex_decay_blend
+    name: Fast and slow views of one field
+    category: complex/multi_horizon
+    complexity: complex
+    slots:
+      X: {kind: field, archetype: [medium, fast]}
+    expr: "f = ts_decay_linear($X, 5); s = ts_mean($X, 63); rank(0.6 * rank(f) + 0.4 * rank(f - s))"
+    rationale: >
+      Combines the current reading with its deviation from the quarterly norm, capturing both
+      level and surprise without picking a single window.

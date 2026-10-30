@@ -1,0 +1,15 @@
+name: region_agnostic
+extends: regular
+description: One expression simulated in USA, EUR, ASI and GLB at once; needs >=2 passing regions.
+simulation:
+  type: REGION_AGNOSTIC
+  settings:
+    region: ALL
+    universe: LARGE
+    neutralization: MARKET
+    truncation: 0.05
+min_passing_children: 2
+robustness:
+  perturb:
+    universe: [MEDIUM]
+    decay: [0, 8]

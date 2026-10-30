@@ -1,0 +1,64 @@
+# Hypothesis Court, field archetypes, planner rounds and repairs (ported from alpha-copilot).
+# Thresholds were tuned on the Gym: re-check them against your first weeks of BRAIN data.
+court:
+  known_factors:
+    short_term_reversal: -rank(ts_sum(returns, 5))
+    momentum_12_1: rank(ts_sum(returns, 252) - ts_sum(returns, 21))
+    size: -rank(cap)
+    low_volatility: -rank(ts_std_dev(returns, 63))
+  min_train_sharpe: 0.5
+  stable_years: 0.7
+  sub_universe: TOP1000
+  sub_universe_ratio: 0.5
+  max_factor_corr: 0.5
+  delay_days: 5
+  retention: 0.6
+  survive_score: 0.7
+  severity:
+    direction: 3
+    stability: 3
+    sub_universe: 3
+    known_factor: 2
+    horizon: 2
+    neutralization: 2
+    decay: 1
+    contrast: 2
+archetypes:
+  probe_turnover:
+    slow: 0.04
+    medium: 0.15
+  local:
+    slow_update_days: 15
+    persistent_rank_corr: 0.9
+    fast_rank_corr: 0.5
+  sparse_coverage: 0.4
+  size_linked_corr: 0.3
+planner:
+  probe_share_max: 0.35
+  round1_share: 0.3
+  keep_fraction: 0.34
+  round2_share: 0.2
+  robustness_top: 3
+  min_train_sharpe: 0.7
+  family_corr: 0.6
+repairs:
+  HIGH_TURNOVER:
+    settings:
+      decay: 10
+    why: Decay averages the signal over days, cutting trading costs.
+  LOW_FITNESS_FAST:
+    settings:
+      decay: 6
+    why: Fitness penalises turnover; smoothing keeps the edge and trades less.
+  LOW_TURNOVER:
+    expr: group_rank($x, industry) + 0.3 * rank(ts_delta($inner, 63))
+    why: Add the change in the same field so the book refreshes when new data arrives.
+  CONCENTRATED_WEIGHT:
+    settings:
+      truncation: 0.04
+    why: Cap each stock's weight so a few names can't carry the book.
+  LOW_SUB_UNIVERSE_SHARPE:
+    expr: $x * rank(adv20)
+    needs:
+    - adv20
+    why: 'Tilt to liquid names: if the effect only lives in microcaps it isn''t tradeable.'

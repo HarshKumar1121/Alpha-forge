@@ -1,0 +1,9 @@
+# Copy this file to add a new BRAIN alpha type or competition. Nothing else needs changing.
+# Only write what DIFFERS from the profile you extend.
+name: my_new_type
+extends: regular
+description: What it is, and a link to the BRAIN rule page.
+lint:
+  max_operators: null
+gates:
+  is.sharpe: {min: 1.25}

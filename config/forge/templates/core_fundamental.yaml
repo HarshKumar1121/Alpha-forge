@@ -1,0 +1,170 @@
+# Template library — fundamental, analyst and sentiment families.
+#
+# A template = an economic idea with typed SLOTS. The Forge fills the slots from your field sets.
+#   $X, $Y  field slots   kind: field  (type MATRIX | VECTOR; archetype filter optional)
+#   $W      window slot   kind: window (economic windows only: 5 week, 21 month, 63 quarter, 252 year)
+#   $G      group slot    kind: group  (industry, subindustry, sector, market)
+# Fields are always cleaned first: MATRIX -> ts_backfill(X, 63); VECTOR -> ts_backfill(<aggregate>(X), 63)
+# where the slot's aggregate defaults to vec_avg. Templates never wrap the slot themselves.
+# complexity: simple (Power Pool friendly) | medium | complex.
+# Verify every operator exists on YOUR account: the Studio lints against /operators.
+
+templates:
+  - id: fund_level_group
+    name: Characteristic level vs industry peers
+    category: fundamental/value-quality
+    complexity: simple
+    slots:
+      X: {kind: field, archetype: [slow, persistent, medium]}
+      G: {kind: group, values: [industry, subindustry, sector]}
+    expr: "group_rank($X, $G)"
+    rationale: >
+      Value and quality ratios differ structurally across industries; ranking within peers
+      isolates whether THIS company is cheap or good for its kind of business.
+
+  - id: fund_improvement
+    name: Fundamental improvement (change)
+    category: fundamental/momentum
+    complexity: simple
+    slots:
+      X: {kind: field, archetype: [slow, medium]}
+      W: {kind: window, values: [63, 126, 252]}
+    expr: "rank(ts_delta($X, $W))"
+    rationale: >
+      Markets under-react to gradual improvement in fundamentals (margins, ROE, cash flow);
+      the change carries information the level already priced.
+
+  - id: fund_surprise_own_history
+    name: Unusual vs own history
+    category: fundamental/surprise
+    complexity: simple
+    slots:
+      X: {kind: field, archetype: [slow, medium, persistent]}
+      W: {kind: window, values: [252, 504]}
+    expr: "rank(ts_zscore($X, $W))"
+    rationale: >
+      A value that is extreme relative to the firm's own past is news, even when it looks
+      ordinary across firms.
+
+  - id: fund_ratio_two_fields
+    name: Ratio of two fundamentals, peer-relative
+    category: fundamental/value-quality
+    complexity: medium
+    slots:
+      X: {kind: field, archetype: [slow, persistent, medium]}
+      Y: {kind: field, archetype: [slow, persistent, medium], same_dataset_as: X}
+      G: {kind: group, values: [industry, subindustry]}
+    expr: "group_rank($X / $Y, $G)"
+    rationale: >
+      Many classic signals are ratios (earnings/price, cash flow/assets, debt/equity). Pair
+      fields from the same dataset so units and timing match.
+
+  - id: fund_stability
+    name: Stability (low volatility of a fundamental)
+    category: fundamental/quality
+    complexity: medium
+    slots:
+      X: {kind: field, archetype: [slow, medium]}
+      W: {kind: window, values: [252, 504]}
+    expr: "-rank(ts_std_dev($X, $W) / (abs(ts_mean($X, $W)) + 0.001))"
+    rationale: >
+      Stable earnings and margins signal quality; investors overpay for exciting, volatile
+      stories and underpay for boring consistency.
+
+  - id: analyst_revision
+    name: Analyst revision momentum
+    category: analyst/revision
+    complexity: simple
+    slots:
+      X: {kind: field, archetype: [slow, medium]}
+      W: {kind: window, values: [21, 63]}
+    expr: "rank(ts_delta($X, $W))"
+    rationale: >
+      Analysts revise in small steps (herding, anchoring), so revisions are autocorrelated and
+      prices drift after them.
+
+  - id: analyst_revision_group
+    name: Revision momentum vs industry
+    category: analyst/revision
+    complexity: simple
+    slots:
+      X: {kind: field, archetype: [slow, medium]}
+      W: {kind: window, values: [21, 63]}
+      G: {kind: group, values: [industry, subindustry]}
+    expr: "group_rank(ts_delta($X, $W), $G)"
+    rationale: >
+      Removes industry-wide revision waves (e.g. oil price changes revising all energy names)
+      so only firm-specific news remains.
+
+  - id: analyst_dispersion
+    name: Disagreement among analysts
+    category: analyst/uncertainty
+    complexity: medium
+    slots:
+      X: {kind: field, archetype: [slow, medium], hint: "estimate std / dispersion field"}
+      Y: {kind: field, archetype: [slow, medium], hint: "estimate mean field", same_dataset_as: X}
+    expr: "-rank($X / (abs($Y) + 0.001))"
+    rationale: >
+      High disagreement with short-sale limits lets optimists set prices too high
+      (Miller 1977); high-dispersion stocks tend to underperform.
+
+  - id: event_update_trade
+    name: Trade only when new data arrives
+    category: event/update
+    complexity: medium
+    slots:
+      X: {kind: field, archetype: [slow]}
+      W: {kind: window, values: [21, 63]}
+    expr: "trade_when(abs(ts_delta($X, 1)) > 0, rank(ts_delta($X, $W)), -1)"
+    rationale: >
+      Sparse datasets are event streams. Acting only on updates cuts turnover and noise;
+      positions are held between events.
+
+  - id: sentiment_smoothed
+    name: Smoothed sentiment
+    category: sentiment/news
+    complexity: simple
+    slots:
+      X: {kind: field, archetype: [fast]}
+      W: {kind: window, values: [3, 5, 10]}
+    expr: "rank(ts_decay_linear($X, $W))"
+    rationale: >
+      Daily sentiment is noisy; recent days matter most. Linear decay keeps the edge while
+      cutting turnover.
+
+  - id: sentiment_shock
+    name: Sentiment shock vs normal
+    category: sentiment/news
+    complexity: simple
+    slots:
+      X: {kind: field, archetype: [fast, medium]}
+      W: {kind: window, values: [21, 63]}
+    expr: "rank(ts_av_diff($X, $W))"
+    rationale: >
+      Sentiment relative to the stock's normal level: a sudden change of tone is the news, not
+      the tone itself.
+
+  - id: sentiment_volume_confirmed
+    name: Sentiment confirmed by attention
+    category: sentiment/news
+    complexity: medium
+    slots:
+      X: {kind: field, archetype: [fast, medium]}
+      W: {kind: window, values: [5, 10]}
+    expr: "trade_when(volume > adv20, rank(ts_mean($X, $W)), -1)"
+    rationale: >
+      News that comes with abnormal trading volume is news the market is processing; quiet
+      news is often stale or irrelevant.
+
+  - id: vector_intensity
+    name: Vector field intensity (how much, not how good)
+    category: vector/aggregate
+    complexity: simple
+    slots:
+      X: {kind: field, type: VECTOR, aggregate: vec_sum}
+      W: {kind: window, values: [21, 63]}
+    expr: "rank(ts_zscore($X, $W))"
+    rationale: >
+      Vector fields hold many observations per stock per day (e.g. news items). Summing them
+      (aggregate: vec_sum instead of the default vec_avg) measures attention: an unusual burst of
+      coverage relative to the stock's own history often precedes repricing.

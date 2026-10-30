@@ -1,0 +1,17 @@
+name: power_pool
+extends: regular
+description: Power Pool Alpha. Simple and economically clear; <=8 operators, <=3 data fields.
+lint:
+  max_operators: 8
+  max_fields: 3
+  min_fields_from_target_dataset: 1
+gates:
+  is.sharpe:    {min: 1.0}
+  is.fitness:   {min: null}
+  train.sharpe: {min: 1.0}
+  test.sharpe:  {min: 0.6}
+correlation:
+  pool: power_pool
+  ceiling: 0.50
+  escape_sharpe_ratio: 1.10    # must beat EVERY colliding member by 10%, not just the top one
+description_required: true     # BRAIN needs Idea / Rationale for data / Rationale for operators

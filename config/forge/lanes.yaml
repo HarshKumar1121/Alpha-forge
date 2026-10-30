@@ -1,0 +1,62 @@
+# Quota Governor — how 5,000 simulations a day are spent.
+#
+# Every simulation belongs to exactly one LANE. A lane has a share of the day, and min/max
+# bounds for the learning allocator (Thompson sampling) to move within. Unused quota in a lane
+# flows to the lanes that are producing — never past the daily limit.
+# The ledger (table quota_ledger) records every simulation against its lane; the dashboard
+# shows planned vs spent per lane, live.
+
+daily_limit: 5000            # your BRAIN daily simulation limit
+safety_margin: 150           # never plan into the last 150 (manual work, retries, surprises)
+day_resets_at: "00:00"       # local time of BRAIN's reset; set it to what BRAIN shows you
+timezone: Asia/Kolkata
+pacing:
+  max_per_hour: 650          # spread the day; avoids bursts and keeps slots for manual work
+  quiet_hours: []            # e.g. ["01:00-06:00"] if you want the machine idle overnight
+allocation: bandit           # fixed | bandit   (bandit = learn from each lane's yield)
+bandit:
+  reward: new_family         # a sim's lane is rewarded when it yields a robust alpha that starts a NEW family
+  prior: [1, 20]             # Beta(1, 20): expect ~5% success until evidence says otherwise
+  rebalance: daily           # recompute shares each morning from the last 14 days
+  window_days: 14
+
+lanes:
+  explore:                   # field probes, dataset fingerprints, behaviour lab
+    share: 0.12
+    bounds: [0.05, 0.20]
+    alpha_types: [regular]
+  forge_regular:             # template x field-set experiments, Regular
+    share: 0.28
+    bounds: [0.15, 0.45]
+    alpha_types: [regular]
+  power_pool:                # simple templates only (lint enforces <= 8 ops, <= 3 fields)
+    share: 0.15
+    bounds: [0.08, 0.25]
+    alpha_types: [power_pool, regular]
+  atom:                      # single-dataset alphas
+    share: 0.08
+    bounds: [0.03, 0.15]
+    alpha_types: [atom, regular]
+  other_regions:             # EUR / ASI / GLB / region-agnostic
+    share: 0.06
+    bounds: [0.02, 0.12]
+    alpha_types: [region_agnostic, regular]
+  super_alpha:               # combinations of submitted alphas (slow, few)
+    share: 0.02
+    bounds: [0.00, 0.05]
+    alpha_types: [super_alpha]
+  validate:                  # Hypothesis Court, robustness sweeps, repairs of strong candidates
+    share: 0.13
+    bounds: [0.08, 0.20]
+    alpha_types: [regular, power_pool, atom]
+  template_research:         # evolving and testing NEW templates across datasets
+    share: 0.08
+    bounds: [0.03, 0.15]
+    alpha_types: [regular]
+  reserve:                   # you, by hand, and agent proposals you approve in the UI
+    share: 0.08
+    bounds: [0.05, 0.10]
+    alpha_types: [regular, power_pool, atom, arc]
+
+# The router evaluates EVERY finished simulation against EVERY alpha type in
+# config/forge/alpha_types, whatever lane paid for it. One sim, all tags.

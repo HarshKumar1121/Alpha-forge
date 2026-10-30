@@ -1,0 +1,33 @@
+# Learning engine settings.
+
+surrogate:
+  model: hist_gradient_boosting   # scikit-learn; lightgbm optional
+  targets: [passes_gates, train_sharpe]
+  min_training_rows: 500          # below this, rank by template stats only
+  retrain: nightly
+  exploration_share: 0.15         # always simulate a random slice the model would skip
+  features: [template_id, template_category, complexity, operator_count, field_count,
+             dataset_category, field_archetype, coverage, crowding, pyramid_multiplier,
+             region, universe, delay, decay, neutralization, truncation]
+
+template_evolution:
+  population: 24
+  generations_per_day: 1
+  dataset_panel_size: 6           # test each mutant on 6 different datasets
+  fitness: generalisation         # share of panel datasets where a variant passes train gates
+  mutations: [swap_ts_operator, swap_window, add_group_wrapper, add_trade_when,
+              add_smoothing, swap_rank_for_zscore, add_liquidity_tilt]
+  max_operators: 12
+
+lesson_mining:
+  schedule: weekly
+  min_support: 30                 # a pattern needs >= 30 alphas behind it to become a lesson
+
+families:
+  pnl_corr_threshold: 0.6
+  pool_collision: 0.7
+
+montecarlo:
+  bootstrap_block_days: 21
+  bootstrap_samples: 2000
+  permutation_samples: 500
