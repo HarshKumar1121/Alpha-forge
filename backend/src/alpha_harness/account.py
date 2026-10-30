@@ -169,6 +169,19 @@ class AuthService:
                 # second round trip. Failure is swallowed inside; a missing name is cosmetic.
                 await self.get_user_profile()
                 await self._warm_operators()
+            elif supplied and info.inquiry:
+                # forge: a sign-in paused for an identity check has to leave a credential
+                # behind, or the verification that follows persists nothing. `verify` saves
+                # the cookie jar under the current credential, and `_save_cookies` returns
+                # early when there is none — so without this the session lives only in this
+                # process and is gone on restart.
+                #
+                # It does not weaken the rule above. That rule guards against a *mistyped*
+                # password becoming the stored credential, and a wrong password is a
+                # BrainAuthError; an inquiry means BRAIN took the password and wants a
+                # second factor.
+                await self.store_credential(email, password)
+                await self._touch_last_login(email)
             return info
 
     async def verify(self, inquiry: str) -> SessionInfo:
