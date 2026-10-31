@@ -8,8 +8,11 @@ import {
   createRouter,
   type ErrorComponentProps,
   lazyRouteComponent,
+  type RouterHistory,
   redirect,
 } from '@tanstack/react-router'
+import { INSTRUMENT_TYPE } from '@/api/platform' // forge: the dataset route's scope defaults
+import { DEFAULT_SCOPE } from '@/lib/scope' // forge: same
 import { MOD } from '@/shell/desktop'
 import { Shell } from '@/shell/shell'
 import { Button, Empty, ErrorNotice, Page, Panel } from '@/ui/kit'
@@ -154,6 +157,25 @@ const forgeTemplates = createRoute({
   component: lazyRouteComponent(() => import('@/screens/forge/templates'), 'TemplateLibraryScreen'),
 })
 
+const forgeFieldSets = createRoute({
+  getParentRoute: () => forge,
+  path: 'fieldsets',
+  component: lazyRouteComponent(() => import('@/screens/forge/fieldsets'), 'FieldSetsScreen'),
+})
+const forgeDataset = createRoute({
+  getParentRoute: () => forge,
+  path: 'datasets/$datasetId',
+  // The dataset is only meaningful in one market, so the scope travels in the URL.
+  validateSearch: (search: Record<string, unknown>) => ({
+    instrumentType:
+      typeof search['instrumentType'] === 'string' ? search['instrumentType'] : INSTRUMENT_TYPE,
+    region: typeof search['region'] === 'string' ? search['region'] : DEFAULT_SCOPE.region,
+    delay: typeof search['delay'] === 'number' ? search['delay'] : DEFAULT_SCOPE.delay,
+    universe: typeof search['universe'] === 'string' ? search['universe'] : DEFAULT_SCOPE.universe,
+  }),
+  component: lazyRouteComponent(() => import('@/screens/forge/datasets'), 'DatasetScreen'),
+})
+
 const tasks = createRoute({ getParentRoute: () => root, path: '/tasks' })
 const tasksIndex = createRoute({
   getParentRoute: () => tasks,
@@ -234,14 +256,15 @@ const pyramids = createRoute({
   component: lazyRouteComponent(() => import('@/screens/pyramids'), 'PyramidsScreen'),
 })
 
-const routeTree = root.addChildren([
+// forge: exported so the smoke test can mount each route on a memory history of its own.
+export const routeTree = root.addChildren([
   index,
   dashboard,
   matrix,
   data,
   labs.addChildren([labsIndex, searchLab, templateLab, evolutionLab, powerPoolLab, superAlphaLab]),
   tools.addChildren([toolsIndex, settingsSampler, correlationBreaker, fieldsSampler]),
-  forge.addChildren([forgeToday, forgeGym, forgeTemplates]), // forge: Forge section
+  forge.addChildren([forgeToday, forgeGym, forgeTemplates, forgeFieldSets, forgeDataset]), // forge: Forge section
   competitionsRoute,
   tasks.addChildren([tasksIndex, taskResults]),
   pool.addChildren([poolIndex, poolTab]),
@@ -275,12 +298,18 @@ function NotFound() {
   )
 }
 
-export const router = createRouter({
-  routeTree,
-  defaultPreload: 'intent',
-  defaultErrorComponent: RouteError,
-  defaultNotFoundComponent: NotFound,
-})
+// forge: a factory so the smoke test mounts the same router the app does — same error and
+// not-found components — on a memory history of its own. The app's router is the default one.
+export const createAppRouter = (options: { history?: RouterHistory } = {}) =>
+  createRouter({
+    routeTree,
+    defaultPreload: 'intent',
+    defaultErrorComponent: RouteError,
+    defaultNotFoundComponent: NotFound,
+    ...options,
+  })
+
+export const router = createAppRouter()
 
 declare module '@tanstack/react-router' {
   interface Register {

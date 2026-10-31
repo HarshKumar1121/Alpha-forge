@@ -3,16 +3,20 @@
  * categories, whole subcategories or single datasets. Syncing lives in BRAIN › Sync.
  */
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useScope } from '@/lib/scope'
 import { useDatasetPick } from '@/screens/data/dataset-pick'
-import { Page, PageHeader } from '@/ui/kit'
+// forge: the Datasets tab lives in screens/forge/data/; this screen only switches to it.
+import { DatasetsTab } from '@/screens/forge/data/datasets-tab'
+import { Page, PageHeader, Segmented } from '@/ui/kit'
 import { FieldsTab } from './fields'
 import { MarketBar } from './market'
 
 export function DataScreen() {
   const [scope, update] = useScope('data')
   const picking = useDatasetPick((s) => s.active)
+  // forge: Fields is the upstream tab; Datasets is Forge's view of the same market.
+  const [tab, setTab] = useState<'fields' | 'datasets'>('fields')
 
   // A pick follows the market shown here.
   useEffect(() => {
@@ -24,9 +28,24 @@ export function DataScreen() {
       <PageHeader
         title="Data Explorer"
         description="Browse, filter and compare the Data Fields you synced from BRAIN, locally."
+        actions={
+          // forge: field-level browsing, or dataset-level with crowding and your own history.
+          !picking && (
+            <Segmented
+              label="View"
+              value={tab}
+              onChange={setTab}
+              items={[
+                { value: 'fields', label: 'Fields' },
+                { value: 'datasets', label: 'Datasets' },
+              ]}
+            />
+          )
+        }
       />
       <MarketBar scope={scope} update={update} />
-      <FieldsTab scope={scope} />
+      {/* forge: the Datasets tab; Fields is upstream's and is untouched. */}
+      {tab === 'fields' || picking ? <FieldsTab scope={scope} /> : <DatasetsTab scope={scope} />}
     </Page>
   )
 }

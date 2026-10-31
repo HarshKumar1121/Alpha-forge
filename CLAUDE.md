@@ -10,7 +10,9 @@ teach the user. Prefer readable code with docstrings that explain the quant reas
 
 ## Status / roadmap
 - **Done:** Phases 0–2 of BUILD_PLAYBOOK.md (base running, BRAIN validated, research brain
-  ported with the Gym Playground, typed-slot templates).
+  ported with the Gym Playground, typed-slot templates), then v2's Phase 3 (Quota Governor and
+  Today) and Phase 4 (real scopes from `OPTIONS /simulations`, Datasets tab with crowding and
+  my history, dataset pages, field sets).
 - **Current plan:** docs/forge/BUILD_PLAYBOOK_V2.md is authoritative from Phase 3 on. v1's
   Phases 3–13 are superseded; do not follow them. ARCHITECTURE.md is still the module design,
   but its §7 build order is v1's, and where it treats the Gym as a research stage (Behaviour Lab
@@ -23,7 +25,7 @@ teach the user. Prefer readable code with docstrings that explain the quant reas
 - **v2 phases:** 3 Quota Governor + Today · 4 Real scope and data · 5 Template Studio v2 ·
   6 Type pipelines on BRAIN · 7 Families and Submittable Board · 8 Research analytics ·
   9 Learning engine · 10 AI agent with memory · 11 Practice mode and Real-Price Lab.
-- **Next:** Phase 3.
+- **Next:** Phase 5 (Template Studio v2: templates bound to field sets, real eligibility).
 
 ## Layout
 - backend/ — FastAPI, Python 3.14, uv. Package `alpha_harness` (keep the name; Forge code goes

@@ -31,6 +31,8 @@ from .api import (
     catalog,
     chat,
     competitions,
+    forge_data,  # forge: scopes, datasets, crowding; same missing seam
+    forge_fieldsets,  # forge: field sets CRUD; same missing seam
     forge_gym,  # forge: Gym Playground route; no router auto-discovery seam exists
     forge_quota,  # forge: Quota Governor / Today route; same missing seam
     forge_templates,  # forge: Template Library route; same missing seam
@@ -194,6 +196,8 @@ def create_app() -> FastAPI:
     app.include_router(forge_gym.router)  # forge: Gym Playground (free, never reaches BRAIN)
     app.include_router(forge_templates.router)  # forge: Template Library (read-only)
     app.include_router(forge_quota.router)  # forge: Quota Governor (read-only, spends nothing)
+    app.include_router(forge_data.router)  # forge: real scopes and data (read-only)
+    app.include_router(forge_fieldsets.router)  # forge: field sets (local SQLite only)
     app.include_router(ws.router)
 
     @app.get("/api/health", tags=["meta"])

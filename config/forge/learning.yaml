@@ -23,6 +23,12 @@ lesson_mining:
   schedule: weekly
   min_support: 30                 # a pattern needs >= 30 alphas behind it to become a lesson
 
+# Crowding score (forge/data/crowding.py): percentile rank of alphaCount and userCount within
+# one scope, blended by these weights (normalised to sum to 1). 0 = least crowded, 1 = most.
+crowding:
+  alpha_count_weight: 0.5         # alphas already built on it: how mined the signal is
+  user_count_weight: 0.5          # researchers who used it: how many people compete there
+
 families:
   pnl_corr_threshold: 0.6
   pool_collision: 0.7

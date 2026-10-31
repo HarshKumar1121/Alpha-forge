@@ -817,6 +817,111 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/forge/data/datasets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Datasets
+         * @description Every dataset in the scope with crowding, the account's multiplier, and my history.
+         */
+        get: operations["datasets_api_forge_data_datasets_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/data/datasets/{dataset_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Dataset Page
+         * @description One dataset: its coverage, where it sits on crowding vs pay, and my history there.
+         */
+        get: operations["dataset_page_api_forge_data_datasets__dataset_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/data/fields/extras": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Field Extras
+         * @description Crowding and my history for a page of Data Explorer fields.
+         *
+         *     Crowding is ranked against every field in the scope, not just the page.
+         */
+        post: operations["field_extras_api_forge_data_fields_extras_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/fieldsets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Fieldsets
+         * @description Every field set, newest first; narrowed to a scope when one is given.
+         */
+        get: operations["list_fieldsets_api_forge_fieldsets_get"];
+        put?: never;
+        /** Create Fieldset */
+        post: operations["create_fieldset_api_forge_fieldsets_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/fieldsets/{fieldset_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Fieldset
+         * @description One set with the fields it holds now, read from its own scope.
+         */
+        get: operations["get_fieldset_api_forge_fieldsets__fieldset_id__get"];
+        /** Update Fieldset */
+        put: operations["update_fieldset_api_forge_fieldsets__fieldset_id__put"];
+        post?: never;
+        /** Delete Fieldset */
+        delete: operations["delete_fieldset_api_forge_fieldsets__fieldset_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/forge/gym/catalog": {
         parameters: {
             query?: never;
@@ -891,6 +996,26 @@ export interface paths {
          * @description Would a plan of ``simulations`` fit in ``lane`` today? What would be trimmed?
          */
         post: operations["estimate_api_forge_quota_estimate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/scopes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Scopes
+         * @description Every scope the account can run, from BRAIN's own settings schema, with sync state.
+         */
+        get: operations["scopes_api_forge_scopes_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3082,6 +3207,13 @@ export interface components {
          * @enum {string}
          */
         CheckResult: "PASS" | "FAIL" | "PENDING" | "WARNING" | "ERROR";
+        /** Choice */
+        Choice: {
+            /** Label */
+            label: string;
+            /** Value */
+            value: string;
+        };
         /** Competition */
         Competition: {
             /** Enddate */
@@ -3138,6 +3270,15 @@ export interface components {
             b: string;
             /** Correlation */
             correlation: number;
+        };
+        /** CoverageBin */
+        CoverageBin: {
+            /** Fields */
+            fields: number;
+            /** High */
+            high: number;
+            /** Low */
+            low: number;
         };
         /** DataFieldDetail */
         DataFieldDetail: {
@@ -3226,6 +3367,37 @@ export interface components {
             /** Subcategory Id */
             subcategory_id: string | null;
         };
+        /** DatasetHistoryOut */
+        DatasetHistoryOut: {
+            /** Alphas */
+            alphas: number;
+            /** Byuniverse */
+            byUniverse: components["schemas"]["UniverseHistory"][];
+            /** Checked */
+            checked: number;
+            /** Passrate */
+            passRate: number | null;
+            /** Passed */
+            passed: number;
+            /** Sims */
+            sims: number;
+            /** Structuralfamilies */
+            structuralFamilies: number;
+        };
+        /** DatasetPage */
+        DatasetPage: {
+            /** Coveragebins */
+            coverageBins: components["schemas"]["CoverageBin"][];
+            dataset: components["schemas"]["ForgeDataset"];
+            /** Fieldtypes */
+            fieldTypes: components["schemas"]["FieldTypeCount"][];
+            history: components["schemas"]["DatasetHistoryOut"];
+            pyramid: components["schemas"]["PyramidStatus"];
+            /** Scatter */
+            scatter: components["schemas"]["ScatterPoint"][];
+            /** Scope */
+            scope: string;
+        };
         /** DatasetRow */
         DatasetRow: {
             /** Alpha Count */
@@ -3254,6 +3426,20 @@ export interface components {
             user_count: number | null;
             /** Value Score */
             value_score: number | null;
+        };
+        /** DelayNode */
+        DelayNode: {
+            /** Label */
+            label: string;
+            /** Universes */
+            universes: components["schemas"]["UniverseNode"][];
+            /** Value */
+            value: number;
+        };
+        /** Deleted */
+        Deleted: {
+            /** Deleted */
+            deleted: boolean;
         };
         /** DropResult */
         DropResult: {
@@ -3405,6 +3591,24 @@ export interface components {
             /** Vector */
             vector: number;
         };
+        /** FieldExtra */
+        FieldExtra: {
+            /** Crowding */
+            crowding: number | null;
+            mine: components["schemas"]["MyHistory"];
+        };
+        /** FieldExtras */
+        FieldExtras: {
+            /** Fields */
+            fields: {
+                [key: string]: components["schemas"]["FieldExtra"];
+            };
+        };
+        /** FieldExtrasRequest */
+        FieldExtrasRequest: {
+            /** Fieldids */
+            fieldIds: string[];
+        };
         /**
          * FieldFilter
          * @description Everything the Data Explorer can narrow on.
@@ -3503,6 +3707,102 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** FieldSetDetail */
+        FieldSetDetail: {
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /** Fieldids */
+            fieldIds: string[];
+            /** Fields */
+            fields: components["schemas"]["DataFieldRow"][];
+            /** Filter */
+            filter: {
+                [key: string]: unknown;
+            } | null;
+            /** Id */
+            id: number;
+            /** Kind */
+            kind: string;
+            /** Missing */
+            missing: string[];
+            /** Name */
+            name: string;
+            /** Notes */
+            notes: string;
+            scope: components["schemas"]["FieldSetScope"];
+            /** Total */
+            total: number;
+            /**
+             * Updatedat
+             * Format: date-time
+             */
+            updatedAt: string;
+        };
+        /** FieldSetIn */
+        FieldSetIn: {
+            /** Fieldids */
+            fieldIds?: string[];
+            filter?: components["schemas"]["FieldFilter"] | null;
+            /**
+             * Kind
+             * @default manual
+             * @enum {string}
+             */
+            kind: "manual" | "dynamic";
+            /** Name */
+            name: string;
+            /**
+             * Notes
+             * @default
+             */
+            notes: string;
+            scope: components["schemas"]["FieldSetScope"];
+        };
+        /** FieldSetOut */
+        FieldSetOut: {
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /** Fieldids */
+            fieldIds: string[];
+            /** Filter */
+            filter: {
+                [key: string]: unknown;
+            } | null;
+            /** Id */
+            id: number;
+            /** Kind */
+            kind: string;
+            /** Name */
+            name: string;
+            /** Notes */
+            notes: string;
+            scope: components["schemas"]["FieldSetScope"];
+            /**
+             * Updatedat
+             * Format: date-time
+             */
+            updatedAt: string;
+        };
+        /** FieldSetScope */
+        FieldSetScope: {
+            /** Delay */
+            delay: number;
+            /**
+             * Instrumenttype
+             * @default EQUITY
+             */
+            instrumentType: string;
+            /** Region */
+            region: string;
+            /** Universe */
+            universe: string;
+        };
         /** FieldSlot */
         FieldSlot: {
             /** Candidates */
@@ -3511,6 +3811,13 @@ export interface components {
             field: string;
             /** Problem */
             problem: string;
+        };
+        /** FieldTypeCount */
+        FieldTypeCount: {
+            /** Fieldtype */
+            fieldType: string;
+            /** Fields */
+            fields: number;
         };
         /** FieldsPlan */
         FieldsPlan: {
@@ -3578,6 +3885,49 @@ export interface components {
             kind: "fields";
             /** Vector Operators */
             vector_operators?: string[];
+        };
+        /** ForgeDataset */
+        ForgeDataset: {
+            /** Accountmultiplier */
+            accountMultiplier: number | null;
+            /** Alphacount */
+            alphaCount: number | null;
+            /** Categoryid */
+            categoryId: string | null;
+            /** Categoryname */
+            categoryName: string | null;
+            /** Coverage */
+            coverage: number | null;
+            /** Crowding */
+            crowding: number | null;
+            /** Datasetid */
+            datasetId: string;
+            /** Description */
+            description: string | null;
+            /** Fieldcount */
+            fieldCount: number | null;
+            mine: components["schemas"]["MyHistory"];
+            /** Name */
+            name: string | null;
+            /** Pyramidlit */
+            pyramidLit: boolean | null;
+            /** Pyramidmultiplier */
+            pyramidMultiplier: number | null;
+            /** Subcategoryname */
+            subcategoryName: string | null;
+            /** Usercount */
+            userCount: number | null;
+            /** Valuescore */
+            valueScore: number | null;
+        };
+        /** ForgeDatasets */
+        ForgeDatasets: {
+            /** Datasets */
+            datasets: components["schemas"]["ForgeDataset"][];
+            /** Pyramidslive */
+            pyramidsLive: boolean;
+            /** Unparsed */
+            unparsed: number;
         };
         /** ForgeTemplateDetail */
         ForgeTemplateDetail: {
@@ -3843,6 +4193,15 @@ export interface components {
             horizon: number;
             /** Ic */
             ic: number | null;
+        };
+        /** InstrumentNode */
+        InstrumentNode: {
+            /** Label */
+            label: string;
+            /** Regions */
+            regions: components["schemas"]["RegionNode"][];
+            /** Value */
+            value: string;
         };
         /** KeyFailed */
         KeyFailed: {
@@ -4198,6 +4557,19 @@ export interface components {
              * Format: date
              */
             month: string;
+        };
+        /** MyHistory */
+        MyHistory: {
+            /** Alphas */
+            alphas: number;
+            /** Checked */
+            checked: number;
+            /** Passrate */
+            passRate: number | null;
+            /** Passed */
+            passed: number;
+            /** Sims */
+            sims: number;
         };
         /** NetFigures */
         NetFigures: {
@@ -4785,6 +5157,19 @@ export interface components {
             columns: components["schemas"]["PyramidColumn"][];
             quarter: components["schemas"]["Quarter"];
         };
+        /** PyramidStatus */
+        PyramidStatus: {
+            /** Alphacount */
+            alphaCount: number | null;
+            /** Categoryid */
+            categoryId: string | null;
+            /** Lit */
+            lit: boolean | null;
+            /** Multiplier */
+            multiplier: number | null;
+            /** Needed */
+            needed: number;
+        };
         /**
          * Quarter
          * @description Calendar quarter in platform time; ``end`` is the next quarter's first day.
@@ -5029,6 +5414,17 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** RegionNode */
+        RegionNode: {
+            /** Delays */
+            delays: components["schemas"]["DelayNode"][];
+            /** Label */
+            label: string;
+            /** Regionagnostic */
+            regionAgnostic: boolean;
+            /** Value */
+            value: string;
+        };
         /** RegionPlan */
         RegionPlan: {
             /** Cost */
@@ -5139,6 +5535,28 @@ export interface components {
              * @description Omit to start a new conversation
              */
             thread_id?: number | null;
+        };
+        /** ScatterPoint */
+        ScatterPoint: {
+            /** Categoryid */
+            categoryId: string | null;
+            /** Crowding */
+            crowding: number | null;
+            /** Current */
+            current: boolean;
+            /** Datasetid */
+            datasetId: string;
+            /** Fieldcount */
+            fieldCount: number | null;
+            /** Multiplier */
+            multiplier: number | null;
+            /** Name */
+            name: string | null;
+        };
+        /** ScopeTree */
+        ScopeTree: {
+            /** Instrumenttypes */
+            instrumentTypes: components["schemas"]["InstrumentNode"][];
         };
         /** SearchRequest */
         SearchRequest: {
@@ -6096,6 +6514,34 @@ export interface components {
             id: string;
             /** N */
             n: number;
+        };
+        /** UniverseHistory */
+        UniverseHistory: {
+            /** Alphas */
+            alphas: number;
+            /** Checked */
+            checked: number;
+            /** Passrate */
+            passRate: number | null;
+            /** Passed */
+            passed: number;
+            /** Sims */
+            sims: number;
+            /** Universe */
+            universe: string;
+        };
+        /** UniverseNode */
+        UniverseNode: {
+            /** Fields */
+            fields: number;
+            /** Label */
+            label: string;
+            /** Neutralizations */
+            neutralizations: components["schemas"]["Choice"][];
+            /** Synced */
+            synced: boolean;
+            /** Value */
+            value: string;
         };
         /** UpdateStarted */
         UpdateStarted: {
@@ -7499,6 +7945,283 @@ export interface operations {
             };
         };
     };
+    datasets_api_forge_data_datasets_get: {
+        parameters: {
+            query: {
+                /** @description e.g. USA, EUR, GLB */
+                region: string;
+                delay: number;
+                /** @description e.g. TOP3000 */
+                universe: string;
+                instrumentType?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForgeDatasets"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dataset_page_api_forge_data_datasets__dataset_id__get: {
+        parameters: {
+            query: {
+                /** @description e.g. USA, EUR, GLB */
+                region: string;
+                delay: number;
+                /** @description e.g. TOP3000 */
+                universe: string;
+                instrumentType?: string;
+            };
+            header?: never;
+            path: {
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    field_extras_api_forge_data_fields_extras_post: {
+        parameters: {
+            query: {
+                /** @description e.g. USA, EUR, GLB */
+                region: string;
+                delay: number;
+                /** @description e.g. TOP3000 */
+                universe: string;
+                instrumentType?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FieldExtrasRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FieldExtras"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_fieldsets_api_forge_fieldsets_get: {
+        parameters: {
+            query?: {
+                region?: string | null;
+                delay?: number | null;
+                universe?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FieldSetOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_fieldset_api_forge_fieldsets_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FieldSetIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FieldSetOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_fieldset_api_forge_fieldsets__fieldset_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fieldset_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FieldSetDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_fieldset_api_forge_fieldsets__fieldset_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fieldset_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FieldSetIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FieldSetOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_fieldset_api_forge_fieldsets__fieldset_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fieldset_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Deleted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     catalog_api_forge_gym_catalog_get: {
         parameters: {
             query?: never;
@@ -7601,6 +8324,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    scopes_api_forge_scopes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScopeTree"];
                 };
             };
         };

@@ -1,4 +1,5 @@
 import {
+  BookmarkIcon, // forge: Field Sets' icon
   ChartPieIcon,
   DatabaseIcon,
   DumbbellIcon, // forge: Gym Playground's icon
@@ -103,6 +104,12 @@ export const NAV = [
     group: 'Forge',
     label: 'Template Library',
     icon: LibraryIcon,
+  },
+  {
+    to: '/forge/fieldsets',
+    group: 'Forge',
+    label: 'Field Sets',
+    icon: BookmarkIcon,
   },
   {
     to: '/tasks',

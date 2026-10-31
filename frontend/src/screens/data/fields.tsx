@@ -2,7 +2,7 @@
 
 import { keepPreviousData, skipToken, useMutation, useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { CopyIcon, MaximizeIcon, MinimizeIcon, SparklesIcon } from 'lucide-react'
+import { BookmarkIcon, CopyIcon, MaximizeIcon, MinimizeIcon, SparklesIcon } from 'lucide-react' // forge: BookmarkIcon for "Save as field set"
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {
@@ -18,6 +18,9 @@ import { cn } from '@/lib/cn'
 import { DASH, fmt } from '@/lib/format'
 import { useDebounced } from '@/lib/use-debounced'
 import { useDatasetPick, useFieldPick } from '@/screens/data/dataset-pick'
+// forge: crowding and "my history" columns, and saving a selection as a field set.
+import { forgeFieldColumns, useFieldExtras } from '@/screens/forge/data/extras'
+import { SaveFieldSetDialog } from '@/screens/forge/fieldsets/save-dialog'
 import { LAB_TABS } from '@/shell/nav'
 import {
   Badge,
@@ -279,7 +282,8 @@ function useFullscreen() {
 export function FieldsTab({ scope }: { scope: Scope }) {
   const { filter, sort, offset, setSort, page } = useFieldFilter()
   const [datasetIds] = useDatasetChoice()
-  const columns = useFittingColumns()
+  const fitting = useFittingColumns()
+  const [saving, setSaving] = useState(false) // forge: the "Save as field set" dialog
   const full = useFullscreen()
   const active: FieldFilterState = { ...filter, dataset_ids: datasetIds }
   const [openId, setOpenId] = useState<string | null>(null)
@@ -335,6 +339,9 @@ export function FieldsTab({ scope }: { scope: Scope }) {
     placeholderData: keepPreviousData,
   })
   const filtered = Object.values(active).some(isActive)
+  // forge: crowding and my-history for the rows on screen, appended to upstream's columns.
+  const extras = useFieldExtras(scope, query.data?.results)
+  const columns = useMemo(() => [...fitting, ...forgeFieldColumns(extras)], [fitting, extras])
   const picking = useDatasetPick((s) => s.active)
   const labFields = useFieldPick((s) => s.fields)
   const forLab = useMemo(() => new Set(Object.keys(labFields)), [labFields])
@@ -372,6 +379,11 @@ export function FieldsTab({ scope }: { scope: Scope }) {
                   </Button>
                 </>
               )}
+              {/* forge: a selection, or the filter itself, becomes a named field set. */}
+              <Button variant="ghost" size="sm" onClick={() => setSaving(true)}>
+                <BookmarkIcon aria-hidden />
+                Save as field set
+              </Button>
               <Button variant="ghost" size="sm" onClick={full.toggle}>
                 {full.on ? <MinimizeIcon /> : <MaximizeIcon />}
                 {full.on ? 'Exit Full Screen' : 'Full Screen'}
@@ -425,6 +437,15 @@ export function FieldsTab({ scope }: { scope: Scope }) {
             onStep={setOpenId}
             onClose={() => setOpenId(null)}
             container={full.on ? full.ref : undefined}
+          />
+          {/* forge: saves the ticked fields, or the filter, with this market. */}
+          <SaveFieldSetDialog
+            open={saving}
+            onOpenChange={setSaving}
+            scope={scope}
+            fieldIds={[...picked]}
+            filter={active}
+            matching={query.data?.total}
           />
         </Panel>
       </div>

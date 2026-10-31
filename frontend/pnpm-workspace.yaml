@@ -1,3 +1,7 @@
 packages:
   # Dev-only: openapi-typescript with the TypeScript 5 it needs (see its package.json).
   - tools/*
+# esbuild (vite, vitest) ships its platform binary as an optional dependency; its install
+# script only re-links one, and both the build and the tests run without it.
+allowBuilds:
+  esbuild: false
