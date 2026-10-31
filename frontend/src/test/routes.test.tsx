@@ -237,6 +237,7 @@ describe('the template library', () => {
     expect(screen.getByText('yours')).toBeTruthy()
     expect(screen.getByText('42 sims')).toBeTruthy()
     expect(screen.getByText('30% pass')).toBeTruthy()
+    expect(screen.getByText('4 families')).toBeTruthy()
     expect(screen.queryByText(CRASHED)).toBeNull()
   })
 

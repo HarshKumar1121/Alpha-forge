@@ -239,7 +239,7 @@ function TemplateRow({
 
 /** What a template has produced so far, or nothing at all when it has not been run. */
 function TemplateStatsLine({ stats }: { stats: TemplateSummary['stats'] }) {
-  if (!stats || !stats.sims) return null
+  if (!stats?.sims) return null
   return (
     <span
       className="flex min-w-0 items-center gap-2 text-body-compact text-ink-subtle"
@@ -249,6 +249,11 @@ function TemplateStatsLine({ stats }: { stats: TemplateSummary['stats'] }) {
       {stats.checked > 0 && <span className="num">{fmt.pct(stats.passRate, 0)} pass</span>}
       {stats.medianTrainSharpe != null && (
         <span className="num">med Sharpe {fmt.ratio(stats.medianTrainSharpe)}</span>
+      )}
+      {stats.families > 0 && (
+        <span className="num" title="Distinct alpha families this template has started">
+          {fmt.int(stats.families)} families
+        </span>
       )}
     </span>
   )
