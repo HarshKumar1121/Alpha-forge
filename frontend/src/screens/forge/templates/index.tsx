@@ -5,10 +5,13 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useSearch } from '@tanstack/react-router'
-import { DumbbellIcon, LibraryIcon } from 'lucide-react'
+import { DatabaseIcon, DumbbellIcon, LibraryIcon } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { cn } from '@/lib/cn'
 import { fmt } from '@/lib/format' // forge: for the per-template statistics line
+import { fieldSets } from '@/screens/forge/data/api'
+import { ColumnHint } from '@/screens/forge/data/extras'
+import { type RenderedAlpha, studio } from '@/screens/forge/studio/api'
 import { TemplateEditor } from '@/screens/research-labs/template/editor'
 import { InfoButton, InfoSection } from '@/ui/info'
 import {
@@ -17,6 +20,7 @@ import {
   Chips,
   Empty,
   ErrorNotice,
+  Field,
   KV,
   Notice,
   Page,
@@ -25,8 +29,9 @@ import {
   Skeleton,
   type Tone,
 } from '@/ui/kit'
-import { Tooltip } from '@/ui/overlay'
+import { Select, Sheet, Tooltip } from '@/ui/overlay'
 import { SplitPane } from '@/ui/panels'
+import { type Column, DataTable } from '@/ui/table'
 import {
   forgeTemplates,
   type TemplateDetail,
@@ -277,7 +282,12 @@ function TemplateDetailPanel({ id }: { id: string }) {
           {d.id} · {d.category}
         </span>
       }
-      actions={<TryOnGym d={d} />}
+      actions={
+        <span className="flex items-center gap-2">
+          <BindToFieldSet d={d} />
+          <TryOnGym d={d} />
+        </span>
+      }
       bodyClassName="flex flex-col gap-5"
     >
       <Section title="The idea" caption="Why this should predict returns at all.">
@@ -439,6 +449,152 @@ function FitReasons({ fits }: { fits: Record<string, TemplateFit> }) {
         </li>
       ))}
     </ul>
+  )
+}
+
+const head = (text: string, hint: string) => <ColumnHint text={text} hint={hint} />
+
+/**
+ * Binds this template to a real field set and previews what it actually renders — eligibility
+ * decided by `brain/platform.py` and the alpha-type YAMLs, not a guess. Nothing here simulates.
+ */
+function BindToFieldSet({ d }: { d: TemplateDetail }) {
+  const [open, setOpen] = useState(false)
+  const [fieldSetId, setFieldSetId] = useState<number | null>(null)
+
+  const sets = useQuery({
+    queryKey: ['forge-fieldsets'],
+    queryFn: fieldSets.list,
+    enabled: open,
+  })
+  const preview = useQuery({
+    queryKey: ['forge-studio', 'preview', d.id, fieldSetId],
+    queryFn: () =>
+      studio.preview({ templateId: d.id, fieldSetId: fieldSetId as number, limit: 50 }),
+    enabled: open && fieldSetId != null,
+  })
+  const p = preview.data
+
+  const columns: Column<RenderedAlpha>[] = [
+    {
+      key: 'expression',
+      header: 'Expression',
+      width: 'minmax(260px,2fr)',
+      cell: (a) => (
+        <code className="num block break-all text-body-compact text-ink">{a.expression}</code>
+      ),
+    },
+    {
+      key: 'eligible',
+      header: head(
+        'Eligible for',
+        'Alpha types this rendered alpha currently qualifies for, judged by that type’s own rules.',
+      ),
+      width: 'minmax(160px,1fr)',
+      cell: (a) => (
+        <span className="flex flex-wrap gap-1">
+          {a.fits.length > 0 ? (
+            a.fits.map((type) => (
+              <Badge key={type} tone="profit">
+                {type.replaceAll('_', ' ')}
+              </Badge>
+            ))
+          ) : (
+            <Badge tone="muted">no type fits</Badge>
+          )}
+        </span>
+      ),
+    },
+    {
+      key: 'reasons',
+      header: head(
+        'Not eligible',
+        'Why each alpha type this alpha misses actually rejected it, straight from the lint.',
+      ),
+      width: 'minmax(240px,2fr)',
+      cell: (a) => {
+        const missed = Object.values(a.eligibility).filter((e) => !e.ok)
+        if (missed.length === 0) return <span className="text-ink-subtle">—</span>
+        return (
+          <ul className="flex flex-col gap-0.5 text-body-compact text-ink-muted">
+            {missed.map((e) => (
+              <li key={e.alphaType}>
+                <Badge tone="muted">Not eligible</Badge>{' '}
+                <span className="font-mono text-ink">{e.alphaType.replaceAll('_', ' ')}</span>:{' '}
+                {e.reasons.join('; ') || 'rejected'}
+              </li>
+            ))}
+          </ul>
+        )
+      },
+    },
+  ]
+
+  return (
+    <>
+      <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>
+        <DatabaseIcon aria-hidden />
+        Bind to field set
+      </Button>
+      <Sheet
+        open={open}
+        onOpenChange={setOpen}
+        title="Bind to field set"
+        description={`See the real alphas ${d.name} renders on a field set, and which alpha types each one qualifies for. Free: nothing here is simulated.`}
+      >
+        <div className="flex flex-col gap-4">
+          <Field label="Field set" hint="Its market decides which fields and groups exist.">
+            <Select
+              label="Field set"
+              items={(sets.data ?? []).map((s) => ({
+                value: String(s.id),
+                label: `${s.name} — ${s.scope.region} D${s.scope.delay} ${s.scope.universe}`,
+              }))}
+              value={fieldSetId == null ? null : String(fieldSetId)}
+              onChange={(value) => setFieldSetId(Number(value))}
+            />
+          </Field>
+
+          {sets.data?.length === 0 && (
+            <Empty title="No field sets yet">
+              Make one in the Data Explorer: narrow a market to the fields behind an idea, tick
+              them, and choose "Save as field set".
+            </Empty>
+          )}
+
+          {preview.isError && <ErrorNotice error={preview.error} title="Could not render this" />}
+          {preview.isPending && fieldSetId != null && (
+            <Skeleton className="h-48" label="Rendering alphas" />
+          )}
+
+          {p && p.blockers.length > 0 && (
+            <Notice tone="warn" title="This template cannot run on this field set">
+              <ul className="ml-4 list-disc">
+                {p.blockers.map((b) => (
+                  <li key={b}>{b}</li>
+                ))}
+              </ul>
+            </Notice>
+          )}
+          {p?.missingFields.length ? (
+            <Notice tone="info" title="Some of the set's fields are not in this market">
+              <span className="num">{p.missingFields.join(', ')}</span> — they are skipped.
+            </Notice>
+          ) : null}
+
+          {p && p.rendered.length > 0 && (
+            <DataTable
+              label="Rendered alphas"
+              rows={p.rendered}
+              columns={columns}
+              rowKey={(a) => a.expression}
+              rowHeight={56}
+              empty="Nothing rendered for this field set."
+            />
+          )}
+        </div>
+      </Sheet>
+    </>
   )
 }
 

@@ -239,6 +239,40 @@ describe('the template library', () => {
     expect(screen.getByText('30% pass')).toBeTruthy()
     expect(screen.queryByText(CRASHED)).toBeNull()
   })
+
+  it('previews a template bound to a field set, with eligibility and why not', async () => {
+    await mount('/forge/templates')
+    const bind = screen.getByRole('button', { name: /Bind to field set/i })
+    await act(async () => {
+      bind.click()
+    })
+    await waitFor(() => expect(screen.getByText('Field set')).toBeTruthy())
+
+    const picker = screen.getByRole('combobox', { name: 'Field set' })
+    await act(async () => {
+      picker.click()
+    })
+    const option = await screen.findByRole('option', { name: /USA TOP3000 analyst/ })
+    await act(async () => {
+      option.click()
+    })
+
+    await waitFor(() =>
+      expect(screen.getByText('rank(ts_delta(ts_backfill(anl4_eps_mean, 63), 21))')).toBeTruthy(),
+    )
+    // The table-header tooltips: hovering isn't simulated here, but the labels they wrap must
+    // render, and the reason for the one alpha type this alpha misses must reach the screen.
+    expect(screen.getByText('Eligible for')).toBeTruthy()
+    expect(screen.getAllByText('Not eligible').length).toBeGreaterThan(0)
+    expect(
+      screen.getAllByText(
+        (_, node) =>
+          node?.tagName === 'LI' &&
+          Boolean(node.textContent?.includes('Single-dataset type but fields span analyst4, pv1')),
+      ).length,
+    ).toBeGreaterThan(0)
+    expect(screen.queryByText(CRASHED)).toBeNull()
+  })
 })
 
 describe('the list above stays honest', () => {
