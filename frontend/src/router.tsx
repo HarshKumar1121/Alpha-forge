@@ -20,7 +20,7 @@ const index = createRoute({
   getParentRoute: () => root,
   path: '/',
   beforeLoad: () => {
-    throw redirect({ to: '/dashboard' })
+    throw redirect({ to: '/forge/today' }) // forge: Today is home (playbook v2 Phase 3)
   },
 })
 
@@ -131,6 +131,11 @@ const fieldsSampler = createRoute({
 
 // forge: the Forge section's routes; screens live in screens/forge/. No route-registry seam exists.
 const forge = createRoute({ getParentRoute: () => root, path: '/forge' })
+const forgeToday = createRoute({
+  getParentRoute: () => forge,
+  path: 'today',
+  component: lazyRouteComponent(() => import('@/screens/forge/today'), 'TodayScreen'),
+})
 const forgeGym = createRoute({
   getParentRoute: () => forge,
   path: 'gym',
@@ -236,7 +241,7 @@ const routeTree = root.addChildren([
   data,
   labs.addChildren([labsIndex, searchLab, templateLab, evolutionLab, powerPoolLab, superAlphaLab]),
   tools.addChildren([toolsIndex, settingsSampler, correlationBreaker, fieldsSampler]),
-  forge.addChildren([forgeGym, forgeTemplates]), // forge: Forge section
+  forge.addChildren([forgeToday, forgeGym, forgeTemplates]), // forge: Forge section
   competitionsRoute,
   tasks.addChildren([tasksIndex, taskResults]),
   pool.addChildren([poolIndex, poolTab]),

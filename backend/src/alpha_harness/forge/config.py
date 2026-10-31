@@ -55,9 +55,11 @@ def lanes() -> dict[str, Any]:
 def reload() -> None:
     """Forget every cached config, so the next read sees the files as they are now."""
     from . import alpha_types
+    from .quota import config as quota_config
     from .research import templates
 
     court.cache_clear()
     lanes.cache_clear()
+    quota_config.load.cache_clear()
     alpha_types.load_all.cache_clear()
     templates.load_library.cache_clear()

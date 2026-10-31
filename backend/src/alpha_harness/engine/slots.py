@@ -33,6 +33,7 @@ from ..brain.filters import platform_midnight
 from ..brain.platform import MULTI_SIMULATION_SIZE, SIMULATION_SLOTS
 from ..brain.schemas import QUICK_MODE, SimulationRequest
 from ..db.models import ACTIVE, DedupEntry, SimStatus, SimulationRecord, Study, TaskQuota, utcnow
+from ..forge.quota.ledger import record_cache_hit  # forge: Quota Governor ledger (cache hits)
 from ..tasks import spawn
 from .awake import StayAwake
 from .lifecycle import (
@@ -56,6 +57,7 @@ if TYPE_CHECKING:
 
     from ..brain.endpoints import BrainEndpoints
     from ..db.sqlite import Database
+    from ..forge.quota.governor import QuotaGovernor  # forge: Quota Governor dispatch gate
     from .tracker import SimulationTracker
 
 log = structlog.get_logger(__name__)
@@ -125,6 +127,8 @@ class BatchEngine:
         #: monotonic: that clock stops while the computer sleeps, and BRAIN's day does not.
         self._limit_resets_at: float | None = None
         self._enqueue_lock = asyncio.Lock()
+        # forge: the Quota Governor's dispatch gate (lanes, pacing); set by AppState. No seam.
+        self.governor: QuotaGovernor | None = None
         #: Reads finished batches back beside the scheduling round; at most one at a time.
         self._expansion: asyncio.Task[None] | None = None
         #: Child platform id -> (body, outcome) of a finished child not yet written to its
@@ -257,6 +261,7 @@ class BatchEngine:
                         finished_at=utcnow(),
                     )
                     session.add(record)
+                    record_cache_hit(session, record)  # forge: a cache hit costs 0, ledgered
                     plan.append((index, digest, SimStatus.SKIPPED, alpha_id, record))
                 elif digest in in_flight:
                     # Same payload still queued or running (possibly from earlier in this
@@ -562,6 +567,11 @@ class BatchEngine:
                 )
                 for r in queued
             ]
+
+        # forge: Quota Governor dispatch gate — lane quota, hourly pacing, quiet hours. What it
+        # holds back stays QUEUED. No seam: this is the one place work is chosen to send.
+        if self.governor is not None and not (items := await self.governor.pace(items)):
+            return 0
 
         quotas = await self.quotas()
         demand = demand_by_task(items, self.max_batch)

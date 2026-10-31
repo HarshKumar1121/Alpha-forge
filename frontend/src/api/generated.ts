@@ -857,6 +857,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/forge/quota": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Quota Today
+         * @description Today's budget: planned vs spent per lane, hourly spend, and the safety margin.
+         */
+        get: operations["quota_today_api_forge_quota_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/quota/estimate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Estimate
+         * @description Would a plan of ``simulations`` fit in ``lane`` today? What would be trimmed?
+         */
+        post: operations["estimate_api_forge_quota_estimate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/forge/templates": {
         parameters: {
             query?: never;
@@ -4786,6 +4826,116 @@ export interface components {
             /** Stopping */
             stopping: boolean;
         };
+        /** QuotaEstimate */
+        QuotaEstimate: {
+            /** Admitted */
+            admitted: number;
+            /** Admittedcost */
+            admittedCost: number;
+            /** Asked */
+            asked: number;
+            /** Globalremaining */
+            globalRemaining: number;
+            /** Hourstosend */
+            hoursToSend: number;
+            /** Lane */
+            lane: string;
+            /** Laneremaining */
+            laneRemaining: number;
+            /** Reason */
+            reason: string;
+            /** Trimmed */
+            trimmed: number;
+        };
+        /** QuotaEstimateRequest */
+        QuotaEstimateRequest: {
+            /**
+             * Costeach
+             * @default 1
+             */
+            costEach: number;
+            /** Lane */
+            lane: string;
+            /** Simulations */
+            simulations: number;
+        };
+        /** QuotaHour */
+        QuotaHour: {
+            /** Hour */
+            hour: string;
+            /** Spent */
+            spent: number;
+        };
+        /** QuotaLane */
+        QuotaLane: {
+            /** About */
+            about: string;
+            /** Cached */
+            cached: number;
+            /** Effectivecap */
+            effectiveCap: number;
+            /** Lane */
+            lane: string;
+            /** Planned */
+            planned: number;
+            /** Queued */
+            queued: number;
+            /** Remaining */
+            remaining: number;
+            /** Share */
+            share: number;
+            /** Spent */
+            spent: number;
+        };
+        /** QuotaPacing */
+        QuotaPacing: {
+            /** Lasthour */
+            lastHour: number;
+            /** Maxperhour */
+            maxPerHour: number;
+            /** Quiethours */
+            quietHours: string[];
+            /** Quietnow */
+            quietNow: boolean;
+        };
+        /** QuotaToday */
+        QuotaToday: {
+            /** Brainremaining */
+            brainRemaining: number | null;
+            /** Budget */
+            budget: number;
+            /** Cached */
+            cached: number;
+            /** Day */
+            day: string;
+            /** Dayelapsed */
+            dayElapsed: number;
+            /** Exact */
+            exact: boolean;
+            /** Hourly */
+            hourly: components["schemas"]["QuotaHour"][];
+            /** Lanes */
+            lanes: components["schemas"]["QuotaLane"][];
+            /** Limit */
+            limit: number;
+            /** Marginwarning */
+            marginWarning: boolean;
+            pacing: components["schemas"]["QuotaPacing"];
+            /** Queued */
+            queued: number;
+            /** Remaining */
+            remaining: number;
+            /** Resetsinseconds */
+            resetsInSeconds: number;
+            /** Safetymargin */
+            safetyMargin: number;
+            /** Spent */
+            spent: number;
+            /** Timezone */
+            timezone: string;
+            /** Unrecorded */
+            unrecorded: number;
+        };
         /** RankedAlpha */
         RankedAlpha: {
             /** Aftercostsharpe */
@@ -7389,6 +7539,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GymTearSheet"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    quota_today_api_forge_quota_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuotaToday"];
+                };
+            };
+        };
+    };
+    estimate_api_forge_quota_estimate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QuotaEstimateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuotaEstimate"];
                 };
             };
             /** @description Validation Error */

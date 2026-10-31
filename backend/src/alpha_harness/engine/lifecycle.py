@@ -218,6 +218,11 @@ async def record_launch(
             .where(SimulationRecord.id == record_id)
             .values(platform_id=platform_id, submitted_at=now)
         )
+    # forge: charge the Quota Governor's ledger in this same transaction. Won or not, BRAIN
+    # accepted the POST, so the quota is spent. Imported here: the ledger imports this module.
+    from ..forge.quota.ledger import record_spend
+
+    await record_spend(session, [record_id, *children])
     if rate_limit is not None:
         session.add(
             QuotaSnapshot(

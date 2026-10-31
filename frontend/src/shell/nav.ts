@@ -3,6 +3,7 @@ import {
   DatabaseIcon,
   DumbbellIcon, // forge: Gym Playground's icon
   FlaskConicalIcon,
+  GaugeIcon, // forge: Today's icon (the quota gauge)
   Grid3x3Icon,
   LayersIcon,
   LayoutGridIcon,
@@ -85,6 +86,12 @@ export const NAV = [
     tabs: TOOL_TABS,
   },
   // forge: the Forge section; its screens live in screens/forge/. NAV is the only seam.
+  {
+    to: '/forge/today',
+    group: 'Forge',
+    label: 'Today',
+    icon: GaugeIcon,
+  },
   {
     to: '/forge/gym',
     group: 'Forge',
