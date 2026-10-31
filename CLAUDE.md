@@ -37,6 +37,8 @@ change to an upstream file only when there is no seam, and say so in the marker.
 - Backend tests: `cd backend && uv run pytest -q`
 - Frontend checks: `cd frontend && pnpm check`
 - Dev: use the repo's task runner (`lefthook run dev`) or the commands Phase 0 identified.
+- The user runs `lefthook run dev` and checks the UI in the browser. Do not start dev servers or
+  headless browsers; verify with tests and curl against the running server instead.
 
 ## Hard rules
 1. No code path may submit an alpha. Submission is manual on the BRAIN website.

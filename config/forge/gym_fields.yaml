@@ -1,0 +1,15 @@
+# Which "dataset" each Gym field belongs to, so templates with same_dataset_as /
+# different_dataset_from can be filled on the Gym the way they would be on BRAIN.
+# The Gym itself has no datasets; this file is the grouping a BRAIN catalog would give you.
+#
+# Order is preference: when the Template Library picks a field to "Try on Gym", it takes the
+# first one that fits the slot, so real signals come before the alt_* noise fields.
+# Patterns use shell-style wildcards (alt_*). Archetypes are NOT listed here: they are computed
+# by the profiler from the data, like for any real field.
+
+datasets:
+  analyst: [anl_revision]
+  fundamental: [book_to_price]
+  news: [news_sentiment]
+  pv1: [returns, close, volume, adv20, cap]
+  alt: ["alt_*"]

@@ -4,6 +4,7 @@
  */
 
 import { useMutation, useQuery } from '@tanstack/react-query'
+import { useSearch } from '@tanstack/react-router'
 import { DumbbellIcon, PlayIcon } from 'lucide-react'
 import { type KeyboardEvent, useMemo, useState } from 'react'
 import { DEFAULT_TRUNCATION, MAX_DECAY, MAX_TEST_PERIOD_YEARS } from '@/api/platform'
@@ -36,7 +37,9 @@ const EXAMPLES = [
 const ALT_FIELDS = /^alt_\d+$/
 
 export function GymPlaygroundScreen() {
-  const [expression, setExpression] = useState('')
+  // Seeded from ?expr= (the Template Library's "Try on Gym"); yours to edit from then on.
+  const { expr } = useSearch({ from: '/forge/gym' })
+  const [expression, setExpression] = useState(expr ?? '')
   const [decay, setDecay] = useState('0')
   const [truncation, setTruncation] = useState(String(DEFAULT_TRUNCATION))
   const [neutralization, setNeutralization] = useState<Neutralization>('INDUSTRY')

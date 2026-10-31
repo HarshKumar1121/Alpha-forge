@@ -857,6 +857,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/forge/templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Templates
+         * @description Every template, with computed alpha-type fit, plus the files that failed to load.
+         */
+        get: operations["list_templates_api_forge_templates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/templates/{template_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Template Detail */
+        get: operations["template_detail_api_forge_templates__template_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -3501,6 +3538,134 @@ export interface components {
             kind: "fields";
             /** Vector Operators */
             vector_operators?: string[];
+        };
+        /** ForgeTemplateDetail */
+        ForgeTemplateDetail: {
+            /** Angle */
+            angle: string;
+            /** Category */
+            category: string;
+            /** Complexity */
+            complexity: string;
+            /** Depth */
+            depth: number;
+            /** Example */
+            example: string;
+            /** Expr */
+            expr: string;
+            /** Fields */
+            fields: string[];
+            /** Fits */
+            fits: {
+                [key: string]: components["schemas"]["ForgeTemplateFit"];
+            };
+            gym: components["schemas"]["ForgeTemplateGym"];
+            /** Gymavailable */
+            gymAvailable: boolean;
+            /** Id */
+            id: string;
+            /** Lookbacks */
+            lookbacks: number[];
+            /** Name */
+            name: string;
+            /** Needs */
+            needs: string[];
+            /** Onlyif */
+            onlyIf: string | null;
+            /** Operatorcount */
+            operatorCount: number;
+            /** Rationale */
+            rationale: string;
+            /** Slots */
+            slots: components["schemas"]["ForgeTemplateSlot"][];
+        };
+        /** ForgeTemplateFit */
+        ForgeTemplateFit: {
+            /** Errors */
+            errors: string[];
+            /** Flippedok */
+            flippedOk: boolean;
+            /** Ok */
+            ok: boolean;
+            /** Warnings */
+            warnings: string[];
+        };
+        /** ForgeTemplateGym */
+        ForgeTemplateGym: {
+            /** Expression */
+            expression: string | null;
+            /** Fields */
+            fields: {
+                [key: string]: string;
+            };
+            /** Unavailablereason */
+            unavailableReason: string | null;
+        };
+        /** ForgeTemplateList */
+        ForgeTemplateList: {
+            /** Alphatypes */
+            alphaTypes: string[];
+            /** Errors */
+            errors: components["schemas"]["ForgeTemplateLoadError"][];
+            /** Templates */
+            templates: components["schemas"]["ForgeTemplateSummary"][];
+        };
+        /** ForgeTemplateLoadError */
+        ForgeTemplateLoadError: {
+            /** File */
+            file: string;
+            /** Message */
+            message: string;
+            /** Templateid */
+            templateId: string | null;
+        };
+        /** ForgeTemplateSlot */
+        ForgeTemplateSlot: {
+            /** Aggregate */
+            aggregate?: string | null;
+            /** Archetype */
+            archetype?: string[];
+            /** Differentdatasetfrom */
+            differentDatasetFrom?: string | null;
+            /**
+             * Hint
+             * @default
+             */
+            hint: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "field" | "window" | "group";
+            /** Name */
+            name: string;
+            /** Samedatasetas */
+            sameDatasetAs?: string | null;
+            /** Type */
+            type?: string | null;
+            /** Values */
+            values?: (number | string)[];
+        };
+        /** ForgeTemplateSummary */
+        ForgeTemplateSummary: {
+            /** Angle */
+            angle: string;
+            /** Category */
+            category: string;
+            /** Complexity */
+            complexity: string;
+            /** Fits */
+            fits: {
+                [key: string]: components["schemas"]["ForgeTemplateFit"];
+            };
+            /** Gymavailable */
+            gymAvailable: boolean;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Operatorcount */
+            operatorCount: number;
         };
         /** GymCatalog */
         GymCatalog: {
@@ -7224,6 +7389,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GymTearSheet"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_templates_api_forge_templates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForgeTemplateList"];
+                };
+            };
+        };
+    };
+    template_detail_api_forge_templates__template_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForgeTemplateDetail"];
                 };
             };
             /** @description Validation Error */

@@ -32,28 +32,67 @@ Why the right template depends on how the field BEHAVES (the profiler's archetyp
 signs a template by the Sharpe of its matching probe, so the data — not a guess — says
 whether "more" is good or bad for this field.
 
+Which alpha types a template fits is computed (:func:`fits`), never trusted from a label:
+``complexity: simple`` is the author's intent, the linter is the judge.
+
 Ported from alpha-copilot ``research/templates.py`` and upgraded from its single ``$f`` slot to
 the typed-slot format.
 """
 
 import itertools
+import re
 from dataclasses import dataclass, replace
 from functools import cache
 from typing import TYPE_CHECKING, Any
 
+import structlog
+import yaml
+
 from .. import config
-from ..alpha_types import lint
+from ..alpha_types import lint, load_all
 from ..expr import ParseError, analyse, on_result, render_template
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping, Sequence
+    from pathlib import Path
 
     from ..alpha_types import AlphaType
 
+log = structlog.get_logger(__name__)
+
 ANGLES = ("level", "change", "history")
 ARCHETYPES = ("slow", "medium", "persistent", "fast")
-#: How far a sparse field is carried forward before it counts as missing.
+COMPLEXITIES = ("simple", "medium", "complex")
+FIELD_TYPES = ("MATRIX", "VECTOR")
+#: How far a sparse field is carried forward before it counts as missing. A quarter: long
+#: enough to bridge a quarterly fundamental's gap between reports, short enough that a
+#: delisted or stale value does not linger for a year.
 BACKFILL_DAYS = 63
+
+#: The schema of one YAML entry. Everything else is a typo the loader should catch.
+REQUIRED_KEYS = ("id", "name", "category", "complexity", "slots", "expr", "rationale")
+OPTIONAL_KEYS = ("angle", "only_if")
+SLOT_KEYS = {
+    "field": {
+        "kind",
+        "archetype",
+        "type",
+        "aggregate",
+        "same_dataset_as",
+        "different_dataset_from",
+        "hint",
+    },
+    "window": {"kind", "values"},
+    "group": {"kind", "values"},
+}
+_PLACEHOLDER = re.compile(r"\$([A-Za-z_]\w*)")
+#: A template cleaning its own slot would clean it twice: the engine already does.
+_SELF_WRAP = re.compile(r"\b(ts_backfill|group_backfill|vec_\w+)\(\s*\$([A-Za-z_]\w*)")
+
+
+class ConstraintError(ValueError):
+    """A requested fill breaks one of the template's slot rules."""
+
 
 type Param = int | str
 
@@ -214,19 +253,139 @@ def parse_template(raw: dict[str, Any]) -> Template:
     return replace(t, needs=frozenset(fields) - set(stand_ins.values()))
 
 
+def validate(raw: object) -> list[str]:
+    """Schema problems in one YAML entry, each naming the key. Empty means well-formed.
+
+    :func:`parse_template` checks what it needs to build a Template; this checks the whole
+    library contract, so a typo (``same_dataset``, ``archtype``) fails loudly instead of
+    silently loosening a slot.
+    """
+    if not isinstance(raw, dict):
+        return ["entry is not a mapping"]
+    entry: dict[str, Any] = {str(k): v for k, v in raw.items()}  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+    out = [f"{k}: required" for k in REQUIRED_KEYS if entry.get(k) in (None, "")]
+    out += [f"{k}: unknown key" for k in entry if k not in (*REQUIRED_KEYS, *OPTIONAL_KEYS)]
+    if (c := entry.get("complexity")) is not None and c not in COMPLEXITIES:
+        out.append(f"complexity: {c!r} is not one of {', '.join(COMPLEXITIES)}")
+    if (a := entry.get("angle")) is not None and a not in ANGLES:
+        out.append(f"angle: {a!r} is not one of {', '.join(ANGLES)}")
+    if (o := entry.get("only_if")) is not None and not isinstance(o, str):
+        out.append("only_if: must be a profiler flag name, e.g. size_linked")
+    slots = entry.get("slots")
+    if slots is not None and not isinstance(slots, dict):
+        return [*out, "slots: must be a mapping of slot name -> slot"]
+    slots = {str(k): v for k, v in (slots or {}).items()}  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+    fields = {k for k, s in slots.items() if isinstance(s, dict) and s.get("kind") == "field"}  # pyright: ignore[reportUnknownMemberType]
+    for name, s in slots.items():
+        out += [f"slots.{name}: {p}" for p in _validate_slot(s, fields - {name})]
+    expr = str(entry.get("expr") or "")
+    used = set(_PLACEHOLDER.findall(expr))
+    out += [f"expr: ${k} is not a declared slot" for k in sorted(used - set(slots))]
+    out += [f"slots.{k}: declared but never used in expr" for k in sorted(set(slots) - used)]
+    out += [
+        f"expr: {op}(${k}…) wraps a slot; the engine already cleans every field "
+        "(ts_backfill, vec_ aggregate), so templates never wrap slots themselves"
+        for op, k in _SELF_WRAP.findall(expr)
+    ]
+    return out
+
+
+def _validate_slot(raw: object, other_fields: set[str]) -> list[str]:
+    if not isinstance(raw, dict):
+        return ["must be a mapping, e.g. {kind: field}"]
+    s: dict[str, Any] = {str(k): v for k, v in raw.items()}  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+    kind = s.get("kind")
+    if kind not in SLOT_KEYS:
+        return [f"kind {kind!r} is not one of field, window, group"]
+    out = [f"{k}: unknown key for a {kind} slot" for k in s if k not in SLOT_KEYS[kind]]
+    if kind == "field":
+        arch = s.get("archetype") or []
+        if not isinstance(arch, list) or set(map(str, arch)) - set(ARCHETYPES):  # pyright: ignore[reportUnknownArgumentType]
+            out.append(f"archetype: must be a list drawn from {', '.join(ARCHETYPES)}")
+        if (t := s.get("type")) is not None and t not in FIELD_TYPES:
+            out.append(f"type: {t!r} is not MATRIX or VECTOR")
+        if (agg := s.get("aggregate")) is not None and not str(agg).startswith("vec_"):
+            out.append(f"aggregate: {agg!r} is not a vec_ operator")
+        out += [
+            f"{key}: {s[key]!r} is not another field slot"
+            for key in ("same_dataset_as", "different_dataset_from")
+            if s.get(key) is not None and s[key] not in other_fields
+        ]
+        return out
+    values = s.get("values")
+    if not isinstance(values, list) or not values:
+        return [*out, f"values: a {kind} slot needs a non-empty list"]
+    if kind == "window" and not all(type(v) is int and v > 0 for v in values):  # pyright: ignore[reportUnknownVariableType]
+        out.append("values: window values must be positive integers (days)")
+    if kind == "group" and not all(isinstance(v, str) for v in values):  # pyright: ignore[reportUnknownVariableType]
+        out.append("values: group values must be names, e.g. industry")
+    return out
+
+
+@dataclass(frozen=True, slots=True)
+class LoadError:
+    file: str
+    template_id: str | None
+    message: str
+
+    def __str__(self) -> str:
+        where = f"{self.file}: {self.template_id}" if self.template_id else self.file
+        return f"{where}: {self.message}"
+
+
+@dataclass(frozen=True, slots=True)
+class LibraryLoad:
+    templates: tuple[Template, ...]
+    errors: tuple[LoadError, ...] = ()
+
+
 @cache
-def library() -> tuple[Template, ...]:
-    """Every template under ``config/forge/templates``, in file then listed order."""
+def load_library(directory: Path | None = None) -> LibraryLoad:
+    """Every template under ``directory`` (default ``config/forge/templates``), in file then
+    listed order, plus a clear error for each entry that could not be loaded.
+
+    One bad entry never takes the library down: its siblings, and the other files, still load.
+    """
+    folder = directory or config.config_dir() / "templates"
     out: list[Template] = []
-    seen: set[str] = set()
-    for path in sorted((config.config_dir() / "templates").glob("*.yaml")):
-        for raw in config.read_yaml(path).get("templates") or []:
-            t = parse_template(raw)
+    errors: list[LoadError] = []
+    seen: dict[str, str] = {}
+    for path in sorted(folder.glob("*.yaml")):
+        try:
+            entries = config.read_yaml(path).get("templates")
+        except (yaml.YAMLError, ValueError) as exc:
+            errors.append(LoadError(path.name, None, f"not valid YAML: {exc}"))
+            continue
+        if not isinstance(entries, list):
+            errors.append(LoadError(path.name, None, "needs a top-level `templates:` list"))
+            continue
+        for i, raw in enumerate(entries, 1):  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+            tid = str(raw.get("id")) if isinstance(raw, dict) and raw.get("id") else f"entry #{i}"  # pyright: ignore[reportUnknownMemberType]
+            if problems := validate(raw):
+                errors += [LoadError(path.name, tid, p) for p in problems]
+                continue
+            try:
+                t = parse_template(raw)  # pyright: ignore[reportUnknownArgumentType]
+            except ValueError as exc:
+                errors.append(LoadError(path.name, tid, str(exc)))
+                continue
             if t.id in seen:
-                raise ValueError(f"duplicate template id {t.id!r} in {path.name}")
-            seen.add(t.id)
+                errors.append(LoadError(path.name, tid, f"duplicate id (first in {seen[t.id]})"))
+                continue
+            seen[t.id] = path.name
             out.append(t)
-    return tuple(out)
+    for e in errors:
+        log.warning("forge.template_load_error", error=str(e))
+    return LibraryLoad(tuple(out), tuple(errors))
+
+
+def library() -> tuple[Template, ...]:
+    """Every template that loaded cleanly. See :func:`load_library` for the ones that did not."""
+    return load_library().templates
+
+
+def get(template_id: str) -> Template | None:
+    return next((t for t in library() if t.id == template_id), None)
 
 
 # --- rendering ---------------------------------------------------------------------------------
@@ -317,10 +476,20 @@ def match(
     return out
 
 
-def _fits(slot: FieldSlot, f: FieldInfo) -> bool:
+def field_problem(slot: FieldSlot, f: FieldInfo) -> str | None:
+    """Why ``f`` cannot fill ``slot`` on its own (archetype or type), or None if it can."""
     if slot.archetype and f.archetype not in slot.archetype:
-        return False
-    return slot.type is None or slot.type == f.type
+        return (
+            f"field {f.id} behaves {f.archetype or 'unknown'}; "
+            f"this slot takes {', '.join(slot.archetype)} fields"
+        )
+    if slot.type is not None and slot.type != f.type:
+        return f"field {f.id} is {f.type}; this slot needs a {slot.type} field"
+    return None
+
+
+def _fits(slot: FieldSlot, f: FieldInfo) -> bool:
+    return field_problem(slot, f) is None
 
 
 def bindings(t: Template, fields: Sequence[FieldInfo]) -> list[dict[str, FieldInfo]]:
@@ -344,11 +513,137 @@ def bindings(t: Template, fields: Sequence[FieldInfo]) -> list[dict[str, FieldIn
     return out
 
 
-def expand(t: Template, fields: Sequence[FieldInfo]) -> list[str]:
-    """Every expression the template yields over ``fields`` and its window/group values."""
+type Choice = Param | Sequence[Param]
+
+
+def expand(
+    t: Template, fields: Sequence[FieldInfo], choices: Mapping[str, Choice] | None = None
+) -> list[str]:
+    """Every expression the template yields over ``fields`` and its window/group values.
+
+    ``choices`` narrows the expansion: a field slot pinned to a field id from ``fields``, a
+    window or group slot pinned to one value or a subset of its allowed values. A choice that
+    breaks a slot rule raises :class:`ConstraintError` saying which rule — never a silent
+    empty list, because "no candidates" and "you asked for something illegal" are different
+    answers.
+    """
+    pinned, params = _apply_choices(t, fields, choices or {})
     vector = {f.id for f in fields if f.type == "VECTOR"}
+    keys = list(params)
+    combos = [dict(zip(keys, c, strict=True)) for c in itertools.product(*params.values())]
     return [
         render(t, {k: f.id for k, f in b.items()}, p, vector=vector)
         for b in bindings(t, fields)
-        for p in t.all_params()
+        if all(b[n].id == f.id for n, f in pinned.items())
+        for p in combos or [{}]
     ]
+
+
+def _apply_choices(
+    t: Template, fields: Sequence[FieldInfo], choices: Mapping[str, Choice]
+) -> tuple[dict[str, FieldInfo], dict[str, tuple[Param, ...]]]:
+    where = f"template {t.id!r}"
+    by_id = {f.id: f for f in fields}
+    pinned: dict[str, FieldInfo] = {}
+    params = dict(t.params)
+    for name, choice in choices.items():
+        slot = t.slots.get(name)
+        if slot is None:
+            raise ConstraintError(f"{where}: no slot named {name}")
+        if isinstance(slot, FieldSlot):
+            if not isinstance(choice, str) or choice not in by_id:
+                raise ConstraintError(f"{where} slot {name}: {choice!r} is not in the field set")
+            f = by_id[choice]
+            if problem := field_problem(slot, f):
+                raise ConstraintError(f"{where} slot {name}: {problem}")
+            pinned[name] = f
+            continue
+        wanted: tuple[Param, ...] = (
+            (choice,) if isinstance(choice, int | str) else tuple(choice)  # pyright: ignore[reportUnnecessaryIsInstance]
+        )
+        if bad := [v for v in wanted if v not in slot.values]:
+            allowed = ", ".join(map(str, slot.values))
+            raise ConstraintError(f"{where} slot {name}: {bad} not among the allowed {allowed}")
+        params[name] = wanted
+    for name, f in pinned.items():
+        slot = t.field_slot(name)
+        same, diff = slot.same_dataset_as, slot.different_dataset_from
+        if same in pinned and pinned[same].dataset != f.dataset:
+            raise ConstraintError(
+                f"{where} slot {name}: {f.id} ({f.dataset}) must share a dataset with "
+                f"slot {same}'s {pinned[same].id} ({pinned[same].dataset})"
+            )
+        if diff in pinned and pinned[diff].dataset == f.dataset:
+            raise ConstraintError(
+                f"{where} slot {name}: {f.id} must come from a different dataset than "
+                f"slot {diff}'s {pinned[diff].id} (both {f.dataset})"
+            )
+    if len({f.id for f in pinned.values()}) < len(pinned):
+        raise ConstraintError(f"{where}: one field cannot fill two slots")
+    return pinned, params
+
+
+# --- alpha-type fit ----------------------------------------------------------------------------
+
+#: The dataset BRAIN files price/volume fields under; the hard-coded fields live there.
+PV_DATASET = "pv1"
+
+
+@dataclass(frozen=True, slots=True)
+class Fit:
+    """Whether a template, filled as favourably as its slot rules allow, passes a type's lint.
+
+    ``flipped_ok`` repeats the check with the signal negated: the planner flips a template
+    whose probe says "less is better", and the extra ``-`` is one more operator.
+    """
+
+    ok: bool
+    flipped_ok: bool
+    errors: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+
+def placeholder_fill(t: Template) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
+    """Fill each field slot with a stand-in (``x_field``…) and a catalog that describes it.
+
+    The fill is the most favourable one the rules allow: every field on the price/volume
+    dataset (where the hard-coded ``returns``/``adv20`` live), unless ``different_dataset_from``
+    forces a second dataset. "Can this template fit power_pool?" is a question about its best
+    legal fill; a real field set can only do worse.
+    """
+    names = t.field_slots
+    datasets = dict.fromkeys(names, PV_DATASET)
+    for _ in names:  # constraints can chain (Z same as Y, Y different from X): settle them
+        for n in names:
+            s = t.field_slot(n)
+            if s.same_dataset_as:
+                datasets[n] = datasets[s.same_dataset_as]
+            elif s.different_dataset_from:
+                other = datasets[s.different_dataset_from]
+                datasets[n] = "other1" if other == PV_DATASET else PV_DATASET
+    fields = {n: f"{n.lower()}_field" for n in names}
+    catalog: dict[str, dict[str, Any]] = {
+        f: {"dataset": PV_DATASET, "type": "MATRIX"} for f in t.needs
+    }
+    for n, f in fields.items():
+        catalog[f] = {"dataset": datasets[n], "type": t.field_slot(n).type or "MATRIX"}
+    return fields, catalog
+
+
+def example(t: Template, *, sign: int = 1) -> str:
+    """The template rendered on its placeholders at its default params."""
+    fields, _ = placeholder_fill(t)
+    return render(t, fields, t.default_params(), sign=sign)
+
+
+def fits(t: Template, alpha_types: Mapping[str, AlphaType] | None = None) -> dict[str, Fit]:
+    """Which alpha types this template can satisfy, computed by linting a placeholder fill
+    against every alpha type YAML — never read from a label."""
+    fields, catalog = placeholder_fill(t)
+    target = catalog[fields[t.field_slots[0]]]["dataset"] if fields else PV_DATASET
+    out: dict[str, Fit] = {}
+    for name, at in (alpha_types or load_all()).items():
+        plain = lint(example(t), at, catalog=catalog, target_dataset=target)
+        flipped = lint(example(t, sign=-1), at, catalog=catalog, target_dataset=target)
+        out[name] = Fit(plain.ok, flipped.ok, tuple(plain.errors), tuple(plain.warnings))
+    return out

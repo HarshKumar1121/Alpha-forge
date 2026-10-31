@@ -60,4 +60,4 @@ def reload() -> None:
     court.cache_clear()
     lanes.cache_clear()
     alpha_types.load_all.cache_clear()
-    templates.library.cache_clear()
+    templates.load_library.cache_clear()

@@ -32,6 +32,7 @@ from .api import (
     chat,
     competitions,
     forge_gym,  # forge: Gym Playground route; no router auto-discovery seam exists
+    forge_templates,  # forge: Template Library route; same missing seam
     ga,
     lab_tasks,
     llm,
@@ -190,6 +191,7 @@ def create_app() -> FastAPI:
     app.include_router(update.router)
     app.include_router(preferences.router)
     app.include_router(forge_gym.router)  # forge: Gym Playground (free, never reaches BRAIN)
+    app.include_router(forge_templates.router)  # forge: Template Library (read-only)
     app.include_router(ws.router)
 
     @app.get("/api/health", tags=["meta"])

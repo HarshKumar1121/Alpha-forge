@@ -17,6 +17,7 @@ from alpha_harness.forge.research.templates import (
     bindings,
     expand,
     library,
+    load_library,
     parse_template,
     render,
 )
@@ -29,6 +30,12 @@ ECONOMIC = set(load("regular").lint_rules["allowed_lookbacks"])
 def test_library_is_not_empty_and_ids_are_unique() -> None:
     assert len(LIBRARY) >= 20
     assert len({t.id for t in LIBRARY}) == len(LIBRARY)
+
+
+def test_every_shipped_template_passes_the_schema() -> None:
+    loaded = load_library()
+    assert [str(e) for e in loaded.errors] == []
+    assert len(loaded.templates) == 26
 
 
 @pytest.mark.parametrize("t", LIBRARY, ids=[t.id for t in LIBRARY])

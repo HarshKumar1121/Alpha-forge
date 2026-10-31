@@ -6,6 +6,7 @@ import {
   Grid3x3Icon,
   LayersIcon,
   LayoutGridIcon,
+  LibraryIcon, // forge: Template Library's icon
   ListChecksIcon,
   RefreshCwIcon,
   SparklesIcon,
@@ -89,6 +90,12 @@ export const NAV = [
     group: 'Forge',
     label: 'Gym Playground',
     icon: DumbbellIcon,
+  },
+  {
+    to: '/forge/templates',
+    group: 'Forge',
+    label: 'Template Library',
+    icon: LibraryIcon,
   },
   {
     to: '/tasks',

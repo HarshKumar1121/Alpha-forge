@@ -134,7 +134,19 @@ const forge = createRoute({ getParentRoute: () => root, path: '/forge' })
 const forgeGym = createRoute({
   getParentRoute: () => forge,
   path: 'gym',
+  // An expression to start from, e.g. a template sent by the Template Library's "Try on Gym".
+  validateSearch: (search: Record<string, unknown>) => ({
+    expr: typeof search['expr'] === 'string' ? search['expr'] : undefined,
+  }),
   component: lazyRouteComponent(() => import('@/screens/forge/gym'), 'GymPlaygroundScreen'),
+})
+const forgeTemplates = createRoute({
+  getParentRoute: () => forge,
+  path: 'templates',
+  validateSearch: (search: Record<string, unknown>) => ({
+    t: typeof search['t'] === 'string' ? search['t'] : undefined,
+  }),
+  component: lazyRouteComponent(() => import('@/screens/forge/templates'), 'TemplateLibraryScreen'),
 })
 
 const tasks = createRoute({ getParentRoute: () => root, path: '/tasks' })
@@ -224,7 +236,7 @@ const routeTree = root.addChildren([
   data,
   labs.addChildren([labsIndex, searchLab, templateLab, evolutionLab, powerPoolLab, superAlphaLab]),
   tools.addChildren([toolsIndex, settingsSampler, correlationBreaker, fieldsSampler]),
-  forge.addChildren([forgeGym]), // forge: Forge section
+  forge.addChildren([forgeGym, forgeTemplates]), // forge: Forge section
   competitionsRoute,
   tasks.addChildren([tasksIndex, taskResults]),
   pool.addChildren([poolIndex, poolTab]),
