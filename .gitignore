@@ -4,7 +4,9 @@
 # References for Development
 # CLAUDE.md is tracked on purpose: it carries the hard rules and the upstream policy, which
 # have to travel with the repo. Upstream alpha-harness ships no CLAUDE.md, so it cannot conflict.
-/docs/
+# forge: /docs/* instead of upstream's /docs/ so docs/forge/ (Forge design + playbooks) is tracked.
+/docs/*
+!/docs/forge/
 
 .venv/
 node_modules/

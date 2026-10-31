@@ -4,9 +4,26 @@
 A personal daily-use alpha research platform for WorldQuant BRAIN, built by a CS student who is
 learning to become a quant researcher. It is a fork of alpha-harness (MIT, © MiracleInvoker)
 extended with alpha-copilot's research layer. Design: docs/forge/ARCHITECTURE.md. Build order:
-docs/forge/BUILD_PLAYBOOK.md. Two equal goals: find robust, diverse alphas within a
-5,000/day simulation budget; teach the user. Prefer readable code with docstrings that explain
-the quant reasoning.
+Phases 0–2 of docs/forge/BUILD_PLAYBOOK.md, then docs/forge/BUILD_PLAYBOOK_V2.md (see Status /
+roadmap). Two equal goals: find robust, diverse alphas within a 5,000/day simulation budget;
+teach the user. Prefer readable code with docstrings that explain the quant reasoning.
+
+## Status / roadmap
+- **Done:** Phases 0–2 of BUILD_PLAYBOOK.md (base running, BRAIN validated, research brain
+  ported with the Gym Playground, typed-slot templates).
+- **Current plan:** docs/forge/BUILD_PLAYBOOK_V2.md is authoritative from Phase 3 on. v1's
+  Phases 3–13 are superseded; do not follow them. ARCHITECTURE.md is still the module design,
+  but its §7 build order is v1's, and where it treats the Gym as a research stage (Behaviour Lab
+  Gym mode, the agent's "run Gym experiments") v2 wins.
+- **v2 in brief:** BRAIN is the simulator; scopes come live from `OPTIONS /simulations`, so only
+  combinations the account can run are offered. Submittable means BRAIN says so
+  (`/alphas/{id}/check`, self / power-pool correlation), never a local guess. The Gym becomes
+  Practice mode: learning and free pre-screening only, never presented as a stand-in for BRAIN.
+  One pipeline per alpha type (`config/forge/pipelines/*.yaml`). Hard rules below are unchanged.
+- **v2 phases:** 3 Quota Governor + Today · 4 Real scope and data · 5 Template Studio v2 ·
+  6 Type pipelines on BRAIN · 7 Families and Submittable Board · 8 Research analytics ·
+  9 Learning engine · 10 AI agent with memory · 11 Practice mode and Real-Price Lab.
+- **Next:** Phase 3.
 
 ## Layout
 - backend/ — FastAPI, Python 3.14, uv. Package `alpha_harness` (keep the name; Forge code goes
