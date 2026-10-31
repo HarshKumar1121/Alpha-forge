@@ -31,6 +31,7 @@ from .api import (
     catalog,
     chat,
     competitions,
+    forge_gym,  # forge: Gym Playground route; no router auto-discovery seam exists
     ga,
     lab_tasks,
     llm,
@@ -188,6 +189,7 @@ def create_app() -> FastAPI:
     app.include_router(competitions.router)
     app.include_router(update.router)
     app.include_router(preferences.router)
+    app.include_router(forge_gym.router)  # forge: Gym Playground (free, never reaches BRAIN)
     app.include_router(ws.router)
 
     @app.get("/api/health", tags=["meta"])

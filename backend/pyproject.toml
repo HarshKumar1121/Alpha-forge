@@ -20,8 +20,12 @@ dependencies = [
     "openai>=3.19.2",
     "optuna>=5.0.0",
     "packaging>=26.3",
+    # forge: the ported research layer (Gym, sim, planner, Court) is built on pandas.
+    "pandas>=2.3",
     "pyarrow>=25.0.1",
     "pydantic>=2.13.5",
+    # forge: Forge reads config/forge/*.yaml directly; was only transitive via optuna.
+    "pyyaml>=6",
     "sqlalchemy[asyncio]>=2.0.54",
     "structlog>=26.1.0",
     "tzdata>=2026.4",
@@ -32,11 +36,15 @@ scripts.alpha-harness = "alpha_harness.__main__:main"
 [dependency-groups]
 dev = [
     "basedpyright>=1.40.1",
+    # forge: types for the pandas-based research layer under basedpyright strict.
+    "pandas-stubs>=3.1",
     "pyproject-fmt>=2.29.4",
     "pyrefly>=1.3.1",
     "pytest>=9.0.1",
     "pytest-asyncio>=1.3.0",
     "ruff>=0.16.8",
+    # forge: types for the YAML that config/forge is read with.
+    "types-pyyaml>=6.0.12",
 ]
 
 [tool.ruff]

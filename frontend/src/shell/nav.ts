@@ -1,6 +1,7 @@
 import {
   ChartPieIcon,
   DatabaseIcon,
+  DumbbellIcon, // forge: Gym Playground's icon
   FlaskConicalIcon,
   Grid3x3Icon,
   LayersIcon,
@@ -81,6 +82,13 @@ export const NAV = [
     label: 'Tools',
     icon: WrenchIcon,
     tabs: TOOL_TABS,
+  },
+  // forge: the Forge section; its screens live in screens/forge/. NAV is the only seam.
+  {
+    to: '/forge/gym',
+    group: 'Forge',
+    label: 'Gym Playground',
+    icon: DumbbellIcon,
   },
   {
     to: '/tasks',

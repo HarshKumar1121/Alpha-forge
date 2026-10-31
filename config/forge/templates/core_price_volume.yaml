@@ -85,6 +85,7 @@ templates:
   - id: combo_signal_x_quality
     name: Signal tilted toward liquid names
     category: combination/liquidity_tilt
+    only_if: size_linked        # the profiler flags fields that are partly a size bet
     complexity: simple
     slots:
       X: {kind: field}

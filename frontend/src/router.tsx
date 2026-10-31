@@ -129,6 +129,14 @@ const fieldsSampler = createRoute({
   ),
 })
 
+// forge: the Forge section's routes; screens live in screens/forge/. No route-registry seam exists.
+const forge = createRoute({ getParentRoute: () => root, path: '/forge' })
+const forgeGym = createRoute({
+  getParentRoute: () => forge,
+  path: 'gym',
+  component: lazyRouteComponent(() => import('@/screens/forge/gym'), 'GymPlaygroundScreen'),
+})
+
 const tasks = createRoute({ getParentRoute: () => root, path: '/tasks' })
 const tasksIndex = createRoute({
   getParentRoute: () => tasks,
@@ -216,6 +224,7 @@ const routeTree = root.addChildren([
   data,
   labs.addChildren([labsIndex, searchLab, templateLab, evolutionLab, powerPoolLab, superAlphaLab]),
   tools.addChildren([toolsIndex, settingsSampler, correlationBreaker, fieldsSampler]),
+  forge.addChildren([forgeGym]), // forge: Forge section
   competitionsRoute,
   tasks.addChildren([tasksIndex, taskResults]),
   pool.addChildren([poolIndex, poolTab]),

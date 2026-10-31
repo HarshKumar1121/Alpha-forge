@@ -32,8 +32,13 @@ gates:
   test.sharpe:   {min: 0.8}    # out-of-sample must not collapse
   checks_must_pass: [LOW_SHARPE, LOW_FITNESS, LOW_TURNOVER, HIGH_TURNOVER,
                      CONCENTRATED_WEIGHT, LOW_SUB_UNIVERSE_SHARPE]
+gym_checks:                    # the local Gym's BRAIN-like checks; Sharpe, fitness and turnover
+                               # limits come from the gates above. BRAIN's own checks are final.
+  concentrated_weight: 0.10    # CONCENTRATED_WEIGHT: no stock above 10% of the book on any day
+  sub_universe_ratio: 0.75     # LOW_SUB_UNIVERSE_SHARPE: the large-cap half must keep 75% of the
+                               # Sharpe left after the expected sqrt(1/2) breadth loss
 correlation:
-  pool: regular                # compared locally against your submitted Regular Alphas
+  pool: regular               # compared locally against your submitted Regular Alphas
   ceiling: 0.70
   escape_sharpe_ratio: 1.10
 robustness:

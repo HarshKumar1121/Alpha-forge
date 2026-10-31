@@ -7,6 +7,10 @@
 # Fields are always cleaned first: MATRIX -> ts_backfill(X, 63); VECTOR -> ts_backfill(<aggregate>(X), 63)
 # where the slot's aggregate defaults to vec_avg. Templates never wrap the slot themselves.
 # complexity: simple (Power Pool friendly) | medium | complex.
+# angle: level (default) | change | history — which field probe this template expresses. The
+#   planner signs a template by that probe's train Sharpe, so the data says which way is "good".
+# only_if: a profiler flag (e.g. size_linked) the field must carry for the template to apply.
+# A field slot with no `type` accepts MATRIX or VECTOR fields.
 # Verify every operator exists on YOUR account: the Studio lints against /operators.
 
 templates:
@@ -25,6 +29,7 @@ templates:
   - id: fund_improvement
     name: Fundamental improvement (change)
     category: fundamental/momentum
+    angle: change
     complexity: simple
     slots:
       X: {kind: field, archetype: [slow, medium]}
@@ -37,6 +42,7 @@ templates:
   - id: fund_surprise_own_history
     name: Unusual vs own history
     category: fundamental/surprise
+    angle: history
     complexity: simple
     slots:
       X: {kind: field, archetype: [slow, medium, persistent]}
@@ -74,6 +80,7 @@ templates:
   - id: analyst_revision
     name: Analyst revision momentum
     category: analyst/revision
+    angle: change
     complexity: simple
     slots:
       X: {kind: field, archetype: [slow, medium]}
@@ -86,6 +93,7 @@ templates:
   - id: analyst_revision_group
     name: Revision momentum vs industry
     category: analyst/revision
+    angle: change
     complexity: simple
     slots:
       X: {kind: field, archetype: [slow, medium]}
@@ -111,6 +119,7 @@ templates:
   - id: event_update_trade
     name: Trade only when new data arrives
     category: event/update
+    angle: change
     complexity: medium
     slots:
       X: {kind: field, archetype: [slow]}
@@ -135,6 +144,7 @@ templates:
   - id: sentiment_shock
     name: Sentiment shock vs normal
     category: sentiment/news
+    angle: history
     complexity: simple
     slots:
       X: {kind: field, archetype: [fast, medium]}
@@ -159,6 +169,7 @@ templates:
   - id: vector_intensity
     name: Vector field intensity (how much, not how good)
     category: vector/aggregate
+    angle: history
     complexity: simple
     slots:
       X: {kind: field, type: VECTOR, aggregate: vec_sum}

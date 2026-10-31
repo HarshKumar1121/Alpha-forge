@@ -817,6 +817,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/forge/gym/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Catalog
+         * @description The Gym's fields and operators. The answer key is deliberately not served.
+         */
+        get: operations["catalog_api_forge_gym_catalog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/gym/simulate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Simulate
+         * @description Run one expression on the Gym and return its tear sheet. Free; never touches BRAIN.
+         */
+        post: operations["simulate_api_forge_gym_simulate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -2556,6 +2596,22 @@ export interface components {
             /** Problems */
             problems: string[];
         };
+        /**
+         * Applied
+         * @description The settings as the Gym actually ran them — see the simulator docstring, point 8.
+         */
+        Applied: {
+            /** Decay */
+            decay: number;
+            /** Neutralization */
+            neutralization: string;
+            /** Stocks */
+            stocks: number;
+            /** Testyears */
+            testYears: number;
+            /** Truncation */
+            truncation: number;
+        };
         /** Assistant */
         Assistant: {
             /** Budget */
@@ -2676,6 +2732,24 @@ export interface components {
             queued: number;
             /** Remaining */
             remaining: number;
+        };
+        /**
+         * Block
+         * @description BRAIN's headline figures for one period.
+         */
+        Block: {
+            /** Drawdown */
+            drawdown: number | null;
+            /** Fitness */
+            fitness: number | null;
+            /** Margin */
+            margin: number | null;
+            /** Returns */
+            returns: number | null;
+            /** Sharpe */
+            sharpe: number | null;
+            /** Turnover */
+            turnover: number | null;
         };
         /** Blocked */
         Blocked: {
@@ -3428,6 +3502,106 @@ export interface components {
             /** Vector Operators */
             vector_operators?: string[];
         };
+        /** GymCatalog */
+        GymCatalog: {
+            /** Days */
+            days: number;
+            /** Fields */
+            fields: components["schemas"]["GymField"][];
+            /** Operators */
+            operators: string[];
+            /** Stocks */
+            stocks: number;
+        };
+        /** GymCheck */
+        GymCheck: {
+            /** Limit */
+            limit: number | null;
+            /** Name */
+            name: string;
+            /**
+             * Result
+             * @enum {string}
+             */
+            result: "PASS" | "FAIL";
+            /** Value */
+            value: number | null;
+        };
+        /** GymField */
+        GymField: {
+            /** Coverage */
+            coverage: number;
+            /** Description */
+            description: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "MATRIX" | "GROUP";
+            /** Name */
+            name: string;
+        };
+        /** GymRequest */
+        GymRequest: {
+            /**
+             * Decay
+             * @default 0
+             */
+            decay: number;
+            /** Expression */
+            expression: string;
+            /**
+             * Neutralization
+             * @default INDUSTRY
+             * @enum {string}
+             */
+            neutralization: "NONE" | "MARKET" | "SECTOR" | "INDUSTRY" | "SUBINDUSTRY";
+            /**
+             * Testyears
+             * @default 2
+             */
+            testYears: number;
+            /**
+             * Truncation
+             * @default 0.08
+             */
+            truncation: number;
+            /**
+             * Universe
+             * @default TOP3000
+             * @enum {string}
+             */
+            universe: "TOP3000" | "TOP1000" | "TOP500" | "TOP200";
+        };
+        /** GymTearSheet */
+        GymTearSheet: {
+            applied: components["schemas"]["Applied"];
+            /** Checks */
+            checks: components["schemas"]["GymCheck"][];
+            /** Expression */
+            expression: string;
+            ic: components["schemas"]["Ic"];
+            /** Icdecay */
+            icDecay: components["schemas"]["IcPoint"][];
+            inSample: components["schemas"]["Block"];
+            /** Passed */
+            passed: boolean;
+            /** Pnl */
+            pnl: components["schemas"]["PnlPoint"][];
+            /** Quintiles */
+            quintiles: components["schemas"]["Quintile"][];
+            /** Subuniversesharpe */
+            subUniverseSharpe: number | null;
+            test: components["schemas"]["Block"];
+            /**
+             * Teststart
+             * Format: date
+             */
+            testStart: string;
+            train: components["schemas"]["Block"];
+            /** Yearly */
+            yearly: components["schemas"]["YearSharpe"][];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -3448,6 +3622,22 @@ export interface components {
             version: string;
             /** Websocketclients */
             websocketClients: number;
+        };
+        /** Ic */
+        Ic: {
+            /** Hit */
+            hit: number | null;
+            /** Mean */
+            mean: number | null;
+            /** T */
+            t: number | null;
+        };
+        /** IcPoint */
+        IcPoint: {
+            /** Horizon */
+            horizon: number;
+            /** Ic */
+            ic: number | null;
         };
         /** KeyFailed */
         KeyFailed: {
@@ -3919,6 +4109,16 @@ export interface components {
             batches: number;
             /** Total */
             total: number;
+        };
+        /** PnlPoint */
+        PnlPoint: {
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /** Pnl */
+            pnl: number;
         };
         /** PortfolioMember */
         PortfolioMember: {
@@ -4408,6 +4608,13 @@ export interface components {
             start: string;
             /** Submitted */
             submitted: number;
+        };
+        /** Quintile */
+        Quintile: {
+            /** Meanreturn */
+            meanReturn: number | null;
+            /** Quintile */
+            quintile: number;
         };
         /** Quitting */
         Quitting: {
@@ -5745,6 +5952,15 @@ export interface components {
             /** Year */
             year: number;
         };
+        /** YearSharpe */
+        YearSharpe: {
+            /** Intest */
+            inTest: boolean;
+            /** Sharpe */
+            sharpe: number | null;
+            /** Year */
+            year: number;
+        };
         /** You */
         You: {
             /** Canruntenatonce */
@@ -6955,6 +7171,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AddedTask"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    catalog_api_forge_gym_catalog_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GymCatalog"];
+                };
+            };
+        };
+    };
+    simulate_api_forge_gym_simulate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GymRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GymTearSheet"];
                 };
             };
             /** @description Validation Error */
