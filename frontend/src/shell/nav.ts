@@ -6,10 +6,12 @@ import {
   FlaskConicalIcon,
   GaugeIcon, // forge: Today's icon (the quota gauge)
   Grid3x3Icon,
+  HammerIcon, // forge: Template Studio's icon
   LayersIcon,
   LayoutGridIcon,
   LibraryIcon, // forge: Template Library's icon
   ListChecksIcon,
+  PencilIcon, // forge: My Templates' icon
   RefreshCwIcon,
   SparklesIcon,
   TriangleIcon,
@@ -104,6 +106,18 @@ export const NAV = [
     group: 'Forge',
     label: 'Template Library',
     icon: LibraryIcon,
+  },
+  {
+    to: '/forge/my-templates',
+    group: 'Forge',
+    label: 'My Templates',
+    icon: PencilIcon,
+  },
+  {
+    to: '/forge/studio',
+    group: 'Forge',
+    label: 'Template Studio',
+    icon: HammerIcon,
   },
   {
     to: '/forge/fieldsets',

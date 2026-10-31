@@ -1022,6 +1022,201 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/forge/studio/description": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Description
+         * @description The saved description for an expression, or ``null`` when none was written.
+         */
+        get: operations["get_description_api_forge_studio_description_get"];
+        /**
+         * Save Description
+         * @description Keep an edited description with its expression. Never submitted by any code path.
+         */
+        put: operations["save_description_api_forge_studio_description_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/studio/description/draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Description Draft
+         * @description A first draft of BRAIN's Power Pool description for one rendered alpha.
+         *
+         *     Returns the saved description instead when one exists, so opening an alpha a second time
+         *     shows what was written rather than overwriting it with a fresh draft.
+         */
+        post: operations["description_draft_api_forge_studio_description_draft_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/studio/lint": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Lint Template
+         * @description What is wrong with this YAML, for the editor's live lint. Free and offline.
+         */
+        post: operations["lint_template_api_forge_studio_lint_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/studio/my-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List My Templates
+         * @description Every template you wrote, most recently changed first.
+         */
+        get: operations["list_my_templates_api_forge_studio_my_templates_get"];
+        put?: never;
+        /**
+         * Create My Template
+         * @description Save a new template of your own. Its id may not be one the repository already uses.
+         */
+        post: operations["create_my_template_api_forge_studio_my_templates_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/studio/my-templates/clone": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clone Template
+         * @description Copy a built-in under a new id, ready to edit. The built-in itself stays read-only.
+         */
+        post: operations["clone_template_api_forge_studio_my_templates_clone_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/studio/my-templates/{template_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update My Template
+         * @description Save an edit as a new version. The id inside the YAML may not change.
+         */
+        put: operations["update_my_template_api_forge_studio_my_templates__template_id__put"];
+        post?: never;
+        /**
+         * Delete My Template
+         * @description Remove a template of your own. Its versions go with it; built-ins are untouched.
+         */
+        delete: operations["delete_my_template_api_forge_studio_my_templates__template_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/studio/my-templates/{template_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Template
+         * @description A template as a library file, built-in or your own: what you paste into config/forge.
+         */
+        get: operations["export_template_api_forge_studio_my_templates__template_id__export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/studio/my-templates/{template_id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Template Versions
+         * @description Every saved version, newest first — what produced an alpha stays readable.
+         */
+        get: operations["template_versions_api_forge_studio_my_templates__template_id__versions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/studio/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview
+         * @description Every alpha a template renders on a field set, and what each one qualifies for.
+         */
+        post: operations["preview_api_forge_studio_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/forge/templates": {
         parameters: {
             query?: never;
@@ -1031,7 +1226,8 @@ export interface paths {
         };
         /**
          * List Templates
-         * @description Every template, with computed alpha-type fit, plus the files that failed to load.
+         * @description Every template — the repository's and your own — with computed alpha-type fit, what it
+         *     has produced so far, and the entries that failed to load.
          */
         get: operations["list_templates_api_forge_templates_get"];
         put?: never;
@@ -1049,7 +1245,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Template Detail */
+        /**
+         * Template Detail
+         * @description One template, built-in or your own.
+         */
         get: operations["template_detail_api_forge_templates__template_id__get"];
         put?: never;
         post?: never;
@@ -3214,6 +3413,18 @@ export interface components {
             /** Value */
             value: string;
         };
+        /** CloneRequest */
+        CloneRequest: {
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /** Newid */
+            newId: string;
+            /** Templateid */
+            templateId: string;
+        };
         /** Competition */
         Competition: {
             /** Enddate */
@@ -3441,10 +3652,49 @@ export interface components {
             /** Deleted */
             deleted: boolean;
         };
+        /** DescriptionDraft */
+        DescriptionDraft: {
+            /** Datarationale */
+            dataRationale: string;
+            /** Edited */
+            edited: boolean;
+            /** Expression */
+            expression: string;
+            /** Idea */
+            idea: string;
+            /** Operatorrationale */
+            operatorRationale: string;
+            /** Saved */
+            saved: boolean;
+            /** Text */
+            text: string;
+            /** Thin */
+            thin: string[];
+        };
+        /** DraftRequest */
+        DraftRequest: {
+            /** Expression */
+            expression: string;
+            /** Fieldsetid */
+            fieldSetId?: number | null;
+            /** Templateid */
+            templateId?: string | null;
+        };
         /** DropResult */
         DropResult: {
             /** Dropped */
             dropped: number;
+        };
+        /** EligibilityOut */
+        EligibilityOut: {
+            /** Alphatype */
+            alphaType: string;
+            /** Ok */
+            ok: boolean;
+            /** Reasons */
+            reasons: string[];
+            /** Warnings */
+            warnings: string[];
         };
         /**
          * EngineStatus
@@ -3557,6 +3807,18 @@ export interface components {
             simulations: number;
             /** Universe */
             universe: string;
+        };
+        /** ExportedTemplate */
+        ExportedTemplate: {
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "builtin" | "user";
+            /** Templateid */
+            templateId: string;
+            /** Yamltext */
+            yamlText: string;
         };
         /** Failure */
         Failure: {
@@ -3968,6 +4230,13 @@ export interface components {
             rationale: string;
             /** Slots */
             slots: components["schemas"]["ForgeTemplateSlot"][];
+            /**
+             * Source
+             * @default builtin
+             * @enum {string}
+             */
+            source: "builtin" | "user";
+            stats?: components["schemas"]["ForgeTemplateStats"];
         };
         /** ForgeTemplateFit */
         ForgeTemplateFit: {
@@ -4036,6 +4305,43 @@ export interface components {
             /** Values */
             values?: (number | string)[];
         };
+        /**
+         * ForgeTemplateStats
+         * @description What this template has produced, summed over every cut recorded for it.
+         *
+         *     Filled by the Phase 6 pipelines; zero everywhere until one has run.
+         */
+        ForgeTemplateStats: {
+            /**
+             * Checked
+             * @default 0
+             */
+            checked: number;
+            /**
+             * Cuts
+             * @default 0
+             */
+            cuts: number;
+            /**
+             * Families
+             * @default 0
+             */
+            families: number;
+            /** Mediantrainsharpe */
+            medianTrainSharpe?: number | null;
+            /** Passrate */
+            passRate?: number | null;
+            /**
+             * Passed
+             * @default 0
+             */
+            passed: number;
+            /**
+             * Sims
+             * @default 0
+             */
+            sims: number;
+        };
         /** ForgeTemplateSummary */
         ForgeTemplateSummary: {
             /** Angle */
@@ -4056,6 +4362,13 @@ export interface components {
             name: string;
             /** Operatorcount */
             operatorCount: number;
+            /**
+             * Source
+             * @default builtin
+             * @enum {string}
+             */
+            source: "builtin" | "user";
+            stats?: components["schemas"]["ForgeTemplateStats"];
         };
         /** GymCatalog */
         GymCatalog: {
@@ -4480,6 +4793,24 @@ export interface components {
             /** Vector */
             vector: number;
         };
+        /** LintRequest */
+        LintRequest: {
+            /** Yamltext */
+            yamlText: string;
+        };
+        /** LintResponse */
+        LintResponse: {
+            /** Example */
+            example: string | null;
+            /** Fits */
+            fits: {
+                [key: string]: boolean;
+            };
+            /** Ok */
+            ok: boolean;
+            /** Problems */
+            problems: string[];
+        };
         /**
          * LoginRequest
          * @description Omit both fields to sign in with the stored credential.
@@ -4570,6 +4901,45 @@ export interface components {
             passed: number;
             /** Sims */
             sims: number;
+        };
+        /** MyTemplate */
+        MyTemplate: {
+            /** Clonedfrom */
+            clonedFrom: string | null;
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Templateid */
+            templateId: string;
+            /**
+             * Updatedat
+             * Format: date-time
+             */
+            updatedAt: string;
+            /** Version */
+            version: number;
+            /** Yamltext */
+            yamlText: string;
+        };
+        /** MyTemplateVersion */
+        MyTemplateVersion: {
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /** Note */
+            note: string;
+            /** Version */
+            version: number;
+            /** Yamltext */
+            yamlText: string;
         };
         /** NetFigures */
         NetFigures: {
@@ -5050,28 +5420,32 @@ export interface components {
             /** Warnings */
             warnings: string[];
         };
-        /**
-         * PreviewRequest
-         * @description An Alpha to read, or a bare expression with the decay and truncation to hold it at.
-         */
-        PreviewRequest: {
-            /**
-             * Alphaid
-             * @default
-             */
-            alphaId: string;
-            /** Decay */
-            decay?: number | null;
-            /** Expression */
-            expression?: string | null;
-            /** Nanhandling */
-            nanHandling?: ("ON" | "OFF") | null;
-            /** Pasteurization */
-            pasteurization?: ("ON" | "OFF") | null;
-            /** Testperiod */
-            testPeriod?: string | null;
-            /** Truncation */
-            truncation?: number | null;
+        /** PreviewResponse */
+        PreviewResponse: {
+            /** Blockers */
+            blockers: string[];
+            /** Fieldset */
+            fieldSet: string;
+            /** Fitcounts */
+            fitCounts: {
+                [key: string]: number;
+            };
+            /** Missingfields */
+            missingFields: string[];
+            /** Notes */
+            notes: string[];
+            /** Offered */
+            offered: {
+                [key: string]: unknown[];
+            };
+            /** Rendered */
+            rendered: components["schemas"]["RenderedAlpha"][];
+            /** Scope */
+            scope: string;
+            /** Templateid */
+            templateId: string;
+            /** Total */
+            total: number;
         };
         /** PromptInfo */
         PromptInfo: {
@@ -5446,6 +5820,31 @@ export interface components {
             /** Universes */
             universes: string[];
         };
+        /** RenderedAlpha */
+        RenderedAlpha: {
+            /** Datafields */
+            dataFields: string[];
+            /** Datasets */
+            datasets: string[];
+            /** Eligibility */
+            eligibility: {
+                [key: string]: components["schemas"]["EligibilityOut"];
+            };
+            /** Expression */
+            expression: string;
+            /** Fields */
+            fields: {
+                [key: string]: string;
+            };
+            /** Fits */
+            fits: string[];
+            /** Operatorcount */
+            operatorCount: number;
+            /** Params */
+            params: {
+                [key: string]: unknown;
+            };
+        };
         /**
          * ResolveOptionsRequest
          * @description Settings chosen so far. Partial is fine — that is the point.
@@ -5509,6 +5908,33 @@ export interface components {
              * @default false
              */
             truncationAgent: boolean;
+        };
+        /** SaveDescriptionRequest */
+        SaveDescriptionRequest: {
+            /**
+             * Datarationale
+             * @default
+             */
+            dataRationale: string;
+            /** Expression */
+            expression: string;
+            /**
+             * Idea
+             * @default
+             */
+            idea: string;
+            /**
+             * Operatorrationale
+             * @default
+             */
+            operatorRationale: string;
+            /**
+             * Scope
+             * @default
+             */
+            scope: string;
+            /** Templateid */
+            templateId?: string | null;
         };
         /**
          * Say
@@ -6412,6 +6838,16 @@ export interface components {
                 [key: string]: components["schemas"]["FieldsVariable"] | components["schemas"]["ValuesVariable"];
             };
         };
+        /** TemplateTextIn */
+        TemplateTextIn: {
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+            /** Yamltext */
+            yamlText: string;
+        };
         /** TemplateTree */
         TemplateTree: {
             /** Problem */
@@ -6738,6 +7174,45 @@ export interface components {
             userId: string | null;
             /** Verificationurl */
             verificationUrl: string | null;
+        };
+        /** PreviewRequest */
+        alpha_harness__api__forge_studio__PreviewRequest: {
+            /** Choices */
+            choices?: {
+                [key: string]: unknown;
+            };
+            /** Fieldsetid */
+            fieldSetId: number;
+            /**
+             * Limit
+             * @default 50
+             */
+            limit: number;
+            /** Templateid */
+            templateId: string;
+        };
+        /**
+         * PreviewRequest
+         * @description An Alpha to read, or a bare expression with the decay and truncation to hold it at.
+         */
+        alpha_harness__api__tools__PreviewRequest: {
+            /**
+             * Alphaid
+             * @default
+             */
+            alphaId: string;
+            /** Decay */
+            decay?: number | null;
+            /** Expression */
+            expression?: string | null;
+            /** Nanhandling */
+            nanHandling?: ("ON" | "OFF") | null;
+            /** Pasteurization */
+            pasteurization?: ("ON" | "OFF") | null;
+            /** Testperiod */
+            testPeriod?: string | null;
+            /** Truncation */
+            truncation?: number | null;
         };
     };
     responses: never;
@@ -8344,6 +8819,383 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScopeTree"];
+                };
+            };
+        };
+    };
+    get_description_api_forge_studio_description_get: {
+        parameters: {
+            query: {
+                expression: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DescriptionDraft"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_description_api_forge_studio_description_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveDescriptionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DescriptionDraft"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    description_draft_api_forge_studio_description_draft_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DraftRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DescriptionDraft"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    lint_template_api_forge_studio_lint_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LintRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LintResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_my_templates_api_forge_studio_my_templates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyTemplate"][];
+                };
+            };
+        };
+    };
+    create_my_template_api_forge_studio_my_templates_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TemplateTextIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyTemplate"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clone_template_api_forge_studio_my_templates_clone_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloneRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyTemplate"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_my_template_api_forge_studio_my_templates__template_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TemplateTextIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyTemplate"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_my_template_api_forge_studio_my_templates__template_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Deleted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_template_api_forge_studio_my_templates__template_id__export_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportedTemplate"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    template_versions_api_forge_studio_my_templates__template_id__versions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                template_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyTemplateVersion"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_api_forge_studio_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["alpha_harness__api__forge_studio__PreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -10243,7 +11095,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["PreviewRequest"];
+                "application/json": components["schemas"]["alpha_harness__api__tools__PreviewRequest"];
             };
         };
         responses: {

@@ -8,6 +8,7 @@ import { Link, useNavigate, useSearch } from '@tanstack/react-router'
 import { DumbbellIcon, LibraryIcon } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { cn } from '@/lib/cn'
+import { fmt } from '@/lib/format' // forge: for the per-template statistics line
 import { TemplateEditor } from '@/screens/research-labs/template/editor'
 import { InfoButton, InfoSection } from '@/ui/info'
 import {
@@ -214,12 +215,37 @@ function TemplateRow({
           <Badge tone="outline" title="How many moving parts the idea has">
             {t.complexity}
           </Badge>
+          {/* forge: a template you wrote, rather than one from config/forge/templates. */}
+          {t.source === 'user' && (
+            <Badge tone="neutral" title="You wrote this one; built-ins are read-only">
+              yours
+            </Badge>
+          )}
           <span className="num ml-auto shrink-0" title="Operators BRAIN counts in the example">
             {t.operatorCount} ops
           </span>
         </span>
+        {/* forge: what it has actually produced, per Phase 6's pipelines. */}
+        <TemplateStatsLine stats={t.stats} />
       </button>
     </li>
+  )
+}
+
+/** What a template has produced so far, or nothing at all when it has not been run. */
+function TemplateStatsLine({ stats }: { stats: TemplateSummary['stats'] }) {
+  if (!stats || !stats.sims) return null
+  return (
+    <span
+      className="flex min-w-0 items-center gap-2 text-body-compact text-ink-subtle"
+      title={`Across ${stats.cuts} dataset/type/market cuts: ${stats.sims} simulations, ${stats.passed} of ${stats.checked} decided alphas passed every BRAIN check`}
+    >
+      <span className="num">{fmt.int(stats.sims)} sims</span>
+      {stats.checked > 0 && <span className="num">{fmt.pct(stats.passRate, 0)} pass</span>}
+      {stats.medianTrainSharpe != null && (
+        <span className="num">med Sharpe {fmt.ratio(stats.medianTrainSharpe)}</span>
+      )}
+    </span>
   )
 }
 

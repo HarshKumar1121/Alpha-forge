@@ -40,6 +40,8 @@ const ROUTES = [
   '/forge/today',
   '/forge/gym',
   '/forge/templates',
+  '/forge/my-templates',
+  '/forge/studio',
   '/forge/fieldsets',
   '/forge/datasets/analyst4',
   '/competitions',
@@ -94,8 +96,15 @@ async function mount(path: string) {
   // The screen is a lazy chunk: wait until the router has it and has rendered it.
   await waitFor(() => expect(router.state.status).toBe('idle'), { timeout: 20_000 })
   // ...and until its queries have settled, so a render that only crashes with data is caught.
-  await waitFor(() => expect(client.isFetching()).toBe(0), { timeout: 20_000 })
-  client.clear()
+  // Twice, with a tick between: a screen whose query is enabled by another query's answer
+  // (the Studio waits for its template list and its field sets) is idle for an instant in
+  // between, and stopping there would test a screen that never loaded.
+  for (let settled = 0; settled < 2; settled++) {
+    await waitFor(() => expect(client.isFetching()).toBe(0), { timeout: 20_000 })
+    await act(async () => {
+      await new Promise((resume) => setTimeout(resume, 0))
+    })
+  }
   return router
 }
 
@@ -151,6 +160,83 @@ describe('the Forge data screens', () => {
     expect(screen.getByText('Neutralizations')).toBeTruthy()
     expect(screen.getByText('SUBINDUSTRY')).toBeTruthy()
     expect(screen.getByText('USA TOP3000 analyst')).toBeTruthy()
+    expect(screen.queryByText(CRASHED)).toBeNull()
+  })
+})
+
+/**
+ * The Template Studio and the templates you write. Both screens render text the backend
+ * computed — eligibility reasons, lint problems — so these check that what the API says
+ * actually reaches the screen, not just that the route mounts.
+ */
+describe('the Template Studio', () => {
+  it('shows each rendered alpha and what it qualifies for', async () => {
+    await mount('/forge/studio')
+    expect(screen.getByText('rank(ts_delta(ts_backfill(anl4_eps_mean, 63), 21))')).toBeTruthy()
+    // The fit summary counts each type separately: both fit regular and Power Pool, and
+    // only one is a single-dataset ATOM alpha.
+    expect(screen.getAllByText('2 / 2').length).toBe(2)
+    expect(screen.getByText('1 / 2')).toBeTruthy()
+    expect(screen.queryByText(CRASHED)).toBeNull()
+  })
+
+  it('says why an alpha misses a type', async () => {
+    await mount('/forge/studio')
+    const rows = screen.getAllByRole('button')
+    const second = rows.find((r) =>
+      r.textContent?.includes('rank(ts_delta(ts_backfill(anl4_rev_mean, 63), 63))'),
+    )
+    expect(second).toBeTruthy()
+    await act(async () => {
+      second?.click()
+    })
+    await waitFor(() =>
+      expect(screen.getByText('Single-dataset type but fields span analyst4, pv1')).toBeTruthy(),
+    )
+    expect(screen.getAllByText('Not eligible').length).toBeGreaterThan(0)
+    expect(screen.queryByText(CRASHED)).toBeNull()
+  })
+
+  it('drafts a Power Pool description for an eligible alpha', async () => {
+    await mount('/forge/studio')
+    const rows = screen.getAllByRole('button')
+    const first = rows.find((r) =>
+      r.textContent?.includes('rank(ts_delta(ts_backfill(anl4_eps_mean, 63), 21))'),
+    )
+    await act(async () => {
+      first?.click()
+    })
+    await waitFor(() => expect(screen.getByText('Power Pool description')).toBeTruthy())
+    // The draft's parts arrive in editable boxes, and BRAIN's length complaint is shown.
+    expect(screen.getByText('BRAIN wants more here')).toBeTruthy()
+    expect(screen.queryByText(CRASHED)).toBeNull()
+  })
+})
+
+describe('my templates', () => {
+  it('lists what you wrote, with its versions', async () => {
+    await mount('/forge/my-templates?t=my_revision')
+    expect(screen.getAllByText(/my_revision/).length).toBeGreaterThan(0)
+    await waitFor(() => expect(screen.getByText(/v2 — Added a window/)).toBeTruthy())
+    expect(screen.getByText(/v1 — Created/)).toBeTruthy()
+    expect(screen.queryByText(CRASHED)).toBeNull()
+  })
+
+  it('lints the YAML as it is written', async () => {
+    await mount('/forge/my-templates?t=my_revision')
+    // The editor is CodeMirror in plain mode: the lint result is what the screen reports.
+    await waitFor(() => expect(screen.getByText('Valid')).toBeTruthy())
+    expect(screen.getByText('rank(ts_backfill(x_field, 63))')).toBeTruthy()
+    expect(screen.queryByText(CRASHED)).toBeNull()
+  })
+})
+
+describe('the template library', () => {
+  it('marks your own templates and shows what each has produced', async () => {
+    await mount('/forge/templates')
+    expect(screen.getByText('yours')).toBeTruthy()
+    expect(screen.getByText('42 sims')).toBeTruthy()
+    expect(screen.getByText('30% pass')).toBeTruthy()
     expect(screen.queryByText(CRASHED)).toBeNull()
   })
 })

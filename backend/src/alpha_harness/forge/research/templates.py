@@ -476,9 +476,17 @@ def match(
     return out
 
 
-def field_problem(slot: FieldSlot, f: FieldInfo) -> str | None:
-    """Why ``f`` cannot fill ``slot`` on its own (archetype or type), or None if it can."""
-    if slot.archetype and f.archetype not in slot.archetype:
+def field_problem(slot: FieldSlot, f: FieldInfo, *, require_archetype: bool = True) -> str | None:
+    """Why ``f`` cannot fill ``slot`` on its own (archetype or type), or None if it can.
+
+    ``require_archetype=False`` lets a field whose behaviour is *unknown* fill an archetype
+    slot. Gym fields are profiled, so their archetype is a fact; a field set of real BRAIN
+    fields is not profiled until the Real-Price Lab runs, and rejecting every one of them
+    would leave the Template Studio with nothing to show. A field whose archetype IS known
+    is still held to the slot's rule either way.
+    """
+    known_or_required = f.archetype is not None or require_archetype
+    if slot.archetype and known_or_required and f.archetype not in slot.archetype:
         return (
             f"field {f.id} behaves {f.archetype or 'unknown'}; "
             f"this slot takes {', '.join(slot.archetype)} fields"
@@ -488,11 +496,13 @@ def field_problem(slot: FieldSlot, f: FieldInfo) -> str | None:
     return None
 
 
-def _fits(slot: FieldSlot, f: FieldInfo) -> bool:
-    return field_problem(slot, f) is None
+def _fits(slot: FieldSlot, f: FieldInfo, *, require_archetype: bool = True) -> bool:
+    return field_problem(slot, f, require_archetype=require_archetype) is None
 
 
-def bindings(t: Template, fields: Sequence[FieldInfo]) -> list[dict[str, FieldInfo]]:
+def bindings(
+    t: Template, fields: Sequence[FieldInfo], *, require_archetype: bool = True
+) -> list[dict[str, FieldInfo]]:
     """Every way to fill the template's field slots from ``fields`` — distinct fields, each
     fitting its slot's archetype and type, with the dataset constraints honoured."""
     names = t.field_slots
@@ -505,7 +515,7 @@ def bindings(t: Template, fields: Sequence[FieldInfo]) -> list[dict[str, FieldIn
             f = b[n]
             same = s.same_dataset_as and b[s.same_dataset_as].dataset != f.dataset
             diff = s.different_dataset_from and b[s.different_dataset_from].dataset == f.dataset
-            if not _fits(s, f) or same or diff:
+            if not _fits(s, f, require_archetype=require_archetype) or same or diff:
                 ok = False
                 break
         if ok:
@@ -516,10 +526,30 @@ def bindings(t: Template, fields: Sequence[FieldInfo]) -> list[dict[str, FieldIn
 type Choice = Param | Sequence[Param]
 
 
-def expand(
-    t: Template, fields: Sequence[FieldInfo], choices: Mapping[str, Choice] | None = None
-) -> list[str]:
-    """Every expression the template yields over ``fields`` and its window/group values.
+@dataclass(frozen=True, slots=True)
+class Filled:
+    """One rendered expression, with the choices that produced it.
+
+    The Studio shows ``$X = anl4_eps_mean, $W = 63`` beside the alpha, and that cannot be read
+    back out of the rendered text: by then the field is wrapped in ``ts_backfill`` and the
+    window is just a number among others.
+    """
+
+    expression: str
+    #: Field slot name -> field id.
+    fields: dict[str, str]
+    #: Window and group slot name -> the value chosen.
+    params: dict[str, Param]
+
+
+def expand_filled(
+    t: Template,
+    fields: Sequence[FieldInfo],
+    choices: Mapping[str, Choice] | None = None,
+    *,
+    require_archetype: bool = True,
+) -> list[Filled]:
+    """Every alpha the template yields over ``fields``, each with its slot choices.
 
     ``choices`` narrows the expansion: a field slot pinned to a field id from ``fields``, a
     window or group slot pinned to one value or a subset of its allowed values. A choice that
@@ -527,20 +557,41 @@ def expand(
     empty list, because "no candidates" and "you asked for something illegal" are different
     answers.
     """
-    pinned, params = _apply_choices(t, fields, choices or {})
+    pinned, params = _apply_choices(t, fields, choices or {}, require_archetype=require_archetype)
     vector = {f.id for f in fields if f.type == "VECTOR"}
     keys = list(params)
     combos = [dict(zip(keys, c, strict=True)) for c in itertools.product(*params.values())]
     return [
-        render(t, {k: f.id for k, f in b.items()}, p, vector=vector)
-        for b in bindings(t, fields)
+        Filled(
+            expression=render(t, {k: f.id for k, f in b.items()}, p, vector=vector),
+            fields={k: f.id for k, f in b.items()},
+            params=dict(p),
+        )
+        for b in bindings(t, fields, require_archetype=require_archetype)
         if all(b[n].id == f.id for n, f in pinned.items())
         for p in combos or [{}]
     ]
 
 
+def expand(
+    t: Template,
+    fields: Sequence[FieldInfo],
+    choices: Mapping[str, Choice] | None = None,
+    *,
+    require_archetype: bool = True,
+) -> list[str]:
+    """Every expression the template yields; see :func:`expand_filled` for the choices too."""
+    return [
+        f.expression for f in expand_filled(t, fields, choices, require_archetype=require_archetype)
+    ]
+
+
 def _apply_choices(
-    t: Template, fields: Sequence[FieldInfo], choices: Mapping[str, Choice]
+    t: Template,
+    fields: Sequence[FieldInfo],
+    choices: Mapping[str, Choice],
+    *,
+    require_archetype: bool = True,
 ) -> tuple[dict[str, FieldInfo], dict[str, tuple[Param, ...]]]:
     where = f"template {t.id!r}"
     by_id = {f.id: f for f in fields}
@@ -554,7 +605,7 @@ def _apply_choices(
             if not isinstance(choice, str) or choice not in by_id:
                 raise ConstraintError(f"{where} slot {name}: {choice!r} is not in the field set")
             f = by_id[choice]
-            if problem := field_problem(slot, f):
+            if problem := field_problem(slot, f, require_archetype=require_archetype):
                 raise ConstraintError(f"{where} slot {name}: {problem}")
             pinned[name] = f
             continue

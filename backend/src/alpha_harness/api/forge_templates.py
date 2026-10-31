@@ -6,10 +6,12 @@ and the Gym example is what "Try on Gym" opens the Gym Playground with.
 """
 
 import asyncio
-from typing import Literal
+from statistics import median
+from typing import TYPE_CHECKING, Literal
 
 from fastapi import APIRouter
 from pydantic import Field
+from sqlalchemy import select
 
 from ..forge.alpha_types import load_all
 from ..forge.expr import analyse
@@ -23,8 +25,14 @@ from ..forge.research.templates import (
     get,
     load_library,
 )
+from ..forge.studio.models import TemplateStats, UserTemplate
+from ..forge.studio.user_templates import TemplateTextError
+from ..forge.studio.user_templates import parse as parse_user
 from ..schemas import Out
-from .deps import refuse
+from .deps import State, refuse
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
 
 router = APIRouter(prefix="/api/forge/templates", tags=["forge-templates"])
 
@@ -37,6 +45,25 @@ class ForgeTemplateFit(Out):
     warnings: list[str]
 
 
+class ForgeTemplateStats(Out):
+    """What this template has produced, summed over every cut recorded for it.
+
+    Filled by the Phase 6 pipelines; zero everywhere until one has run.
+    """
+
+    sims: int = 0
+    #: Alphas BRAIN has decided on, and those that passed every check.
+    checked: int = 0
+    passed: int = 0
+    #: ``passed / checked``; ``None`` until BRAIN has decided one.
+    pass_rate: float | None = None
+    #: The median of the per-cut medians: one lucky alpha cannot carry it.
+    median_train_sharpe: float | None = None
+    families: int = 0
+    #: How many (dataset category x alpha type x scope) cuts are behind these numbers.
+    cuts: int = 0
+
+
 class ForgeTemplateSummary(Out):
     id: str
     name: str
@@ -46,6 +73,9 @@ class ForgeTemplateSummary(Out):
     operator_count: int
     fits: dict[str, ForgeTemplateFit]
     gym_available: bool
+    #: ``builtin`` lives in config/forge/templates and is read-only; ``user`` is yours.
+    source: Literal["builtin", "user"] = "builtin"
+    stats: ForgeTemplateStats = Field(default_factory=ForgeTemplateStats)
 
 
 class ForgeTemplateLoadError(Out):
@@ -107,7 +137,12 @@ def _slot(name: str, s: object) -> ForgeTemplateSlot:
     return ForgeTemplateSlot(name=name, kind=kind, values=list(getattr(s, "values", ())))
 
 
-def _summary(t: Template) -> ForgeTemplateSummary:
+def _summary(
+    t: Template,
+    *,
+    source: Literal["builtin", "user"] = "builtin",
+    stats: ForgeTemplateStats | None = None,
+) -> ForgeTemplateSummary:
     return ForgeTemplateSummary(
         id=t.id,
         name=t.name,
@@ -122,26 +157,73 @@ def _summary(t: Template) -> ForgeTemplateSummary:
             for k, f in fits(t).items()
         },
         gym_available=not isinstance(gym_example(t), Unavailable),
+        source=source,
+        stats=stats or ForgeTemplateStats(),
     )
 
 
-def _list() -> ForgeTemplateList:
+def summarise_stats(rows: Sequence[TemplateStats]) -> ForgeTemplateStats:
+    """Every recorded cut of one template, as one line for the library.
+
+    Sims and alphas add up; the Sharpe does not, so the median of the cuts' medians is used —
+    a template that worked on one dataset and failed on five should not read as a success.
+    """
+    if not rows:
+        return ForgeTemplateStats()
+    checked = sum(r.checked for r in rows)
+    passed = sum(r.passed for r in rows)
+    medians = sorted(r.median_train_sharpe for r in rows if r.median_train_sharpe is not None)
+    middle = median(medians) if medians else None
+    return ForgeTemplateStats(
+        sims=sum(r.sims for r in rows),
+        checked=checked,
+        passed=passed,
+        pass_rate=round(passed / checked, 4) if checked else None,
+        median_train_sharpe=round(middle, 4) if middle is not None else None,
+        families=sum(r.families for r in rows),
+        cuts=len(rows),
+    )
+
+
+def _list(
+    user: Sequence[tuple[str, str]] = (),
+    stats: Mapping[str, list[TemplateStats]] | None = None,
+) -> ForgeTemplateList:
+    """The library: the repository's templates, then the user's own."""
     loaded = load_library()
+    by_template = stats or {}
+    templates = [
+        _summary(t, stats=summarise_stats(by_template.get(t.id, []))) for t in loaded.templates
+    ]
+    errors = [
+        ForgeTemplateLoadError(file=e.file, template_id=e.template_id, message=e.message)
+        for e in loaded.errors
+    ]
+    for template_id, text in user:
+        try:
+            t = parse_user(text).template
+        except TemplateTextError as exc:
+            errors.append(
+                ForgeTemplateLoadError(
+                    file="your templates", template_id=template_id, message=str(exc)
+                )
+            )
+            continue
+        templates.append(
+            _summary(t, source="user", stats=summarise_stats(by_template.get(t.id, [])))
+        )
     return ForgeTemplateList(
-        templates=[_summary(t) for t in loaded.templates],
-        errors=[
-            ForgeTemplateLoadError(file=e.file, template_id=e.template_id, message=e.message)
-            for e in loaded.errors
-        ],
+        templates=templates,
+        errors=errors,
         alpha_types=sorted(load_all()),
     )
 
 
-def _detail(t: Template) -> ForgeTemplateDetail:
+def _detail(t: Template, source: Literal["builtin", "user"] = "builtin") -> ForgeTemplateDetail:
     info = analyse(example(t))
     gym = gym_example(t)
     return ForgeTemplateDetail(
-        **_summary(t).model_dump(),
+        **_summary(t, source=source).model_dump(),
         rationale=t.rationale,
         expr=t.expr,
         only_if=t.only_if,
@@ -162,15 +244,42 @@ def _detail(t: Template) -> ForgeTemplateDetail:
 
 
 @router.get("")
-async def list_templates() -> ForgeTemplateList:
-    """Every template, with computed alpha-type fit, plus the files that failed to load."""
+async def list_templates(state: State) -> ForgeTemplateList:
+    """Every template — the repository's and your own — with computed alpha-type fit, what it
+    has produced so far, and the entries that failed to load."""
+    async with state.db.session() as session:
+        mine = [
+            (r.template_id, r.yaml_text)
+            for r in (
+                await session.scalars(select(UserTemplate).order_by(UserTemplate.template_id))
+            ).all()
+        ]
+        stats: dict[str, list[TemplateStats]] = {}
+        for row in (await session.scalars(select(TemplateStats))).all():
+            stats.setdefault(row.template_id, []).append(row)
     # The first call profiles the Gym's fields (a few seconds): keep it off the event loop.
-    return await asyncio.to_thread(_list)
+    return await asyncio.to_thread(_list, mine, stats)
 
 
 @router.get("/{template_id}")
-async def template_detail(template_id: str) -> ForgeTemplateDetail:
+async def template_detail(template_id: str, state: State) -> ForgeTemplateDetail:
+    """One template, built-in or your own."""
     t = get(template_id)
+    source: Literal["builtin", "user"] = "builtin"
     if t is None:
-        raise refuse(404, "unknown_template", f"No template {template_id!r}")
-    return await asyncio.to_thread(_detail, t)
+        async with state.db.session() as session:
+            row = (
+                await session.scalars(
+                    select(UserTemplate).where(UserTemplate.template_id == template_id)
+                )
+            ).first()
+        if row is None:
+            raise refuse(404, "unknown_template", f"No template {template_id!r}")
+        try:
+            t = parse_user(row.yaml_text).template
+        except TemplateTextError as exc:
+            raise refuse(
+                422, "template_unreadable", f"{template_id!r} cannot be read: {exc}"
+            ) from exc
+        source = "user"
+    return await asyncio.to_thread(_detail, t, source)

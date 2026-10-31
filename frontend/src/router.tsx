@@ -157,6 +157,24 @@ const forgeTemplates = createRoute({
   component: lazyRouteComponent(() => import('@/screens/forge/templates'), 'TemplateLibraryScreen'),
 })
 
+const forgeStudio = createRoute({
+  getParentRoute: () => forge,
+  path: 'studio',
+  // Which template, on which field set: the pair is the screen's whole state.
+  validateSearch: (search: Record<string, unknown>) => ({
+    t: typeof search['t'] === 'string' ? search['t'] : undefined,
+    fs: typeof search['fs'] === 'number' ? search['fs'] : undefined,
+  }),
+  component: lazyRouteComponent(() => import('@/screens/forge/studio'), 'TemplateStudioScreen'),
+})
+const forgeMyTemplates = createRoute({
+  getParentRoute: () => forge,
+  path: 'my-templates',
+  validateSearch: (search: Record<string, unknown>) => ({
+    t: typeof search['t'] === 'string' ? search['t'] : undefined,
+  }),
+  component: lazyRouteComponent(() => import('@/screens/forge/my-templates'), 'MyTemplatesScreen'),
+})
 const forgeFieldSets = createRoute({
   getParentRoute: () => forge,
   path: 'fieldsets',
@@ -264,7 +282,15 @@ export const routeTree = root.addChildren([
   data,
   labs.addChildren([labsIndex, searchLab, templateLab, evolutionLab, powerPoolLab, superAlphaLab]),
   tools.addChildren([toolsIndex, settingsSampler, correlationBreaker, fieldsSampler]),
-  forge.addChildren([forgeToday, forgeGym, forgeTemplates, forgeFieldSets, forgeDataset]), // forge: Forge section
+  forge.addChildren([
+    forgeToday,
+    forgeGym,
+    forgeTemplates,
+    forgeMyTemplates,
+    forgeStudio,
+    forgeFieldSets,
+    forgeDataset,
+  ]), // forge: Forge section
   competitionsRoute,
   tasks.addChildren([tasksIndex, taskResults]),
   pool.addChildren([poolIndex, poolTab]),

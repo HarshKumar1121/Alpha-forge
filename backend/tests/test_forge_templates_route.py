@@ -1,26 +1,26 @@
 """``GET /api/forge/templates`` and ``GET /api/forge/templates/{id}``, through the real app.
 
-Read-only and free: no database, no BRAIN session. "Try on Gym" is checked end to end — the
-example the library serves is simulated on the Gym route it would be sent to.
+Free and offline: no BRAIN session, and the only database is a throwaway one — the library
+reads it for the templates you wrote yourself and for what each template has produced.
+"Try on Gym" is checked end to end: the example the library serves is simulated on the Gym
+route it would be sent to.
 """
 
 from typing import TYPE_CHECKING
 
-import httpx2
 import pytest
-
-from alpha_harness.main import create_app
+from forge_data_harness import CLIENT, make_client
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+    from pathlib import Path
 
-CLIENT = {"x-harness-client": "1"}
+    import httpx2
 
 
 @pytest.fixture
-async def client() -> AsyncIterator[httpx2.AsyncClient]:
-    transport = httpx2.ASGITransport(app=create_app())
-    async with httpx2.AsyncClient(transport=transport, base_url="http://localhost") as c:
+async def client(tmp_path: Path) -> AsyncIterator[httpx2.AsyncClient]:
+    async for c, _ in make_client(tmp_path):
         yield c
 
 

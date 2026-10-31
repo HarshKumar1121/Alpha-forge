@@ -78,8 +78,18 @@ def _pyramid_endpoints() -> Any:
     return endpoints
 
 
-async def _seed(catalog: Catalog) -> None:
-    for region, rows in (("USA", USA_FIELDS), ("GLB", GLB_FIELDS)):
+#: Grouping fields and the hard-coded fields templates name directly. Seeded only when a test
+#: asks for them, because the Data Explorer tests count the fields in this market.
+SCOPE_FIELDS = [
+    ("industry", "pv1", "pv", "GROUP", 1.0, 0, 0),
+    ("subindustry", "pv1", "pv", "GROUP", 1.0, 0, 0),
+    ("sector", "pv1", "pv", "GROUP", 1.0, 0, 0),
+    ("adv20", "pv1", "pv", "MATRIX", 1.0, 100, 1000),
+]
+
+
+async def _seed(catalog: Catalog, extra: list[Any] | None = None) -> None:
+    for region, rows in (("USA", [*USA_FIELDS, *(extra or [])]), ("GLB", GLB_FIELDS)):
         universe = "TOP3000"
         for f, d, cat, t, cov, users, alphas in rows:
             await catalog.execute(
@@ -98,16 +108,20 @@ async def _seed(catalog: Catalog) -> None:
 
 
 async def make_client(
-    tmp_path: Path, *, with_schema: bool = True
+    tmp_path: Path, *, with_schema: bool = True, scope_fields: bool = False
 ) -> AsyncIterator[tuple[httpx2.AsyncClient, Any]]:
-    """Yield ``(client, state)``; both databases are closed afterwards."""
+    """Yield ``(client, state)``; both databases are closed afterwards.
+
+    ``scope_fields`` adds the grouping fields and ``adv20``, for the screens that bind a
+    template to a market rather than just listing what it holds.
+    """
     pyramids._cache.clear()  # pyright: ignore[reportPrivateUsage]
     usage._cache.clear()  # pyright: ignore[reportPrivateUsage]
     db = Database(tmp_path / "harness.db")
     await db.create_all()
     catalog = Catalog(tmp_path / "catalog.duckdb")
     await catalog.open()
-    await _seed(catalog)
+    await _seed(catalog, SCOPE_FIELDS if scope_fields else None)
     state = SimpleNamespace(
         db=db,
         catalog=catalog,

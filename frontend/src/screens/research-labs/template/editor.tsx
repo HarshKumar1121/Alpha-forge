@@ -515,7 +515,10 @@ const SHAPES: { pattern: RegExp; call?: boolean }[] = [
 ]
 
 /** Problems the preview found, drawn on the text they name; ones with no place stay below. */
-function diagnose(view: EditorView, live: Live): Diagnostic[] {
+function diagnose(view: EditorView, live: Live, plain = false): Diagnostic[] {
+  // forge: in plain mode the text is not an expression, so none of the checks below — holes,
+  // brackets, operator names — mean anything. The caller lists its own problems instead.
+  if (plain) return []
   const text = view.state.doc.toString()
   const blank = code(text)
   const found: Diagnostic[] = []
@@ -603,7 +606,7 @@ const outside = Annotation.define<boolean>()
  */
 const relint = StateEffect.define<null>()
 
-function extensions(live: { current: Live }, label: string, readOnly: boolean) {
+function extensions(live: { current: Live }, label: string, readOnly: boolean, plain = false) {
   return [
     // Shown, not edited: the colours and hovers stay, the cursor and typing go.
     ...(readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : []),
@@ -615,18 +618,25 @@ function extensions(live: { current: Live }, label: string, readOnly: boolean) {
     dropCursor(),
     EditorState.allowMultipleSelections.of(true),
     indentOnInput(),
-    fastExpression,
-    syntaxHighlighting(darkPlus),
+    // forge: `plain` drops everything that reads the text as a Fast Expression — the
+    // grammar, the operator completion, the signature help and the name colours — so the
+    // same editor can hold a template's YAML without colouring it as nonsense.
+    ...(plain
+      ? []
+      : [
+          fastExpression,
+          syntaxHighlighting(darkPlus),
+          autocompletion({ override: [(context) => complete(context, live.current)] }),
+          nameColours(),
+          ...(readOnly ? [] : [signatures(live)]),
+          hoverTooltip((view, pos) => hover(view, pos, live.current), { hoverTime: 300 }),
+        ]),
     bracketMatching(),
     closeBrackets(),
-    autocompletion({ override: [(context) => complete(context, live.current)] }),
     rectangularSelection(),
     highlightActiveLine(),
     highlightSelectionMatches(),
-    nameColours(),
-    ...(readOnly ? [] : [signatures(live)]),
-    hoverTooltip((view, pos) => hover(view, pos, live.current), { hoverTime: 300 }),
-    linter((view) => diagnose(view, live.current), {
+    linter((view) => diagnose(view, live.current, plain), {
       delay: 250,
       needsRefresh: (update) =>
         update.transactions.some((tr) => tr.effects.some((e) => e.is(relint))),
@@ -654,8 +664,9 @@ export function TemplateEditor({
   value,
   label = 'Template',
   readOnly = false,
+  plain = false,
   ...rest
-}: Live & { value: string; label?: string; readOnly?: boolean }) {
+}: Live & { value: string; label?: string; readOnly?: boolean; plain?: boolean }) {
   const host = useRef<HTMLDivElement>(null)
   const view = useRef<EditorView | null>(null)
   const live = useRef<Live>(rest)
@@ -663,6 +674,7 @@ export function TemplateEditor({
   const first = useRef(value)
   const name = useRef(label)
   const locked = useRef(readOnly)
+  const bare = useRef(plain) // forge: fixed at mount, like `label` and `readOnly`
 
   useEffect(() => {
     if (!host.current) return
@@ -670,7 +682,7 @@ export function TemplateEditor({
       parent: host.current,
       state: EditorState.create({
         doc: first.current,
-        extensions: extensions(live, name.current, locked.current),
+        extensions: extensions(live, name.current, locked.current, bare.current),
       }),
     })
     view.current = editor
