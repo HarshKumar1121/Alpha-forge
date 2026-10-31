@@ -1,6 +1,7 @@
 # Alpha Forge — instructions for Claude Code
 
 ## What this is
+
 A personal daily-use alpha research platform for WorldQuant BRAIN, built by a CS student who is
 learning to become a quant researcher. It is a fork of alpha-harness (MIT, © MiracleInvoker)
 extended with alpha-copilot's research layer. Design: docs/forge/ARCHITECTURE.md. Build order:
@@ -9,10 +10,15 @@ roadmap). Two equal goals: find robust, diverse alphas within a 5,000/day simula
 teach the user. Prefer readable code with docstrings that explain the quant reasoning.
 
 ## Status / roadmap
+
 - **Done:** Phases 0–2 of BUILD_PLAYBOOK.md (base running, BRAIN validated, research brain
   ported with the Gym Playground, typed-slot templates), then v2's Phase 3 (Quota Governor and
-  Today) and Phase 4 (real scopes from `OPTIONS /simulations`, Datasets tab with crowding and
-  my history, dataset pages, field sets).
+  Today), Phase 4 (real scopes from `OPTIONS /simulations`, Datasets tab with crowding and
+  my history, dataset pages, field sets), and Phase 5 backend (templates bound to a field set's
+  real fields/scope, per-rendered-alpha eligibility against `brain/platform.py` rules and every
+  `config/forge/alpha_types/*.yaml`, Power Pool description drafting, Template Studio API under
+  `/api/forge/templates` and `/api/forge/studio` with preview, description, and my-templates
+  CRUD/versioning/lint).
 - **Current plan:** docs/forge/BUILD_PLAYBOOK_V2.md is authoritative from Phase 3 on. v1's
   Phases 3–13 are superseded; do not follow them. ARCHITECTURE.md is still the module design,
   but its §7 build order is v1's, and where it treats the Gym as a research stage (Behaviour Lab
@@ -25,9 +31,11 @@ teach the user. Prefer readable code with docstrings that explain the quant reas
 - **v2 phases:** 3 Quota Governor + Today · 4 Real scope and data · 5 Template Studio v2 ·
   6 Type pipelines on BRAIN · 7 Families and Submittable Board · 8 Research analytics ·
   9 Learning engine · 10 AI agent with memory · 11 Practice mode and Real-Price Lab.
-- **Next:** Phase 5 (Template Studio v2: templates bound to field sets, real eligibility).
+- **Next:** Phase 6 (type pipelines on BRAIN; also wire/verify the Phase 5 Studio frontend and
+  populate `template_stats`, deferred to this phase).
 
 ## Layout
+
 - backend/ — FastAPI, Python 3.14, uv. Package `alpha_harness` (keep the name; Forge code goes
   in `alpha_harness/forge/`). SQLite via SQLAlchemy async; DuckDB/Parquet for analytics.
 - frontend/ — React 19, Vite, TypeScript, Tailwind 4, TanStack Router/Query, CodeMirror,
@@ -37,6 +45,7 @@ teach the user. Prefer readable code with docstrings that explain the quant reas
 - Follow alpha-harness's own DESIGN.md and tooling (ruff, basedpyright, biome, lefthook).
 
 ## Upstream
+
 This repo tracks https://github.com/residual-lab/alpha-harness as remote `upstream`, branch
 `main`. Upstream keeps improving the engine, the BRAIN client and the UI shell, and we want
 those improvements — so every merge from it should be boring. Two habits keep it that way:
@@ -53,6 +62,7 @@ Prefer a seam over an edit: a new module, a registered route, a config entry. Re
 change to an upstream file only when there is no seam, and say so in the marker.
 
 ## Commands
+
 - Backend tests: `cd backend && uv run pytest -q`
 - Frontend checks: `cd frontend && pnpm check`
 - Dev: use the repo's task runner (`lefthook run dev`) or the commands Phase 0 identified.
@@ -60,6 +70,7 @@ change to an upstream file only when there is no seam, and say so in the marker.
   headless browsers; verify with tests and curl against the running server instead.
 
 ## Hard rules
+
 1. No code path may submit an alpha. Submission is manual on the BRAIN website.
 2. Never retry a failed BRAIN sign-in automatically; never store or log passwords.
 3. Every simulation goes through the Quota Governor with a lane. Never exceed the daily limit
@@ -74,5 +85,17 @@ change to an upstream file only when there is no seam, and say so in the marker.
 10. Every feature ships with offline tests. Run them and show the result before saying done.
 
 ## UI conventions
+
 Every number a user sees has a tooltip or caption explaining it in plain language; every chart
 has a one-line "what this tells you". Empty states teach what to do next.
+
+## Efficiency rules (usage limits are tight)
+
+- Read only the files the task needs; never scan reference/ or node_modules broadly.
+- While working, run only the relevant tests (e.g. uv run pytest -q tests/test_forge_templates*.py,
+  pnpm vitest run src/test/routes.test.tsx). Run the full suite ONCE at the end.
+- Pipe long output through `| tail -30`; never print whole logs or files.
+- No dev servers, headless browsers or screenshots; I verify the UI.
+- Final summary: max 10 bullet points. No long explanations unless I ask.
+- If a task will touch more than ~15 files, stop and propose splitting it.
+- Don't commit; I commit.
