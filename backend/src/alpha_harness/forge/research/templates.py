@@ -500,11 +500,91 @@ def _fits(slot: FieldSlot, f: FieldInfo, *, require_archetype: bool = True) -> b
     return field_problem(slot, f, require_archetype=require_archetype) is None
 
 
+#: Variant-name vocabularies a ``same_dataset_as`` pair can be — the two halves of one
+#: statistic whose field ids should share everything but the half that names the statistic
+#: itself (so a slot hinting "mean"/"std" binds ``eps_mean`` to ``eps_std``, never to some
+#: other field that merely shares a dataset).
+_SEMANTIC_PAIRS: tuple[tuple[frozenset[str], frozenset[str]], ...] = (
+    (
+        frozenset({"mean", "avg", "average"}),
+        frozenset({"std", "stdev", "sd", "dispersion", "deviation"}),
+    ),
+    (
+        frozenset({"estimate", "est", "forecast", "consensus"}),
+        frozenset({"actual", "act", "reported"}),
+    ),
+    (frozenset({"high", "max", "upper"}), frozenset({"low", "min", "lower"})),
+    (frozenset({"numerator", "num"}), frozenset({"denominator", "denom"})),
+)
+_SEMANTIC_TOKENS = frozenset(tok for pair in _SEMANTIC_PAIRS for side in pair for tok in side)
+_WORD = re.compile(r"[a-z0-9]+")
+
+
+def _tokens(text: str) -> frozenset[str]:
+    return frozenset(_WORD.findall(text.lower()))
+
+
+def _semantic_side(tokens: frozenset[str]) -> frozenset[str] | None:
+    """Which half of a known statistic pair these words name, or None."""
+    for pair in _SEMANTIC_PAIRS:
+        for side in pair:
+            if tokens & side:
+                return side
+    return None
+
+
+def semantic_problem(
+    t: Template, name: str, f: FieldInfo, bound: Mapping[str, FieldInfo]
+) -> str | None:
+    """Why ``f`` cannot pair with the field already bound to ``name``'s ``same_dataset_as``
+    partner, or None if it can.
+
+    Only fires when both slots' ``hint`` text names opposite halves of a known statistic pair
+    (mean/std, estimate/actual, high/low, numerator/denominator): a template without that hint
+    gets no extra check, since "same dataset" is all it declared. When a pair is named, each
+    field's id must contain a word from its own half, and the two ids must agree once the
+    statistic words are stripped out — stopping a std-labelled slot from being filled by a
+    field that is not a std at all, or paired with a field for a different quantity.
+    """
+    slot = t.field_slot(name)
+    other_name = slot.same_dataset_as
+    if other_name is None or other_name not in bound:
+        return None
+    other_slot = t.field_slot(other_name)
+    side_self = _semantic_side(_tokens(slot.hint))
+    side_other = _semantic_side(_tokens(other_slot.hint))
+    if side_self is None or side_other is None or side_self == side_other:
+        return None
+    if not any(side_self in pair and side_other in pair for pair in _SEMANTIC_PAIRS):
+        return None
+    other_f = bound[other_name]
+    f_tokens = _tokens(f.id)
+    other_tokens = _tokens(other_f.id)
+    if not f_tokens & side_self:
+        label = "/".join(sorted(side_self))
+        return f"field {f.id} does not look like a {label} field, as slot {name} needs"
+    if not other_tokens & side_other:
+        label = "/".join(sorted(side_other))
+        return f"field {other_f.id} does not look like a {label} field, as slot {other_name} needs"
+    stem = lambda tokens: tokens - _SEMANTIC_TOKENS  # noqa: E731
+    if stem(f_tokens) != stem(other_tokens):
+        return (
+            f"field {f.id} does not share a name stem with {other_f.id} "
+            f"(slots {name}/{other_name} pair fields by what they measure, not just dataset)"
+        )
+    return None
+
+
 def bindings(
     t: Template, fields: Sequence[FieldInfo], *, require_archetype: bool = True
 ) -> list[dict[str, FieldInfo]]:
     """Every way to fill the template's field slots from ``fields`` — distinct fields, each
-    fitting its slot's archetype and type, with the dataset constraints honoured."""
+    fitting its slot's archetype and type, with the dataset constraints honoured.
+
+    A ``same_dataset_as``/``different_dataset_from`` constraint can only be confirmed when
+    both fields' datasets are known; an unknown (empty) dataset never silently counts as
+    "same", since that would let two unrelated fields with un-synced dataset ids through.
+    """
     names = t.field_slots
     slots = {n: t.field_slot(n) for n in names}
     out: list[dict[str, FieldInfo]] = []
@@ -513,14 +593,36 @@ def bindings(
         ok = True
         for n, s in slots.items():
             f = b[n]
-            same = s.same_dataset_as and b[s.same_dataset_as].dataset != f.dataset
-            diff = s.different_dataset_from and b[s.different_dataset_from].dataset == f.dataset
-            if not _fits(s, f, require_archetype=require_archetype) or same or diff:
+            same_f = b[s.same_dataset_as].dataset if s.same_dataset_as else None
+            diff_f = b[s.different_dataset_from].dataset if s.different_dataset_from else None
+            same = bool(s.same_dataset_as) and (not f.dataset or not same_f or same_f != f.dataset)
+            diff = bool(s.different_dataset_from) and (
+                not f.dataset or not diff_f or diff_f == f.dataset
+            )
+            if (
+                not _fits(s, f, require_archetype=require_archetype)
+                or same
+                or diff
+                or semantic_problem(t, n, f, b)
+            ):
                 ok = False
                 break
         if ok:
             out.append(b)
     return out
+
+
+def fits_fields(t: Template, fields: Sequence[FieldInfo]) -> bool:
+    """Whether ``fields`` can fill every one of the template's field slots at once.
+
+    What a field/template picker needs before it offers a template: not "is this template any
+    good" (:func:`fits` answers that from a placeholder fill), but "could the fields the user
+    has already picked actually bind to it" — the same question :func:`bindings` answers, just
+    reduced to yes/no.
+    """
+    if not t.field_slots:
+        return True
+    return bool(bindings(t, fields, require_archetype=False))
 
 
 type Choice = Param | Sequence[Param]
@@ -619,16 +721,21 @@ def _apply_choices(
     for name, f in pinned.items():
         slot = t.field_slot(name)
         same, diff = slot.same_dataset_as, slot.different_dataset_from
-        if same in pinned and pinned[same].dataset != f.dataset:
+        same_known = pinned[same].dataset if same in pinned else None
+        diff_known = pinned[diff].dataset if diff in pinned else None
+        if same in pinned and (not f.dataset or not same_known or same_known != f.dataset):
             raise ConstraintError(
-                f"{where} slot {name}: {f.id} ({f.dataset}) must share a dataset with "
-                f"slot {same}'s {pinned[same].id} ({pinned[same].dataset})"
+                f"{where} slot {name}: {f.id} ({f.dataset or 'unknown dataset'}) must share a "
+                f"dataset with slot {same}'s {pinned[same].id} ({same_known or 'unknown dataset'})"
             )
-        if diff in pinned and pinned[diff].dataset == f.dataset:
+        if diff in pinned and (not f.dataset or not diff_known or diff_known == f.dataset):
             raise ConstraintError(
                 f"{where} slot {name}: {f.id} must come from a different dataset than "
-                f"slot {diff}'s {pinned[diff].id} (both {f.dataset})"
+                f"slot {diff}'s {pinned[diff].id} (got {f.dataset or 'unknown'} vs "
+                f"{diff_known or 'unknown'})"
             )
+        if problem := semantic_problem(t, name, f, pinned):
+            raise ConstraintError(f"{where} slot {name}: {problem}")
     if len({f.id for f in pinned.values()}) < len(pinned):
         raise ConstraintError(f"{where}: one field cannot fill two slots")
     return pinned, params

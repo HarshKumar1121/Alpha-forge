@@ -29,7 +29,7 @@ from ..forge.research.binding import (
     scope_catalog,
 )
 from ..forge.research.description import compose, draft
-from ..forge.research.eligibility import judge_all
+from ..forge.research.eligibility import judge_all, summarize
 from ..forge.research.templates import Template, example, fits, get
 from ..forge.studio.models import AlphaDescription, TemplateVersion, UserTemplate
 from ..forge.studio.user_templates import (
@@ -66,7 +66,9 @@ class RenderedAlpha(Out):
     operator_count: int
     data_fields: list[str]
     datasets: list[str]
-    #: One entry per alpha type, whether it fits or not.
+    #: True when every alpha type fits — show one flag, not a badge per type.
+    fits_all: bool
+    #: Only the types it does NOT fit, each with why. Empty when ``fits_all``.
     eligibility: dict[str, EligibilityOut]
     #: The alpha types it does fit, for the summary line.
     fits: list[str]
@@ -249,8 +251,8 @@ async def preview(body: PreviewRequest, state: State) -> PreviewResponse:
         counts: dict[str, int] = dict.fromkeys(types, 0)
         for alpha in result.rendered:
             verdicts = judge_all(alpha.expression, types, catalog=catalog, target_dataset=target)
-            fits = sorted(name for name, v in verdicts.items() if v.ok)
-            for name in fits:
+            summary = summarize(verdicts)
+            for name in summary.fits:
                 counts[name] += 1
             rendered.append(
                 RenderedAlpha(
@@ -260,6 +262,7 @@ async def preview(body: PreviewRequest, state: State) -> PreviewResponse:
                     operator_count=alpha.operator_count,
                     data_fields=list(alpha.data_fields),
                     datasets=list(alpha.datasets),
+                    fits_all=summary.fits_all,
                     eligibility={
                         name: EligibilityOut(
                             alpha_type=v.alpha_type,
@@ -267,9 +270,9 @@ async def preview(body: PreviewRequest, state: State) -> PreviewResponse:
                             reasons=list(v.reasons),
                             warnings=list(v.warnings),
                         )
-                        for name, v in verdicts.items()
+                        for name, v in summary.failing.items()
                     },
-                    fits=fits,
+                    fits=list(summary.fits),
                 )
             )
         return PreviewResponse(

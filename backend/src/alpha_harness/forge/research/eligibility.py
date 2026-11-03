@@ -24,7 +24,7 @@ means BRAIN says so) — this is here to stop a simulation being spent on a cert
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from ...brain.platform import PV1_OPERATORS
 from ..alpha_types import lint
@@ -173,3 +173,109 @@ def judge_all(
         )
         for name, at in alpha_types.items()
     }
+
+
+#: FITS: clean pass. FITS_BUT_WEAK: passes the lint but is a poor fit in practice — a note
+#: a researcher should read before spending a simulation on it, not a reason to refuse it.
+#: DOESNT_FIT: :class:`Eligibility.ok` is false.
+Verdict = Literal["FITS", "FITS_BUT_WEAK", "DOESNT_FIT"]
+
+
+def quality_note(
+    expression: str,
+    alpha_type: AlphaType,
+    *,
+    catalog: Mapping[str, Mapping[str, Any]],
+) -> str | None:
+    """Why a *passing* alpha is a weak choice for ``alpha_type``, or ``None`` when it isn't.
+
+    BRAIN's own limits (field/operator counts, single-dataset) say what an alpha type will
+    RUN. They say nothing about what makes a good one — a two-dataset expression can sit well
+    under Power Pool's three-field cap and still not be the clean single-dataset residual the
+    type is meant for. These heuristics are a second, softer layer of judgment on top of
+    :func:`judge`, not a platform rule (CLAUDE.md rule 7 covers the hard rules; this is
+    research taste), so they live here as Python rather than in the alpha type YAML.
+    """
+    rules = alpha_type.lint_rules
+    used, _pv1 = datasets_used(expression, catalog)
+
+    # A type that wants most of its fields from one dataset (Power Pool: "a clean residual on
+    # the target dataset") but doesn't outright forbid a second one — crossing datasets is
+    # legal, but it stops being the archetype the type is for.
+    wants_single_source = rules.get("min_fields_from_target_dataset") and not rules.get(
+        "single_dataset"
+    )
+    if wants_single_source and len(used) > 1:
+        others = sorted(used)
+        return (
+            f"reads {len(used)} datasets ({', '.join(others)}) — fits the rule, but "
+            f"{alpha_type.name} alphas read best as one dataset's own residual"
+        )
+
+    # Using every field the type allows leaves no room to refine without hitting the limit.
+    max_fields = rules.get("max_fields")
+    if max_fields is not None and data_field_count(expression) == int(max_fields):
+        return (
+            f"uses all {max_fields} fields {alpha_type.name} allows — no slack left to "
+            "refine this idea without dropping one"
+        )
+
+    return None
+
+
+def judge_quality(
+    expression: str,
+    alpha_type: AlphaType,
+    *,
+    catalog: Mapping[str, Mapping[str, Any]],
+    target_dataset: str | None = None,
+    operators: set[str] | None = None,
+) -> tuple[Verdict, str | None]:
+    """:func:`judge`, read down to one 3-way verdict and its one-line reason."""
+    verdict = judge(
+        expression,
+        alpha_type,
+        catalog=catalog,
+        target_dataset=target_dataset,
+        operators=operators,
+    )
+    if not verdict.ok:
+        return "DOESNT_FIT", verdict.reasons[0] if verdict.reasons else "does not fit"
+    note = quality_note(expression, alpha_type, catalog=catalog)
+    return ("FITS_BUT_WEAK", note) if note else ("FITS", None)
+
+
+def judge_quality_all(
+    expression: str,
+    alpha_types: Mapping[str, AlphaType],
+    *,
+    catalog: Mapping[str, Mapping[str, Any]],
+    target_dataset: str | None = None,
+    operators: set[str] | None = None,
+) -> dict[str, tuple[Verdict, str | None]]:
+    """Every alpha type's 3-way verdict for this alpha, keyed by type name."""
+    return {
+        name: judge_quality(
+            expression, at, catalog=catalog, target_dataset=target_dataset, operators=operators
+        )
+        for name, at in alpha_types.items()
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class EligibilitySummary:
+    """A :func:`judge_all` result condensed for display: one flag when everything fits, so
+    a screen shows "fits all 12 types" instead of twelve identical green badges, and the
+    failing types (with their reasons) only when there is something to explain."""
+
+    fits_all: bool
+    #: The types it fits, regardless of ``fits_all`` — the planner still needs the names.
+    fits: tuple[str, ...]
+    #: Only the types it does NOT fit, each with why.
+    failing: dict[str, Eligibility]
+
+
+def summarize(verdicts: Mapping[str, Eligibility]) -> EligibilitySummary:
+    fits = tuple(sorted(name for name, v in verdicts.items() if v.ok))
+    failing = {name: v for name, v in verdicts.items() if not v.ok}
+    return EligibilitySummary(fits_all=not failing, fits=fits, failing=failing)

@@ -9,10 +9,13 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useSearch } from '@tanstack/react-router'
+import { useCallback, useEffect, useState } from 'react'
+import type { Scope } from '@/api/types'
 import { fmt } from '@/lib/format'
 import { useLive } from '@/lib/live'
-import { fieldSets } from '@/screens/forge/data/api'
+import { FieldPicker } from '@/screens/forge/data/field-picker'
+import { ForgeScopePicker, useForgeScope } from '@/screens/forge/scope/picker'
 import { forgeTemplates } from '@/screens/forge/templates/api'
 import {
   Badge,
@@ -31,13 +34,23 @@ import {
   Skeleton,
 } from '@/ui/kit'
 import { Select } from '@/ui/overlay'
-import { type PipelineOut, pipelines, type RunReport, type RunSummary } from './api'
+import {
+  type CandidateOut,
+  type PipelineOut,
+  pipelines,
+  type RunReport,
+  type RunSummary,
+} from './api'
 
 export function PipelinesScreen() {
   const queryClient = useQueryClient()
+  // Sent by Template Studio's "Send to Pipelines" — preselects the field set and template once.
+  const search = useSearch({ from: '/forge/pipelines' })
+  const [scope, setScope] = useForgeScope()
   const [pipelineName, setPipelineName] = useState<string | null>(null)
-  const [fieldSetId, setFieldSetId] = useState<number | null>(null)
-  const [templateIds, setTemplateIds] = useState<string[]>([])
+  const [fieldSetId, setFieldSetId] = useState<number | null>(search.fs ?? null)
+  const [fieldIds, setFieldIds] = useState<string[]>([])
+  const [templateIds, setTemplateIds] = useState<string[]>(search.t ? [search.t] : [])
   const [budget, setBudget] = useState<number | null>(null)
   const [taskId, setTaskId] = useState<string | null>(null)
 
@@ -46,7 +59,6 @@ export function PipelinesScreen() {
     queryKey: ['forge-pipelines', 'runs'],
     queryFn: pipelines.listRuns,
   })
-  const sets = useQuery({ queryKey: ['forge-fieldsets'], queryFn: fieldSets.list })
   const templates = useQuery({
     queryKey: ['forge-templates', 'list'],
     queryFn: forgeTemplates.list,
@@ -55,7 +67,6 @@ export function PipelinesScreen() {
 
   const pipeline = pipelineName ?? pipelineList.data?.[0]?.name ?? null
   const selected = pipelineList.data?.find((p) => p.name === pipeline) ?? null
-  const set = fieldSetId ?? sets.data?.[0]?.id ?? null
   const effectiveBudget = budget ?? selected?.defaultBudget ?? null
 
   // A pipeline draws only from its own template complexities (config/forge/pipelines/*.yaml).
@@ -63,14 +74,40 @@ export function PipelinesScreen() {
     (t) => !selected || selected.templateComplexity.includes(t.complexity),
   )
 
-  const ready = Boolean(pipeline && set != null && templateIds.length > 0 && effectiveBudget)
+  const ready = Boolean(
+    pipeline && fieldIds.length > 0 && templateIds.length > 0 && effectiveBudget,
+  )
+  // A saved field set is sent by id; fields picked on the spot go as an inline, unsaved set.
+  const fieldArgs = useCallback(
+    () =>
+      fieldSetId != null
+        ? { fieldSetId }
+        : {
+            fields: {
+              fieldIds,
+              region: scope.region,
+              universe: scope.universe,
+              delay: scope.delay,
+              instrumentType: scope.instrumentType,
+            },
+          },
+    [fieldSetId, fieldIds, scope],
+  )
 
   const preview = useQuery({
-    queryKey: ['forge-pipelines', 'preview', pipeline, set, templateIds, effectiveBudget],
+    queryKey: [
+      'forge-pipelines',
+      'preview',
+      pipeline,
+      fieldSetId,
+      fieldIds,
+      templateIds,
+      effectiveBudget,
+    ],
     queryFn: () =>
       pipelines.preview({
         pipeline: pipeline as string,
-        fieldSetId: set as number,
+        ...fieldArgs(),
         templateIds,
         budget: effectiveBudget,
       }),
@@ -81,7 +118,7 @@ export function PipelinesScreen() {
     mutationFn: () =>
       pipelines.run({
         pipeline: pipeline as string,
-        fieldSetId: set as number,
+        ...fieldArgs(),
         templateIds,
         budget: effectiveBudget,
       }),
@@ -105,10 +142,13 @@ export function PipelinesScreen() {
           setPipelineName(name)
           setTaskId(null)
         }}
-        sets={sets.data}
-        fieldSetId={set}
-        onFieldSet={(id) => {
-          setFieldSetId(id)
+        scope={scope}
+        onScope={setScope}
+        fieldIds={fieldIds}
+        initialFieldSetId={fieldSetId}
+        onFields={(ids, setId) => {
+          setFieldIds(ids)
+          setFieldSetId(setId)
           setTaskId(null)
         }}
         templates={eligibleTemplates}
@@ -124,19 +164,11 @@ export function PipelinesScreen() {
         }}
       />
 
-      {sets.data?.length === 0 && (
-        <Panel title="No field sets yet">
-          <Empty title="A pipeline needs real fields to cross with its templates">
-            Make one in the Data Explorer: narrow a market to the fields behind an idea, tick them,
-            and choose "Save as field set".
-          </Empty>
-        </Panel>
-      )}
-
-      {!ready && !taskId && (sets.data?.length ?? 0) > 0 && (
-        <Empty title="Pick at least one template to plan a run">
-          Choose the templates this pipeline should cross with the field set above, and a budget.
-          The plan preview appears here once both are picked — nothing runs until you approve it.
+      {!ready && !taskId && (
+        <Empty title="Pick fields, templates and a budget to plan a run">
+          Choose a field set or search fields above, the templates this pipeline should cross them
+          with, and a budget. The plan preview appears here once all three are picked — nothing runs
+          until you approve it.
         </Empty>
       )}
 
@@ -207,9 +239,11 @@ function Setup({
   pipelineList,
   selected,
   onPipeline,
-  sets,
-  fieldSetId,
-  onFieldSet,
+  scope,
+  onScope,
+  fieldIds,
+  initialFieldSetId,
+  onFields,
   templates,
   templateIds,
   onTemplates,
@@ -219,11 +253,11 @@ function Setup({
   pipelineList: PipelineOut[] | undefined
   selected: PipelineOut | null
   onPipeline: (name: string) => void
-  sets:
-    | { id: number; name: string; scope: { region: string; delay: number; universe: string } }[]
-    | undefined
-  fieldSetId: number | null
-  onFieldSet: (id: number) => void
+  scope: Scope
+  onScope: (change: Partial<Scope>) => void
+  fieldIds: string[]
+  initialFieldSetId: number | null
+  onFields: (fieldIds: string[], fieldSetId: number | null) => void
   templates: { id: string; name: string; complexity: string }[]
   templateIds: string[]
   onTemplates: (ids: string[]) => void
@@ -233,7 +267,7 @@ function Setup({
   return (
     <Panel
       title="What to run"
-      description="What this tells you: which factory, on which fields and ideas, for how many simulations. The lane and template complexities come from the pipeline's own config — this screen only picks the field set, the templates and the budget."
+      description="What this tells you: which factory, on which fields and ideas, for how many simulations. The lane and template complexities come from the pipeline's own config — this screen only picks the market, the fields, the templates and the budget."
       bodyClassName="grid gap-4 p-4 sm:grid-cols-2"
     >
       <Field label="Pipeline" hint="Which factory, and which BRAIN lane pays for it.">
@@ -244,15 +278,23 @@ function Setup({
           onChange={onPipeline}
         />
       </Field>
-      <Field label="Field set" hint="Its market decides which fields exist.">
-        <Select
-          label="Field set"
-          items={(sets ?? []).map((s) => ({
-            value: String(s.id),
-            label: `${s.name} — ${s.scope.region} D${s.scope.delay} ${s.scope.universe}`,
-          }))}
-          value={fieldSetId == null ? null : String(fieldSetId)}
-          onChange={(value) => onFieldSet(Number(value))}
+      <Field
+        label="Market"
+        hint="Which account scope the fields below come from."
+        className="sm:col-span-2"
+      >
+        <ForgeScopePicker scope={scope} onChange={onScope} />
+      </Field>
+      <Field
+        label="Fields"
+        hint="Pick a saved field set, or search and tick fields straight from this market — both end up crossed with the templates below."
+        className="sm:col-span-2"
+      >
+        <FieldPicker
+          scope={scope}
+          selected={fieldIds}
+          onChange={onFields}
+          initialFieldSetId={initialFieldSetId}
         />
       </Field>
       <Field
@@ -372,6 +414,21 @@ function PlanPreviewPanel({
         </Notice>
       )}
 
+      {preview.candidatesSample.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <p className="text-body-compact text-ink-subtle">
+            What this tells you: a sample of eligible candidates, each judged against every alpha
+            type — not just this pipeline's own — so you can see where the same idea might also fit,
+            and where it technically fits but isn't a clean choice.
+          </p>
+          <div className="flex flex-col gap-2 divide-y divide-hairline">
+            {preview.candidatesSample.slice(0, 5).map((c) => (
+              <CandidateVerdicts key={c.expression} candidate={c} />
+            ))}
+          </div>
+        </div>
+      )}
+
       {approveError != null && <ErrorNotice error={approveError} title="The run could not start" />}
 
       <div>
@@ -391,6 +448,37 @@ function PlanPreviewPanel({
         )}
       </div>
     </Panel>
+  )
+}
+
+const VERDICT_TONE = {
+  FITS: 'profit',
+  FITS_BUT_WEAK: 'warn',
+  DOESNT_FIT: 'loss',
+} as const
+
+/** One candidate's expression plus a per-alpha-type FITS / FITS BUT WEAK / DOESN'T FIT badge
+ *  row, each with a one-line reason on hover — replaces a blanket "fits every type" claim. */
+function CandidateVerdicts({ candidate }: { candidate: CandidateOut }) {
+  const entries = Object.entries(candidate.verdicts ?? {})
+  return (
+    <div className="flex flex-col gap-1 py-2">
+      <code className="num block text-body-compact break-all text-ink">{candidate.expression}</code>
+      {entries.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {entries.map(([type, v]) => (
+            <Badge
+              key={type}
+              tone={VERDICT_TONE[v.verdict as keyof typeof VERDICT_TONE] ?? 'neutral'}
+              title={v.reason ?? `Fits ${type.replaceAll('_', ' ')} cleanly`}
+            >
+              {type.replaceAll('_', ' ')}
+              {v.verdict === 'FITS_BUT_WEAK' && ' (weak)'}
+            </Badge>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -492,12 +580,12 @@ function RunReportPanel({ report }: { report: RunReport }) {
       <div className="flex flex-col divide-y divide-hairline">
         {report.finalists.map((c) => (
           <div key={c.expression} className="flex flex-col gap-1 py-2">
-            <code className="num block text-body-compact break-all text-ink">{c.expression}</code>
             <div className="flex flex-wrap items-center gap-2 text-body-compact text-ink-subtle">
               {c.alphaId && <Badge tone="profit">{c.alphaId}</Badge>}
               <span>train sharpe {fmt.ratio(c.trainSharpe)}</span>
               <span>test sharpe {fmt.ratio(c.testSharpe)}</span>
             </div>
+            <CandidateVerdicts candidate={c} />
           </div>
         ))}
       </div>

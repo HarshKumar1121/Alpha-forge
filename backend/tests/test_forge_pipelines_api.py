@@ -527,3 +527,155 @@ async def test_run_spends_through_the_governor_and_reports_candidates(
 async def test_run_report_404s_for_an_unknown_task(client: httpx2.AsyncClient) -> None:
     res = await client.get("/api/forge/pipelines/runs/does-not-exist")
     assert res.status_code == 404
+
+
+# --- fields picked on the spot, without a saved field set ---------------------------------
+
+
+async def test_preview_accepts_fields_picked_on_the_spot_without_a_saved_field_set(
+    client: httpx2.AsyncClient, harness: Harness
+) -> None:
+    """The Pipelines screen's field picker can search and tick fields directly — a plan must
+    work from those fields alone, with no `FieldSet` row ever created."""
+    await make_template(harness)
+
+    res = await client.post(
+        "/api/forge/pipelines/preview",
+        json={
+            "pipeline": "regular",
+            "fields": {
+                "fieldIds": ["anl4_eps_mean", "anl4_rev_mean"],
+                "region": "USA",
+                "universe": "TOP3000",
+                "delay": 1,
+                "instrumentType": "EQUITY",
+            },
+            "templateIds": ["pipeline_test_simple"],
+            "budget": 3,
+        },
+        headers=CLIENT,
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["generated"] == 2
+    expressions = {c["expression"] for c in body["candidatesSample"]}
+    assert all("anl4_eps_mean" in e or "anl4_rev_mean" in e for e in expressions)
+    assert len(expressions) == 2
+
+    async with harness.db.session() as session:
+        rows = (await session.scalars(select(FieldSet))).all()
+    assert rows == []  # nothing was persisted just to preview
+
+
+async def test_preview_refuses_with_neither_a_field_set_nor_fields(
+    client: httpx2.AsyncClient, harness: Harness
+) -> None:
+    await make_template(harness)
+    res = await client.post(
+        "/api/forge/pipelines/preview",
+        json={
+            "pipeline": "regular",
+            "templateIds": ["pipeline_test_simple"],
+            "budget": 3,
+        },
+        headers=CLIENT,
+    )
+    assert res.status_code == 422
+    assert res.json()["detail"]["code"] == "missing_fields"
+
+
+# --- per-alpha-type verdicts: FITS / FITS_BUT_WEAK / DOESNT_FIT, not a blanket "fits all" ---
+
+
+async def test_preview_candidates_carry_a_different_verdict_per_alpha_type(
+    client: httpx2.AsyncClient, harness: Harness
+) -> None:
+    await make_template(harness)
+    field_set_id = await make_named_field_set(harness, "pv", ["close"])
+
+    res = await client.post(
+        "/api/forge/pipelines/preview",
+        json={
+            "pipeline": "regular",
+            "fieldSetId": field_set_id,
+            "templateIds": ["pipeline_test_simple"],
+            "budget": 3,
+        },
+        headers=CLIENT,
+    )
+    assert res.status_code == 200, res.text
+    sample = res.json()["candidatesSample"]
+    assert sample
+    verdicts = sample[0]["verdicts"]
+    # Judged against every alpha type, not just "regular" — this pipeline's own.
+    assert {"regular", "power_pool", "atom"} <= set(verdicts)
+    assert verdicts["regular"]["verdict"] == "FITS"
+    # "close" is a single pv1 field, well under Power Pool's limits — also a clean FITS, not
+    # the blanket true/false this replaces.
+    assert verdicts["power_pool"]["verdict"] == "FITS"
+
+
+# --- semantic pairing: what this screen previews is what the fixed `bindings()` produces -------
+#
+# Same incident as `test_forge_templates_engine.py`'s `analyst_dispersion` regression: a stray
+# same-dataset field (`anl4_afv4_eps_high`) and an unrelated-dataset field
+# (`actual_eps_value_quarterly`) must never be bound together into a candidate, here exercised
+# through the actual `/preview` and `/run` routes rather than the engine function directly.
+
+
+async def _seed_dispersion_fields(harness: Harness) -> None:
+    rows = [
+        ("anl4_eps_mean", "analyst4", "analyst", "MATRIX", 0.72, 300, 2000),
+        ("anl4_eps_std", "analyst4", "analyst", "MATRIX", 0.60, 250, 1500),
+        ("anl4_rev_mean", "analyst4", "analyst", "MATRIX", 0.70, 200, 900),
+        ("anl4_rev_std", "analyst4", "analyst", "MATRIX", 0.55, 150, 700),
+        # Real analyst4 field that is not a mean/std pair at all.
+        ("anl4_afv4_eps_high", "analyst4", "analyst", "MATRIX", 0.50, 100, 400),
+        # Same dataset in a naive id-only reading, but not an estimate field.
+        ("actual_eps_value_quarterly", "analyst4", "analyst", "MATRIX", 0.50, 100, 400),
+    ]
+    for f, d, cat, t, cov, users, alphas in rows:
+        await harness.catalog.execute(
+            "INSERT INTO data_field (field_id, dataset_id, category_id, field_type, coverage,"
+            " user_count, alpha_count, instrument_type, region, delay, universe, synced_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, 'EQUITY', 'USA', 1, 'TOP3000', now())",
+            [f, d, cat, t, cov, users, alphas],
+        )
+
+
+async def test_preview_only_pairs_the_true_mean_std_fields(
+    client: httpx2.AsyncClient, harness: Harness
+) -> None:
+    await _seed_dispersion_fields(harness)
+    field_set_id = await make_named_field_set(
+        harness,
+        "dispersion",
+        [
+            "anl4_eps_mean",
+            "anl4_eps_std",
+            "anl4_rev_mean",
+            "anl4_rev_std",
+            "anl4_afv4_eps_high",
+            "actual_eps_value_quarterly",
+        ],
+    )
+
+    res = await client.post(
+        "/api/forge/pipelines/preview",
+        json={
+            "pipeline": "regular",
+            "fieldSetId": field_set_id,
+            "templateIds": ["analyst_dispersion"],
+            "budget": 5,
+        },
+        headers=CLIENT,
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    expressions = {c["expression"] for c in body["candidatesSample"]}
+    assert len(expressions) == 2
+    assert any("anl4_eps_std" in e and "anl4_eps_mean" in e for e in expressions)
+    assert any("anl4_rev_std" in e and "anl4_rev_mean" in e for e in expressions)
+    for expr in expressions:
+        assert "anl4_afv4_eps_high" not in expr
+        assert "actual_eps_value_quarterly" not in expr

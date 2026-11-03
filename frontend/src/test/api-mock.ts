@@ -537,11 +537,10 @@ export const FIXTURES: Record<string, unknown> = {
         dataFields: ['anl4_eps_mean'],
         datasets: ['analyst4'],
         fits: ['atom', 'power_pool', 'regular'],
-        eligibility: {
-          regular: { alphaType: 'regular', ok: true, reasons: [], warnings: [] },
-          power_pool: { alphaType: 'power_pool', ok: true, reasons: [], warnings: [] },
-          atom: { alphaType: 'atom', ok: true, reasons: [], warnings: [] },
-        },
+        fitsAll: true,
+        // Fully eligible: BRAIN's per-type verdicts collapse to `fitsAll`, so the failing-only
+        // `eligibility` map is empty — the screen must read `fitsAll`/`fits`, not this map.
+        eligibility: {},
       },
       {
         expression: 'rank(ts_delta(ts_backfill(anl4_rev_mean, 63), 63))',
@@ -550,15 +549,10 @@ export const FIXTURES: Record<string, unknown> = {
         operatorCount: 2,
         dataFields: ['anl4_rev_mean', 'close'],
         datasets: ['analyst4', 'pv1'],
-        fits: ['regular'],
+        fits: ['power_pool', 'regular'],
+        fitsAll: false,
+        // Not fully eligible: only the failing type appears here, with why.
         eligibility: {
-          regular: { alphaType: 'regular', ok: true, reasons: [], warnings: [] },
-          power_pool: {
-            alphaType: 'power_pool',
-            ok: true,
-            reasons: [],
-            warnings: ['convert reads pv1; that is 2 of 3 data fields'],
-          },
           atom: {
             alphaType: 'atom',
             ok: false,
@@ -646,6 +640,26 @@ export const FIXTURES: Record<string, unknown> = {
       laneRemaining: 1200,
       globalRemaining: 4600,
     },
+    candidatesSample: [
+      {
+        expression: 'rank(ts_delta(ts_backfill(anl4_eps_mean, 63), 21))',
+        alphaId: null,
+        trainSharpe: null,
+        testSharpe: null,
+        verdicts: {
+          regular: { verdict: 'FITS', reason: null },
+          power_pool: {
+            verdict: 'FITS_BUT_WEAK',
+            reason:
+              'reads 2 datasets (analyst4, pv1) — fits the rule, but power_pool alphas read best as one dataset’s own residual',
+          },
+          atom: {
+            verdict: 'DOESNT_FIT',
+            reason: 'Single-dataset type but fields span analyst4, pv1.',
+          },
+        },
+      },
+    ],
   },
   '/api/forge/pipelines/run': {
     taskId: 'pipeline-task-1',
@@ -671,6 +685,11 @@ export const FIXTURES: Record<string, unknown> = {
         alphaId: 'ALPHA1',
         trainSharpe: 1.8,
         testSharpe: 1.2,
+        verdicts: {
+          regular: { verdict: 'FITS', reason: null },
+          power_pool: { verdict: 'FITS', reason: null },
+          atom: { verdict: 'FITS', reason: null },
+        },
       },
     ],
     rejected: [],
@@ -791,11 +810,24 @@ export const FIXTURES: Record<string, unknown> = {
       createdAt: '2026-11-01T12:00:00Z',
     },
   ],
+  '/api/forge/templates/compatible': {
+    templates: [
+      {
+        id: 'analyst_revision',
+        name: 'Revision against peers',
+        category: 'analyst/revision',
+        complexity: 'simple',
+      },
+    ],
+  },
   '/api/forge/workshop/trials': [
     {
       id: 1,
       hypothesisId: 1,
-      hypothesis: { title: 'Analyst revisions mean-revert fast' },
+      hypothesis: {
+        title: 'Analyst revisions mean-revert fast',
+        template_id: 'analyst_revision',
+      },
       pipeline: 'regular',
       fieldSetId: 1,
       fields: ['anl4_eps_mean'],

@@ -4,6 +4,7 @@ Fit is checked against hand-worked cases: if the linter and a human disagree abo
 template fits Power Pool, one of them is wrong, and a wasted simulation is how you find out.
 """
 
+import itertools
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -16,6 +17,7 @@ from alpha_harness.forge.research.templates import (
     ConstraintError,
     FieldInfo,
     Template,
+    bindings,
     expand,
     fits,
     get,
@@ -211,3 +213,77 @@ def test_gym_example_reasons() -> None:
     g = gym_example(_t("sentiment_smoothed"))  # fast fields only
     assert isinstance(g, GymExample)
     assert g.fields == {"X": "news_sentiment"}
+
+
+# --- semantic pairing on real-shaped field names (analyst4 / fundamental6 families) ------------
+#
+# Reproduces the Nov 3 incident: on a real field set, ``analyst_dispersion`` (X: "estimate std /
+# dispersion field", Y: "estimate mean field", same_dataset_as: X) was filled with
+# anl4_afv4_eps_high and actual_eps_value_quarterly — a stray field paired with one from an
+# unrelated dataset, not a dispersion/mean pair at all.
+
+REAL_SHAPED_FIELDS = [
+    FieldInfo("anl4_eps_mean", "analyst4"),
+    FieldInfo("anl4_eps_std", "analyst4"),
+    FieldInfo("anl4_rev_mean", "analyst4"),
+    FieldInfo("anl4_rev_std", "analyst4"),
+    # A real analyst4 field that is not a mean/std pair at all.
+    FieldInfo("anl4_afv4_eps_high", "analyst4"),
+    # Same (or unsynced/unknown) dataset in a naive id-only reading, but not an estimate field.
+    FieldInfo("actual_eps_value_quarterly", "analyst4"),
+    FieldInfo("assets", "fundamental6"),
+    FieldInfo("liabilities", "fundamental6"),
+]
+
+
+def _old_bindings(t: Template, fields: list[FieldInfo]) -> list[dict[str, FieldInfo]]:
+    """The pre-fix rule: only archetype/type/dataset-equality, no semantic pairing, and an
+    unknown dataset ("") compares equal to another unknown dataset instead of being rejected."""
+    names = t.field_slots
+    slots = {n: t.field_slot(n) for n in names}
+    out: list[dict[str, FieldInfo]] = []
+    for combo in itertools.permutations(fields, len(names)):
+        b = dict(zip(names, combo, strict=True))
+        ok = True
+        for n, s in slots.items():
+            f = b[n]
+            same = s.same_dataset_as and b[s.same_dataset_as].dataset != f.dataset
+            diff = s.different_dataset_from and b[s.different_dataset_from].dataset == f.dataset
+            if same or diff:
+                ok = False
+                break
+        if ok:
+            out.append(b)
+    return out
+
+
+def test_analyst_dispersion_old_logic_produces_nonsense_pairs() -> None:
+    """Characterizes the bug: dataset-only matching lets ANY two analyst4 fields pair up."""
+    t = _t("analyst_dispersion")
+    old = _old_bindings(t, REAL_SHAPED_FIELDS)
+    assert len(old) == 32
+    assert {"X": "anl4_afv4_eps_high", "Y": "actual_eps_value_quarterly"} in [
+        {k: v.id for k, v in b.items()} for b in old
+    ]
+
+
+def test_analyst_dispersion_new_logic_only_pairs_mean_with_std() -> None:
+    """The fix: only std/mean pairs sharing a name stem survive, within the same dataset."""
+    t = _t("analyst_dispersion")
+    new = bindings(t, REAL_SHAPED_FIELDS, require_archetype=False)
+    got = [{k: v.id for k, v in b.items()} for b in new]
+    assert got == [
+        {"X": "anl4_eps_std", "Y": "anl4_eps_mean"},
+        {"X": "anl4_rev_std", "Y": "anl4_rev_mean"},
+    ]
+    # The reported nonsense pair must be gone.
+    assert {"X": "anl4_afv4_eps_high", "Y": "actual_eps_value_quarterly"} not in got
+    assert {"X": "anl4_eps_std", "Y": "anl4_rev_mean"} not in got  # cross-field: stems differ
+
+
+def test_unknown_dataset_never_silently_matches() -> None:
+    """Two fields the catalog never synced a dataset for (dataset="") must not be treated as
+    'same dataset' just because both are blank — same_dataset_as should reject them."""
+    t = _t("fund_ratio_two_fields")  # X, Y: same_dataset_as, no semantic hint
+    unsynced = [FieldInfo("eps_mean", ""), FieldInfo("eps_std", "")]
+    assert bindings(t, unsynced, require_archetype=False) == []

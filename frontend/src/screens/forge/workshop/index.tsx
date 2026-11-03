@@ -7,13 +7,16 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { errorMessage } from '@/api/http'
 import { fmt } from '@/lib/format'
 import { agent, type Hypothesis } from '@/screens/forge/agent/api'
 import { AgentPanel } from '@/screens/forge/agent/panel'
 import { type FieldSetOut, fieldSets } from '@/screens/forge/data/api'
+import { FieldPicker } from '@/screens/forge/data/field-picker'
 import { pipelines } from '@/screens/forge/pipelines/api'
+import { TemplatePicker } from '@/screens/forge/templates/template-picker'
 import {
   Badge,
   Button,
@@ -78,6 +81,7 @@ export function WorkshopScreen() {
 
       <IdeaForm
         pipelineNames={pipelinesQuery.data?.map((p) => p.name) ?? []}
+        fieldSetList={fieldSetsQuery.data ?? []}
         pending={proposeHypothesis.isPending}
         error={proposeHypothesis.isError ? proposeHypothesis.error : null}
         onSubmit={(body) => proposeHypothesis.mutate(body)}
@@ -122,11 +126,13 @@ export function WorkshopScreen() {
 
 function IdeaForm({
   pipelineNames,
+  fieldSetList,
   pending,
   error,
   onSubmit,
 }: {
   pipelineNames: string[]
+  fieldSetList: FieldSetOut[]
   pending: boolean
   error: unknown
   onSubmit: (body: {
@@ -136,6 +142,7 @@ function IdeaForm({
     horizon: string
     pipeline: string
     template: string
+    templateId: string
     fields: string[]
   }) => void
 }) {
@@ -144,8 +151,13 @@ function IdeaForm({
   const [expectedSign, setExpectedSign] = useState<'+' | '-'>('+')
   const [horizon, setHorizon] = useState('')
   const [pipeline, setPipeline] = useState('')
-  const [template, setTemplate] = useState('')
-  const [fieldsText, setFieldsText] = useState('')
+  const [marketFieldSetId, setMarketFieldSetId] = useState<number | null>(null)
+  const [fields, setFields] = useState<string[]>([])
+  const [templateId, setTemplateId] = useState<string | null>(null)
+
+  // The field/template pickers need a market (region/universe/delay) to search in — borrowed
+  // from whichever field set sets the context, the same way `TrialSetup` below scopes a trial.
+  const marketSet = fieldSetList.find((fs) => fs.id === marketFieldSetId) ?? fieldSetList[0] ?? null
 
   const canSubmit = title.trim() !== '' && mechanism.trim() !== ''
 
@@ -166,16 +178,15 @@ function IdeaForm({
             expectedSign,
             horizon: horizon.trim(),
             pipeline: pipeline.trim(),
-            template: template.trim(),
-            fields: fieldsText
-              .split(',')
-              .map((f) => f.trim())
-              .filter(Boolean),
+            template: '',
+            templateId: templateId ?? '',
+            fields,
           })
           setTitle('')
           setMechanism('')
           setHorizon('')
-          setFieldsText('')
+          setFields([])
+          setTemplateId(null)
         }}
       >
         <Field label="Title" hint="A short name for the idea.">
@@ -227,29 +238,43 @@ function IdeaForm({
               />
             )}
           </Field>
-          <Field
-            label="Template"
-            hint="A template this idea fits, if you know one."
-            className="w-56"
-          >
-            <Input
-              value={template}
-              onChange={(e) => setTemplate(e.target.value)}
+        </div>
+        {fieldSetList.length > 1 && (
+          <Field label="Market" hint="Which field set's scope to search fields in.">
+            <Select
+              label="Market"
+              className="w-72"
+              value={marketSet ? String(marketSet.id) : null}
+              onChange={(v) => {
+                setMarketFieldSetId(Number(v))
+                setFields([])
+                setTemplateId(null)
+              }}
+              items={fieldSetList.map((fs) => ({ value: String(fs.id), label: fs.name }))}
               disabled={pending}
             />
           </Field>
-        </div>
-        <Field
-          label="Fields"
-          hint="Comma-separated. Needed to challenge with evidence or run a trial."
-        >
-          <Input
-            value={fieldsText}
-            onChange={(e) => setFieldsText(e.target.value)}
-            disabled={pending}
-            placeholder="anl4_eps_mean, anl4_rev_mean"
-          />
-        </Field>
+        )}
+        {marketSet ? (
+          <>
+            <FieldPicker
+              scope={marketSet.scope}
+              selected={fields}
+              onChange={(ids) => setFields(ids)}
+            />
+            <TemplatePicker
+              scope={marketSet.scope}
+              fieldIds={fields}
+              value={templateId}
+              onChange={setTemplateId}
+            />
+          </>
+        ) : (
+          <Empty title="Save a field set first">
+            The field and template pickers search a market's real fields — save one from the Data
+            Explorer, then come back to write this idea.
+          </Empty>
+        )}
         {error != null && <ErrorNotice error={error} title="Could not save the idea" />}
         <Button
           type="submit"
@@ -456,6 +481,7 @@ function TrialSetup({
               expectedSign: hypothesis.expectedSign,
               horizon: hypothesis.horizon,
               template: hypothesis.template,
+              templateId: hypothesis.templateId,
               pipeline: hypothesis.pipeline,
               fieldSetId,
               fields,
@@ -560,9 +586,30 @@ function TrialRow({ trial }: { trial: TrialOut }) {
 
       {trial.status === 'done' && trial.proposalId == null && survivors.length > 0 && (
         <>
-          <Button size="sm" variant="secondary" onClick={() => setShowPromote((v) => !v)}>
-            {showPromote ? 'Cancel' : `Promote ${fmt.int(survivors.length)} survivor(s)`}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setShowPromote((v) => !v)}>
+              {showPromote ? 'Cancel' : `Promote ${fmt.int(survivors.length)} survivor(s)`}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              title="Build this out further in Pipelines instead of promoting straight to simulation."
+              render={
+                <Link
+                  to="/forge/pipelines"
+                  search={{
+                    fs: trial.fieldSetId,
+                    t:
+                      ((trial.hypothesis as Record<string, unknown>)['template_id'] as
+                        | string
+                        | undefined) || undefined,
+                  }}
+                />
+              }
+            >
+              Send to Pipelines instead
+            </Button>
+          </div>
           {showPromote && (
             <div className="flex flex-col gap-2 rounded-md border border-hairline-subtle bg-surface-2 p-3">
               <Field

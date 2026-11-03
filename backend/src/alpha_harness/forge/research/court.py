@@ -38,9 +38,13 @@ from .. import config
 from ..expr import ParseError, analyse, on_result
 from .planner import Cand, Report, Researcher
 from .profiler import probes
-from .templates import flip
+from .templates import FieldInfo, bindings, flip
+from .templates import get as get_template
+from .templates import render as render_template
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from ..alpha_types import AlphaType
     from ..simulator import Simulator
     from ..store import ResearchStore
@@ -174,9 +178,13 @@ class Court:
         scope: str = "",
         critic: Critic | None = None,
         log: Callable[[str], None] = lambda _: None,
+        field_infos: Sequence[FieldInfo] | None = None,
     ) -> None:
         self.cfg = court_config()
         self.h, self.fields, self.log, self.critic = hypothesis, fields[:3], log, critic
+        #: So a hypothesis naming a real template can bind these fields to its slots, in
+        #: addition to (never instead of) the plain per-field seeds below.
+        self.field_infos = field_infos
         self.sign = -1 if str(hypothesis.get("expected_sign", "+")).strip() == "-" else 1
         self.r = Researcher(
             store,
@@ -214,6 +222,38 @@ class Court:
         e = probes(f, f in self.r.vector)[angle]
         return e if self.sign > 0 else flip(e)
 
+    def joint_seed(self) -> str | None:
+        """One expression binding this trial's fields to a real template's slots, with the
+        template engine's corrected same-dataset/semantic pairing — additional evidence
+        alongside the per-field seeds in :meth:`seed`, never a replacement for them.
+
+        Only fires when the hypothesis names a real ``template_id`` (picked from the Template
+        Library, not the free-text ``template`` string :meth:`seed` already handles), there are
+        at least two fields on trial, and each field's dataset is known (:attr:`field_infos`) —
+        ``same_dataset_as``/semantic pairing cannot be confirmed from a field id alone.
+        """
+        template_id = str(self.h.get("template_id") or "")
+        if not template_id or len(self.fields) < 2 or not self.field_infos:
+            return None
+        t = get_template(template_id)
+        if t is None or not t.field_slots:
+            return None
+        candidates = [f for f in self.field_infos if f.id in self.fields]
+        if len(candidates) < len(t.field_slots):
+            return None
+        options = bindings(t, candidates, require_archetype=False)
+        if not options:
+            return None
+        binding = options[0]
+        vector = {f.id for f in candidates if f.type == "VECTOR"}
+        return render_template(
+            t,
+            {k: f.id for k, f in binding.items()},
+            t.default_params(),
+            sign=self.sign,
+            vector=vector,
+        )
+
     # -- the trial ---------------------------------------------------------------------------------
     async def run(self) -> Case:
         objections = standard_objections(self.h)
@@ -231,11 +271,17 @@ class Court:
                 critique = f"(critic unavailable: {exc})"
         results: list[TestResult] = []
         seeds: dict[str, str] = {}
+        tested = list(self.fields)
         for f in self.fields:
             seeds[f] = self.seed(f)
             results += await self.try_field(f, seeds[f], objections)
-        verdicts = {f: self.judge([r for r in results if r.field == f]) for f in self.fields}
-        # The overall verdict is the best any field earned: one surviving field is a lead.
+        if (joint := self.joint_seed()) is not None:
+            seeds["_joint"] = joint
+            results += await self.try_field("_joint", joint, objections)
+            tested.append("_joint")
+        verdicts = {f: self.judge([r for r in results if r.field == f]) for f in tested}
+        # The overall verdict is the best any field (or the joint template seed) earned: one
+        # surviving field is a lead.
         overall = min(verdicts.values(), key=VERDICTS.index) if verdicts else "REJECTED"
         return Case(self.h, seeds, results, verdicts, overall, critique, refinement, self.r.spent)
 

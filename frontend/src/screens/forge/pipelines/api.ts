@@ -16,6 +16,8 @@ export type CandidateOut = Schemas['CandidateOut']
 export type RejectedCandidate = Schemas['RejectedCandidate']
 export type QuotaAdmission = Schemas['QuotaAdmission']
 export type RunSummary = Schemas['RunSummary']
+export type InlineFields = Schemas['InlineFields']
+export type VerdictOut = Schemas['VerdictOut']
 
 const B = '/api/forge/pipelines'
 

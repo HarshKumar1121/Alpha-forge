@@ -42,8 +42,25 @@ async def test_hypothesis_and_lesson_round_trip(client: httpx2.AsyncClient) -> N
         headers=CLIENT,
     )
     assert created.status_code == 200, created.text
+    assert created.json()["templateId"] == ""  # no picker template -> free-text fallback only
     listed = await client.get("/api/forge/agent/hypotheses")
     assert listed.json()[0]["title"] == "reversal"
+
+
+async def test_a_hypothesis_can_carry_a_real_template_id(client: httpx2.AsyncClient) -> None:  # noqa: F811
+    created = await client.post(
+        "/api/forge/agent/hypotheses",
+        json={
+            "title": "dispersion",
+            "mechanism": "disagreement predicts underperformance",
+            "templateId": "analyst_dispersion",
+        },
+        headers=CLIENT,
+    )
+    assert created.status_code == 200, created.text
+    assert created.json()["templateId"] == "analyst_dispersion"
+    listed = await client.get("/api/forge/agent/hypotheses")
+    assert listed.json()[0]["templateId"] == "analyst_dispersion"
 
     lesson = await client.post(
         "/api/forge/agent/lessons",

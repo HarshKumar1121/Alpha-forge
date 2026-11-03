@@ -37,6 +37,7 @@ async def propose_hypothesis(
     horizon: str = "",
     pipeline: str = "",
     template: str = "",
+    template_id: str = "",
     fields: Sequence[str] = (),
     source: str = "researcher",
 ) -> AgentHypothesis:
@@ -47,6 +48,7 @@ async def propose_hypothesis(
         horizon=horizon,
         pipeline=pipeline,
         template=template,
+        template_id=template_id,
         fields=list(fields),
         source=source,
         status="proposed",

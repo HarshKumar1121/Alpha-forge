@@ -55,6 +55,7 @@ class TrialCreate(Out):
     expected_sign: str = "+"
     horizon: str = ""
     template: str = ""
+    template_id: str = ""
     pipeline: str = Field(min_length=1)
     field_set_id: int
     fields: list[str] = Field(min_length=1, max_length=3)
@@ -128,6 +129,7 @@ async def _hypothesis_dict(body: TrialCreate, state: State) -> dict[str, Any]:
             "expected_sign": found.expected_sign,
             "horizon": found.horizon,
             "template": found.template,
+            "template_id": found.template_id,
         }
     if not body.title or not body.mechanism:
         raise refuse(
@@ -141,6 +143,7 @@ async def _hypothesis_dict(body: TrialCreate, state: State) -> dict[str, Any]:
         "expected_sign": body.expected_sign,
         "horizon": body.horizon,
         "template": body.template,
+        "template_id": body.template_id,
     }
 
 

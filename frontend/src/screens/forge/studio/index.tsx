@@ -8,13 +8,14 @@
  */
 
 import { useQuery } from '@tanstack/react-query'
-import { useNavigate, useSearch } from '@tanstack/react-router'
+import { Link, useNavigate, useSearch } from '@tanstack/react-router'
 import { useState } from 'react'
 import { DASH, fmt } from '@/lib/format'
 import { fieldSets } from '@/screens/forge/data/api'
 import { forgeTemplates } from '@/screens/forge/templates/api'
 import {
   Badge,
+  Button,
   Empty,
   ErrorNotice,
   Field,
@@ -145,7 +146,7 @@ export function TemplateStudioScreen() {
           <FitSummary counts={p.fitCounts} total={p.rendered.length} notes={p.notes} />
           <Panel
             title="Rendered alphas"
-            description="What this tells you: every alpha this template makes from the set, and what BRAIN's rules say about each. Open one to see why a type is out, and to write its description."
+            description="What this tells you: every alpha this template makes from the set, and what BRAIN's rules say about each. Open one to see why a type is out, write its description, or send it to Pipelines to simulate it for real."
             bodyClassName="flex flex-col divide-y divide-hairline p-0"
           >
             {p.rendered.map((alpha, index) => (
@@ -213,7 +214,9 @@ function AlphaRow({ alpha, onOpen }: { alpha: RenderedAlpha; onOpen: () => void 
     >
       <code className="num block text-body-compact break-all text-ink">{alpha.expression}</code>
       <span className="flex flex-wrap items-center gap-2">
-        {alpha.fits.length > 0 ? (
+        {alpha.fitsAll ? (
+          <Badge tone="profit">fits every type</Badge>
+        ) : alpha.fits.length > 0 ? (
           alpha.fits.map((type) => (
             <Badge key={type} tone="profit">
               {type.replaceAll('_', ' ')}
@@ -261,6 +264,19 @@ function AlphaSheet({
           <code className="num block rounded-md bg-canvas p-3 text-body-compact break-all text-ink">
             {alpha.expression}
           </code>
+          <p className="text-body-compact text-ink-subtle">
+            What happens next: this is a preview — nothing has been simulated. Send it to Pipelines
+            to actually run it against BRAIN through the Quota Governor.
+          </p>
+          {templateId != null && fieldSetId != null && (
+            <Button
+              variant="primary"
+              size="sm"
+              render={<Link to="/forge/pipelines" search={{ t: templateId, fs: fieldSetId }} />}
+            >
+              Send to Pipelines
+            </Button>
+          )}
           <KV
             items={[
               [
@@ -276,12 +292,26 @@ function AlphaSheet({
 
           <section className="flex flex-col gap-2">
             <h3 className="text-title">Alpha types</h3>
+            {alpha.fitsAll ? (
+              <div className="rounded-md border border-hairline p-3">
+                <Badge tone="profit">fits every type</Badge>
+              </div>
+            ) : (
+              alpha.fits.map((type) => (
+                <div key={type} className="rounded-md border border-hairline p-3">
+                  <div className="flex items-center gap-2">
+                    <Badge tone="profit">Eligible</Badge>
+                    <span className="text-body font-medium text-ink">
+                      {type.replaceAll('_', ' ')}
+                    </span>
+                  </div>
+                </div>
+              ))
+            )}
             {Object.entries(alpha.eligibility).map(([type, verdict]) => (
               <div key={type} className="rounded-md border border-hairline p-3">
                 <div className="flex items-center gap-2">
-                  <Badge tone={verdict.ok ? 'profit' : 'muted'}>
-                    {verdict.ok ? 'Eligible' : 'Not eligible'}
-                  </Badge>
+                  <Badge tone="muted">Not eligible</Badge>
                   <span className="text-body font-medium text-ink">
                     {type.replaceAll('_', ' ')}
                   </span>
@@ -302,7 +332,7 @@ function AlphaSheet({
             ))}
           </section>
 
-          {alpha.eligibility['power_pool']?.ok && (
+          {(alpha.fitsAll || alpha.fits.includes('power_pool')) && (
             <DescriptionPanel
               expression={alpha.expression}
               templateId={templateId}

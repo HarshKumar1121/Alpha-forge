@@ -178,6 +178,11 @@ const forgeMyTemplates = createRoute({
 const forgePipelines = createRoute({
   getParentRoute: () => forge,
   path: 'pipelines',
+  // Which template and field set to preselect, e.g. sent by Template Studio's "Send to Pipelines".
+  validateSearch: (search: Record<string, unknown>) => ({
+    t: typeof search['t'] === 'string' ? search['t'] : undefined,
+    fs: typeof search['fs'] === 'number' ? search['fs'] : undefined,
+  }),
   component: lazyRouteComponent(() => import('@/screens/forge/pipelines'), 'PipelinesScreen'),
 })
 const forgeBoard = createRoute({

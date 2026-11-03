@@ -144,8 +144,10 @@ async def test_every_alpha_is_judged_against_every_type(client: httpx2.AsyncClie
         fieldSetId=await make_field_set(client, ["anl4_eps_mean"]),
     )
     alpha = body["rendered"][0]
-    assert {"regular", "power_pool", "atom"} <= set(alpha["eligibility"])
-    assert alpha["eligibility"]["power_pool"]["ok"] is True
+    # Fits every type: a single flag, not a badge per type (eligibility only lists failures).
+    assert alpha["fitsAll"] is True
+    assert alpha["eligibility"] == {}
+    assert {"regular", "power_pool", "atom"} <= set(alpha["fits"])
     assert "power_pool" in alpha["fits"]
     assert body["fitCounts"]["power_pool"] == len(body["rendered"])
 

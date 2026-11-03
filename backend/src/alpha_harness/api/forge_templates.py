@@ -14,14 +14,18 @@ from pydantic import Field
 from sqlalchemy import select
 
 from ..forge.alpha_types import load_all
+from ..forge.data.fieldsets import resolve
+from ..forge.data.models import MANUAL, FieldSet
 from ..forge.expr import analyse
 from ..forge.local.template_fill import Unavailable, gym_example
+from ..forge.research.binding import field_infos
 from ..forge.research.templates import (
     FieldSlot,
     GroupSlot,
     Template,
     example,
     fits,
+    fits_fields,
     get,
     load_library,
 )
@@ -76,6 +80,31 @@ class ForgeTemplateSummary(Out):
     #: ``builtin`` lives in config/forge/templates and is read-only; ``user`` is yours.
     source: Literal["builtin", "user"] = "builtin"
     stats: ForgeTemplateStats = Field(default_factory=ForgeTemplateStats)
+
+
+class CompatibleFieldsRequest(Out):
+    """Fields picked on the spot (e.g. the Workshop's field picker) — no saved field set
+    needed, same shape as pipelines' own inline-fields preview."""
+
+    field_ids: list[str] = Field(min_length=1, max_length=500)
+    region: str
+    universe: str
+    delay: int
+    instrument_type: str = "EQUITY"
+
+
+class CompatibleTemplate(Out):
+    id: str
+    name: str
+    category: str
+    complexity: str
+
+
+class CompatibleTemplates(Out):
+    #: Templates whose field slots these fields could plausibly fill — the Workshop's
+    #: template picker only ever offers from this list, so it never suggests a template that
+    #: needs fields nobody has selected.
+    templates: list[CompatibleTemplate]
 
 
 class ForgeTemplateLoadError(Out):
@@ -259,6 +288,37 @@ async def list_templates(state: State) -> ForgeTemplateList:
             stats.setdefault(row.template_id, []).append(row)
     # The first call profiles the Gym's fields (a few seconds): keep it off the event loop.
     return await asyncio.to_thread(_list, mine, stats)
+
+
+@router.post("/compatible")
+async def compatible_templates(body: CompatibleFieldsRequest, state: State) -> CompatibleTemplates:
+    """Which templates these fields could bind to, right now — free and offline.
+
+    Builds a transient (never-persisted) field set the same way pipelines' inline-fields
+    preview does, resolves it against the real catalog so each field's dataset is known (the
+    same-dataset/semantic-pairing rules in :func:`~..forge.research.templates.bindings` need
+    that), then keeps only the templates :func:`~..forge.research.templates.fits_fields` says
+    these fields can actually fill.
+    """
+    transient = FieldSet(
+        name="(fields picked on this screen)",
+        instrument_type=body.instrument_type,
+        region=body.region,
+        delay=body.delay,
+        universe=body.universe,
+        kind=MANUAL,
+        field_ids=body.field_ids,
+        filter=None,
+    )
+    resolved = await resolve(transient, state.queries)
+    fields = field_infos(resolved["fields"])
+    return CompatibleTemplates(
+        templates=[
+            CompatibleTemplate(id=t.id, name=t.name, category=t.category, complexity=t.complexity)
+            for t in load_library().templates
+            if fits_fields(t, fields)
+        ]
+    )
 
 
 @router.get("/{template_id}")

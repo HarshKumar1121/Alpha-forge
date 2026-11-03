@@ -16,7 +16,9 @@ Two entry points, both spending real quota (never from a test — CLAUDE.md rule
 from typing import TYPE_CHECKING, Any
 
 from ..alpha_types import load_all as load_alpha_types
+from ..data.fieldsets import resolve
 from ..pipelines.brain_adapter import BrainSimulator
+from ..research.binding import field_infos
 from ..research.court import Court
 from ..research.planner import Researcher
 from ..store import InMemoryResearchStore
@@ -51,6 +53,7 @@ async def run_trial(
     types = load_alpha_types()
     row = await pipelines_api._field_set(state, field_set_id)
     alpha_type = pipelines_api._scoped_to(types[pipeline.alpha_type], row)
+    resolved = await resolve(row, state.queries)
     court = Court(
         InMemoryResearchStore(),
         BrainSimulator(state.engine, state.db, state.endpoints, VALIDATE_LANE),
@@ -59,6 +62,9 @@ async def run_trial(
         fields,
         test_budget=test_budget,
         scope=row.name,
+        # So a hypothesis naming a real template can bind these fields to its slots (each
+        # field's dataset must be known for the same-dataset/semantic-pairing rules to apply).
+        field_infos=field_infos(resolved["fields"]),
     )
     return await court.run()
 

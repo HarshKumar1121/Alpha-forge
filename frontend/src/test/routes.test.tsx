@@ -14,7 +14,7 @@
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { type AnyRoute, createMemoryHistory, RouterProvider } from '@tanstack/react-router'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createAppRouter, routeTree } from '@/router'
 import { NAV } from '@/shell/nav'
@@ -201,6 +201,10 @@ describe('the Template Studio', () => {
     // only one is a single-dataset ATOM alpha.
     expect(screen.getAllByText('2 / 2').length).toBe(2)
     expect(screen.getByText('1 / 2')).toBeTruthy()
+    // A fully eligible alpha collapses to `fitsAll` rather than listing every type: the
+    // backend sends an empty `eligibility` map for it, so the row must read `fitsAll`, not
+    // key into that map by type name.
+    expect(screen.getByText('fits every type')).toBeTruthy()
     expect(screen.queryByText(CRASHED)).toBeNull()
   })
 
@@ -233,6 +237,9 @@ describe('the Template Studio', () => {
     await waitFor(() => expect(screen.getByText('Power Pool description')).toBeTruthy())
     // The draft's parts arrive in editable boxes, and BRAIN's length complaint is shown.
     expect(screen.getByText('BRAIN wants more here')).toBeTruthy()
+    // This alpha is eligible via `fitsAll` (its `eligibility` map is empty, not keyed by
+    // 'power_pool'), so the description panel must still gate on `fitsAll`/`fits`.
+    expect(screen.getAllByText('fits every type').length).toBeGreaterThan(0)
     expect(screen.queryByText(CRASHED)).toBeNull()
   })
 })
@@ -296,6 +303,9 @@ describe('the template library', () => {
           Boolean(node.textContent?.includes('Single-dataset type but fields span analyst4, pv1')),
       ).length,
     ).toBeGreaterThan(0)
+    // A fully eligible alpha collapses to `fitsAll` with an empty `eligibility` map: the
+    // "Eligible for" column must read `fitsAll`, not key into that map by type name.
+    expect(screen.getByText('fits every type')).toBeTruthy()
     expect(screen.queryByText(CRASHED)).toBeNull()
   })
 })
@@ -308,6 +318,46 @@ describe('the Pipelines screen', () => {
     expect(screen.getByText('done')).toBeTruthy()
     expect(screen.queryByText(CRASHED)).toBeNull()
   })
+
+  it('searching the catalog shows field options, without a saved field set', async () => {
+    await mount('/forge/pipelines')
+    // Switch the field picker from "Existing field set" to "Search fields".
+    fireEvent.click(screen.getByRole('radio', { name: 'Search fields' }))
+    fireEvent.change(screen.getByLabelText('Search field catalog'), {
+      target: { value: 'eps' },
+    })
+    await waitFor(() => expect(screen.getByText('anl4_eps_mean')).toBeTruthy())
+    expect(screen.queryByText(CRASHED)).toBeNull()
+  })
+
+  /** Switches to "Search fields", searches, ticks the matched row, then picks a template —
+   *  everything a plan preview needs, with no saved field set involved. */
+  async function pickFieldsAndTemplate() {
+    fireEvent.click(screen.getByRole('radio', { name: 'Search fields' }))
+    fireEvent.change(screen.getByLabelText('Search field catalog'), {
+      target: { value: 'eps' },
+    })
+    await waitFor(() => expect(screen.getByText('anl4_eps_mean')).toBeTruthy())
+    const row = screen.getByText('anl4_eps_mean').closest('[role="row"]') as HTMLElement
+    fireEvent.click(within(row).getByRole('checkbox'))
+    fireEvent.click(screen.getByText('Revision against peers'))
+  }
+
+  it('ticking fields without a saved field set still plans a run', async () => {
+    await mount('/forge/pipelines')
+    await pickFieldsAndTemplate()
+    await waitFor(() => expect(screen.getByText('Plan preview')).toBeTruthy())
+    expect(screen.getByText('Generated')).toBeTruthy()
+    expect(screen.queryByText(CRASHED)).toBeNull()
+  })
+
+  it('shows a different verdict per alpha type for the same candidate', async () => {
+    await mount('/forge/pipelines')
+    await pickFieldsAndTemplate()
+    await waitFor(() => expect(screen.getByText('power pool (weak)')).toBeTruthy())
+    expect(screen.getByText('atom')).toBeTruthy()
+    expect(screen.queryByText(CRASHED)).toBeNull()
+  })
 })
 
 describe('the Workshop screen', () => {
@@ -317,6 +367,39 @@ describe('the Workshop screen', () => {
     expect(screen.getByText(/Trial #1/)).toBeTruthy()
     expect(screen.getByText('anl4_eps_mean: SURVIVES')).toBeTruthy()
     expect(screen.getByText('Agent')).toBeTruthy()
+    expect(screen.queryByText(CRASHED)).toBeNull()
+  })
+
+  it('lets the idea form search fields and offers only templates they could fill', async () => {
+    await mount('/forge/workshop')
+    fireEvent.click(screen.getByRole('radio', { name: 'Search fields' }))
+    fireEvent.change(screen.getByLabelText('Search field catalog'), {
+      target: { value: 'eps' },
+    })
+    await waitFor(() => expect(screen.getByText('anl4_eps_mean')).toBeTruthy())
+    const row = screen.getByText('anl4_eps_mean').closest('[role="row"]') as HTMLElement
+    fireEvent.click(within(row).getByRole('checkbox'))
+
+    // Only once a field is picked does the template picker have anything to offer.
+    const picker = await screen.findByRole('combobox', { name: 'Template' })
+    await waitFor(() => expect(picker.getAttribute('data-disabled')).toBeNull())
+    await act(async () => {
+      picker.click()
+    })
+    expect(
+      await screen.findByRole('option', { name: 'Revision against peers (simple)' }),
+    ).toBeTruthy()
+    expect(screen.queryByText(CRASHED)).toBeNull()
+  })
+
+  it('hands a surviving trial off to Pipelines with its field set and template preselected', async () => {
+    await mount('/forge/workshop')
+    const link = (await screen.findByText('Send to Pipelines instead')).closest('a')
+    expect(link).toBeTruthy()
+    const href = link?.getAttribute('href') ?? ''
+    expect(href).toContain('/forge/pipelines')
+    expect(href).toContain('fs=1')
+    expect(href).toContain('t=analyst_revision')
     expect(screen.queryByText(CRASHED)).toBeNull()
   })
 })

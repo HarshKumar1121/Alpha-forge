@@ -31,14 +31,15 @@ from ..forge.alpha_types import AlphaType
 from ..forge.alpha_types import load_all as load_alpha_types
 from ..forge.board.store import record_run
 from ..forge.data.fieldsets import resolve
-from ..forge.data.models import FieldSet
+from ..forge.data.models import MANUAL, FieldSet
 from ..forge.pipelines import store as pipelines_store
 from ..forge.pipelines.brain_adapter import BrainSimulator
 from ..forge.pipelines.config import PipelineConfig
 from ..forge.pipelines.config import load_all as load_pipelines
 from ..forge.pipelines.orchestrator import Cand, PipelineRun
 from ..forge.quota.governor import Admission
-from ..forge.research.binding import field_infos
+from ..forge.research.binding import field_infos, scope_catalog
+from ..forge.research.eligibility import judge_quality_all
 from ..forge.research.templates import Template
 from ..forge.research.templates import get as get_template
 from ..forge.store import InMemoryResearchStore
@@ -66,9 +67,21 @@ class PipelineOut(Out):
     default_budget: int
 
 
+class InlineFields(Out):
+    """Fields picked straight from the catalog, scoped by hand — no saved field set needed."""
+
+    field_ids: list[str] = Field(min_length=1, max_length=500)
+    region: str
+    universe: str
+    delay: int
+    instrument_type: str = "EQUITY"
+
+
 class PlanRequest(Out):
     pipeline: str = Field(min_length=1, max_length=80)
-    field_set_id: int
+    #: Exactly one of these two: an existing field set, or fields picked on the spot.
+    field_set_id: int | None = None
+    fields: InlineFields | None = None
     template_ids: list[str] = Field(min_length=1, max_length=20)
     budget: int | None = Field(default=None, ge=1, le=10_000)
 
@@ -89,6 +102,11 @@ class QuotaAdmission(Out):
     global_remaining: int
 
 
+class VerdictOut(Out):
+    verdict: str  # FITS / FITS_BUT_WEAK / DOESNT_FIT
+    reason: str | None = None
+
+
 class PlanPreview(Out):
     pipeline: str
     field_set: str
@@ -102,6 +120,10 @@ class PlanPreview(Out):
     rejected_sample: list[RejectedCandidate]
     rejected_total: int
     admission: QuotaAdmission
+    #: A sample of eligible candidates, each judged against every alpha type — not just this
+    #: pipeline's own — so a researcher sees where else the same idea could go. Capped like
+    #: ``rejected_sample``.
+    candidates_sample: list[CandidateOut]
 
 
 class RunRequest(PlanRequest):
@@ -120,6 +142,9 @@ class CandidateOut(Out):
     alpha_id: str | None
     train_sharpe: float | None
     test_sharpe: float | None
+    #: This candidate's 3-way verdict against every alpha type, not just this pipeline's own —
+    #: "fits every type" was replaced by a per-type FITS / FITS_BUT_WEAK / DOESNT_FIT reading.
+    verdicts: dict[str, VerdictOut] = Field(default_factory=dict)
 
 
 class RunReport(Out):
@@ -166,6 +191,31 @@ async def _field_set(state: State, field_set_id: int) -> FieldSet:
     if row is None:
         raise refuse(404, "not_found", f"There is no field set {field_set_id}.")
     return row
+
+
+async def _resolve_field_set(body: PlanRequest, state: State) -> FieldSet:
+    """A saved field set, or an unsaved one built from fields picked directly on the screen.
+
+    ``resolve()`` only ever reads a :class:`FieldSet`'s attributes, never its primary key, so a
+    transient (never-persisted) instance resolves exactly like a saved one — the picker lets a
+    user cross fields with a pipeline without first naming and saving a set.
+    """
+    if body.field_set_id is not None:
+        return await _field_set(state, body.field_set_id)
+    if body.fields is not None:
+        return FieldSet(
+            name="(fields picked on this screen)",
+            instrument_type=body.fields.instrument_type,
+            region=body.fields.region,
+            delay=body.fields.delay,
+            universe=body.fields.universe,
+            kind=MANUAL,
+            field_ids=body.fields.field_ids,
+            filter=None,
+        )
+    raise refuse(
+        422, "missing_fields", "Give either a saved field set or fields picked on this screen."
+    )
 
 
 def _scoped_to(alpha_type: AlphaType, row: FieldSet) -> AlphaType:
@@ -230,12 +280,27 @@ def _num(v: float | None) -> float | None:
     return None if v is None or math.isnan(v) else v
 
 
-def _candidate_out(c: Cand) -> CandidateOut:
+def _candidate_out(
+    c: Cand,
+    *,
+    types: dict[str, AlphaType] | None = None,
+    catalog: dict[str, dict[str, Any]] | None = None,
+    target_dataset: str | None = None,
+) -> CandidateOut:
+    verdicts = {}
+    if types is not None and catalog is not None:
+        verdicts = {
+            name: VerdictOut(verdict=v, reason=reason)
+            for name, (v, reason) in judge_quality_all(
+                c.expression, types, catalog=catalog, target_dataset=target_dataset
+            ).items()
+        }
     return CandidateOut(
         expression=c.expression,
         alpha_id=c.alpha_id,
         train_sharpe=_num(c.train_sharpe),
         test_sharpe=_num(c.m("test", "sharpe")),
+        verdicts=verdicts,
     )
 
 
@@ -250,6 +315,11 @@ class _Plan:
     eligible: list[Cand]
     rejected: list[tuple[str, str]]
     admission: Admission
+    #: Every alpha type, and this field set's catalog — carried along so a candidate's
+    #: per-type verdicts can be judged the same way whether it comes from preview or a run.
+    types: dict[str, AlphaType]
+    catalog: dict[str, dict[str, Any]]
+    target_dataset: str | None
 
 
 async def _build_plan(body: PlanRequest, state: State) -> _Plan:
@@ -262,7 +332,7 @@ async def _build_plan(body: PlanRequest, state: State) -> _Plan:
             f"Pipeline {pipeline.name!r} names alpha type {pipeline.alpha_type!r}, "
             "which has no YAML.",
         )
-    row = await _field_set(state, body.field_set_id)
+    row = await _resolve_field_set(body, state)
     alpha_type = _scoped_to(types[pipeline.alpha_type], row)
     resolved = await resolve(row, state.queries)
     field_set = field_infos(resolved["fields"])
@@ -278,6 +348,7 @@ async def _build_plan(body: PlanRequest, state: State) -> _Plan:
     if governor is None:
         raise refuse(503, "QUOTA_GOVERNOR_OFF", "The Quota Governor is not running.")
 
+    target_dataset = next((r.get("dataset_id") for r in resolved["fields"]), None)
     run = PipelineRun(
         InMemoryResearchStore(),
         BrainSimulator(state.engine, state.db, state.endpoints, pipeline.lane),
@@ -288,12 +359,25 @@ async def _build_plan(body: PlanRequest, state: State) -> _Plan:
         field_set,
         templates,
         budget=budget,
-        target_dataset=next((r.get("dataset_id") for r in resolved["fields"]), None),
+        target_dataset=target_dataset,
     )
     generated = run.generate()
     eligible, rejected = run.lint(generated)
     admission = await governor.admit(pipeline.lane, [1] * budget)
-    return _Plan(pipeline, row, templates, budget, run, generated, eligible, rejected, admission)
+    return _Plan(
+        pipeline,
+        row,
+        templates,
+        budget,
+        run,
+        generated,
+        eligible,
+        rejected,
+        admission,
+        types,
+        scope_catalog(resolved["fields"]),
+        target_dataset,
+    )
 
 
 # --- routes -------------------------------------------------------------------
@@ -324,6 +408,12 @@ async def preview(body: PlanRequest, state: State) -> PlanPreview:
     would admit — all free: nothing here queues a simulation."""
     plan = await _build_plan(body, state)
     sample = [RejectedCandidate(expression=e, reason=r) for e, r in plan.rejected[:20]]
+    candidates_sample = [
+        _candidate_out(
+            c, types=plan.types, catalog=plan.catalog, target_dataset=plan.target_dataset
+        )
+        for c in plan.eligible[:20]
+    ]
     return PlanPreview(
         pipeline=plan.pipeline.name,
         field_set=plan.field_set.name,
@@ -334,6 +424,7 @@ async def preview(body: PlanRequest, state: State) -> PlanPreview:
         rejected_sample=sample,
         rejected_total=len(plan.rejected),
         admission=_admission_out(plan.admission),
+        candidates_sample=candidates_sample,
     )
 
 
@@ -393,12 +484,18 @@ async def run_pipeline(body: RunRequest, state: State) -> RunStarted:
                 correlation=plan.pipeline.correlation_kind,
                 run_id=task.id,
             )
+
+            def out_candidate(c: Cand) -> CandidateOut:
+                return _candidate_out(
+                    c, types=plan.types, catalog=plan.catalog, target_dataset=plan.target_dataset
+                )
+
             out = RunReport(
                 status="done",
                 pipeline=task.id,
                 spent=report.research.spent,
-                candidates=[_candidate_out(c) for c in report.research.candidates],
-                finalists=[_candidate_out(c) for c in report.research.finalists],
+                candidates=[out_candidate(c) for c in report.research.candidates],
+                finalists=[out_candidate(c) for c in report.research.finalists],
                 rejected=[RejectedCandidate(expression=e, reason=r) for e, r in report.rejected],
                 checks=report.checks,
                 correlations=report.correlations,

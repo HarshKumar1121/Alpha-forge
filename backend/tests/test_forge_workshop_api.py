@@ -200,3 +200,24 @@ async def test_promoting_twice_is_refused(
         headers=CLIENT,
     )
     assert second.status_code == 409
+
+
+async def test_an_unknown_trial_is_a_structured_404_not_a_bare_not_found(
+    client: httpx2.AsyncClient,  # noqa: F811
+) -> None:
+    """The Workshop screen tells "nothing here yet" (empty list) apart from "this failed to
+    load" (a real error) by reading ``isError``, never by sniffing the error text — so the
+    body just needs to stay a real error code, not literally the string "Not Found"."""
+    res = await client.get("/api/forge/workshop/trials/999999")
+    assert res.status_code == 404
+    detail = res.json()["detail"]
+    assert detail["code"] == "not_found"
+    assert detail["message"] != "Not Found"
+
+
+async def test_listing_trials_when_none_exist_is_an_empty_list_not_an_error(
+    client: httpx2.AsyncClient,  # noqa: F811
+) -> None:
+    res = await client.get("/api/forge/workshop/trials")
+    assert res.status_code == 200
+    assert res.json() == []

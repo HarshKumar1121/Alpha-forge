@@ -498,7 +498,9 @@ function BindToFieldSet({ d }: { d: TemplateDetail }) {
       width: 'minmax(160px,1fr)',
       cell: (a) => (
         <span className="flex flex-wrap gap-1">
-          {a.fits.length > 0 ? (
+          {a.fitsAll ? (
+            <Badge tone="profit">fits every type</Badge>
+          ) : a.fits.length > 0 ? (
             a.fits.map((type) => (
               <Badge key={type} tone="profit">
                 {type.replaceAll('_', ' ')}

@@ -15,7 +15,10 @@ from alpha_harness.forge.research.eligibility import (
     datasets_used,
     judge,
     judge_all,
+    judge_quality,
+    judge_quality_all,
     pv1_operators_used,
+    quality_note,
 )
 
 CATALOG: dict[str, dict[str, Any]] = {
@@ -139,3 +142,67 @@ def test_every_shipped_type_is_judged() -> None:
     verdicts = judge_all("rank(anl4_eps_mean)", load_all(), catalog=CATALOG)
     assert {"regular", "power_pool", "atom"} <= set(verdicts)
     assert all(v.alpha_type == name for name, v in verdicts.items())
+
+
+# -- quality_note / judge_quality: "fits, but is a poor choice" ------------------------------
+
+
+def test_a_clean_single_dataset_alpha_has_no_quality_note() -> None:
+    pp = a_type("pp", max_operators=8, max_fields=3, min_fields_from_target_dataset=1)
+    note = quality_note("rank(anl4_eps_mean)", pp, catalog=CATALOG)
+    assert note is None
+    assert judge_quality("rank(anl4_eps_mean)", pp, catalog=CATALOG, target_dataset="analyst4") == (
+        "FITS",
+        None,
+    )
+
+
+def test_a_passing_multi_dataset_power_pool_candidate_is_flagged_weak() -> None:
+    """Under the field/operator caps, but crossing two datasets is not the clean residual
+    Power Pool alphas are meant to be — a quality note, not a refusal."""
+    pp = a_type("pp", max_operators=8, max_fields=3, min_fields_from_target_dataset=1)
+    expr = "anl4_eps_mean - news_sent"
+    verdict = judge(expr, pp, catalog=CATALOG)
+    assert verdict.ok, verdict.reasons  # passes the hard rule…
+
+    note = quality_note(expr, pp, catalog=CATALOG)
+    assert note is not None
+    assert "analyst4" in note and "news12" in note
+
+    assert judge_quality(expr, pp, catalog=CATALOG) == ("FITS_BUT_WEAK", note)
+
+
+def test_single_dataset_types_are_never_flagged_for_crossing_datasets() -> None:
+    """ATOM already refuses a second dataset outright — ``single_dataset`` means the hard rule
+    already caught it, so the quality heuristic has nothing left to add."""
+    atom = a_type("atom", single_dataset=True)
+    expr = "anl4_eps_mean - news_sent"
+    assert not judge(expr, atom, catalog=CATALOG).ok
+    assert quality_note(expr, atom, catalog=CATALOG) is None
+
+
+def test_using_every_allowed_field_is_flagged_weak() -> None:
+    pp = a_type("pp", max_fields=3)
+    expr = "rank(anl4_eps_mean) + rank(anl4_rev_mean) + rank(news_sent)"
+    assert judge(expr, pp, catalog=CATALOG).ok
+    note = quality_note(expr, pp, catalog=CATALOG)
+    assert note is not None
+    assert "all 3 fields" in note
+
+
+def test_a_failing_candidate_reports_doesnt_fit_with_its_reason() -> None:
+    pp = a_type("pp", max_fields=1)
+    verdict, reason = judge_quality("rank(anl4_eps_mean / anl4_rev_mean)", pp, catalog=CATALOG)
+    assert verdict == "DOESNT_FIT"
+    assert reason and "2 data fields > 1" in reason
+
+
+def test_judge_quality_all_gives_a_different_verdict_per_type() -> None:
+    """The same candidate can fit one type cleanly and only weakly fit another — this is the
+    per-type signal that replaces a blanket 'fits every type' badge."""
+    types = load_all()
+    expr = "anl4_eps_mean - news_sent"
+    verdicts = judge_quality_all(expr, types, catalog=CATALOG, target_dataset="analyst4")
+    assert verdicts["power_pool"][0] == "FITS_BUT_WEAK"
+    assert verdicts["regular"][0] == "FITS"
+    assert verdicts["power_pool"] != verdicts["regular"]

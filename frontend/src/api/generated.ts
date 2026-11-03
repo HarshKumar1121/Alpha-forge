@@ -1698,6 +1698,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/forge/templates/compatible": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Compatible Templates
+         * @description Which templates these fields could bind to, right now — free and offline.
+         *
+         *     Builds a transient (never-persisted) field set the same way pipelines' inline-fields
+         *     preview does, resolves it against the real catalog so each field's dataset is known (the
+         *     same-dataset/semantic-pairing rules in :func:`~..forge.research.templates.bindings` need
+         *     that), then keeps only the templates :func:`~..forge.research.templates.fits_fields` says
+         *     these fields can actually fill.
+         */
+        post: operations["compatible_templates_api_forge_templates_compatible_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/forge/templates/{template_id}": {
         parameters: {
             query?: never;
@@ -3859,6 +3885,10 @@ export interface components {
             testSharpe: number | null;
             /** Trainsharpe */
             trainSharpe: number | null;
+            /** Verdicts */
+            verdicts?: {
+                [key: string]: components["schemas"]["VerdictOut"];
+            };
         };
         /** CatalogCounts */
         CatalogCounts: {
@@ -4057,6 +4087,42 @@ export interface components {
             members: string[];
             /** Right */
             right: string;
+        };
+        /**
+         * CompatibleFieldsRequest
+         * @description Fields picked on the spot (e.g. the Workshop's field picker) — no saved field set
+         *     needed, same shape as pipelines' own inline-fields preview.
+         */
+        CompatibleFieldsRequest: {
+            /** Delay */
+            delay: number;
+            /** Fieldids */
+            fieldIds: string[];
+            /**
+             * Instrumenttype
+             * @default EQUITY
+             */
+            instrumentType: string;
+            /** Region */
+            region: string;
+            /** Universe */
+            universe: string;
+        };
+        /** CompatibleTemplate */
+        CompatibleTemplate: {
+            /** Category */
+            category: string;
+            /** Complexity */
+            complexity: string;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+        };
+        /** CompatibleTemplates */
+        CompatibleTemplates: {
+            /** Templates */
+            templates: components["schemas"]["CompatibleTemplate"][];
         };
         /** Competition */
         Competition: {
@@ -5284,6 +5350,8 @@ export interface components {
             status: string;
             /** Template */
             template: string;
+            /** Templateid */
+            templateId: string;
             /** Title */
             title: string;
             /** Verdict */
@@ -5311,6 +5379,25 @@ export interface components {
             horizon: number;
             /** Ic */
             ic: number | null;
+        };
+        /**
+         * InlineFields
+         * @description Fields picked straight from the catalog, scoped by hand — no saved field set needed.
+         */
+        InlineFields: {
+            /** Delay */
+            delay: number;
+            /** Fieldids */
+            fieldIds: string[];
+            /**
+             * Instrumenttype
+             * @default EQUITY
+             */
+            instrumentType: string;
+            /** Region */
+            region: string;
+            /** Universe */
+            universe: string;
         };
         /** InstrumentNode */
         InstrumentNode: {
@@ -5942,6 +6029,8 @@ export interface components {
             admission: components["schemas"]["QuotaAdmission"];
             /** Budget */
             budget: number;
+            /** Candidatessample */
+            candidatesSample: components["schemas"]["CandidateOut"][];
             /** Eligible */
             eligible: number;
             /** Fieldset */
@@ -5962,7 +6051,8 @@ export interface components {
             /** Budget */
             budget?: number | null;
             /** Fieldsetid */
-            fieldSetId: number;
+            fieldSetId?: number | null;
+            fields?: components["schemas"]["InlineFields"] | null;
             /** Pipeline */
             pipeline: string;
             /** Templateids */
@@ -6468,6 +6558,11 @@ export interface components {
              * @default
              */
             template: string;
+            /**
+             * Templateid
+             * @default
+             */
+            templateId: string;
             /** Title */
             title: string;
         };
@@ -6888,6 +6983,8 @@ export interface components {
             };
             /** Fits */
             fits: string[];
+            /** Fitsall */
+            fitsAll: boolean;
             /** Operatorcount */
             operatorCount: number;
             /** Params */
@@ -6976,7 +7073,8 @@ export interface components {
             /** Budget */
             budget?: number | null;
             /** Fieldsetid */
-            fieldSetId: number;
+            fieldSetId?: number | null;
+            fields?: components["schemas"]["InlineFields"] | null;
             /** Pipeline */
             pipeline: string;
             /** Templateids */
@@ -8200,6 +8298,11 @@ export interface components {
              */
             template: string;
             /**
+             * Templateid
+             * @default
+             */
+            templateId: string;
+            /**
              * Testbudget
              * @default 15
              */
@@ -8436,6 +8539,13 @@ export interface components {
             scored: number;
             /** Universe */
             universe: string | null;
+        };
+        /** VerdictOut */
+        VerdictOut: {
+            /** Reason */
+            reason?: string | null;
+            /** Verdict */
+            verdict: string;
         };
         /**
          * VerifyRequest
@@ -11464,6 +11574,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ForgeTemplateList"];
+                };
+            };
+        };
+    };
+    compatible_templates_api_forge_templates_compatible_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompatibleFieldsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompatibleTemplates"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

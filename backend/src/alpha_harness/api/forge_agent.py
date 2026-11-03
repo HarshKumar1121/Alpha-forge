@@ -39,6 +39,9 @@ class Hypothesis(Out):
     horizon: str
     pipeline: str
     template: str
+    #: The real template this idea was picked for, if the picker named one. ``""`` when the
+    #: hypothesis only has the free-text ``template`` field (older ideas, or none chosen).
+    template_id: str
     fields: list[str]
     status: str
     verdict: str
@@ -52,6 +55,7 @@ class ProposeHypothesis(Out):
     horizon: str = ""
     pipeline: str = ""
     template: str = ""
+    template_id: str = ""
     fields: list[str] = Field(default_factory=list)
 
 
@@ -117,6 +121,7 @@ def _hypothesis_out(row: Any) -> Hypothesis:
         horizon=row.horizon,
         pipeline=row.pipeline,
         template=row.template,
+        template_id=row.template_id,
         fields=list(row.fields or []),
         status=row.status,
         verdict=row.verdict,
@@ -171,6 +176,7 @@ async def propose_hypothesis(body: ProposeHypothesis, state: State) -> Hypothesi
         horizon=body.horizon,
         pipeline=body.pipeline,
         template=body.template,
+        template_id=body.template_id,
         fields=body.fields,
         source="user",
     )
