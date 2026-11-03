@@ -42,7 +42,9 @@ export type KeyCheck = Schemas['KeyWorks'] | Schemas['KeyFailed']
 export type PromptInfo = Schemas['PromptInfo']
 export type Reasoning = Schemas['ChatOptions']['defaultReasoning']
 export type ChatOptions = Schemas['ChatOptions']
-export type ChatThreadSummary = Schemas['ChatThreadSummary']
+// forge: `forge_agent.py` grew its own chat schemas with the same bare names, so the generator
+// disambiguates both by their Python module path.
+export type ChatThreadSummary = Schemas['alpha_harness__api__chat__ChatThreadSummary']
 
 export interface ChatPick {
   field: string
@@ -50,7 +52,7 @@ export interface ChatPick {
   [extra: string]: unknown
 }
 
-export type ChatMessage = Omit<Schemas['ChatMessageOut'], 'meta'> & {
+export type ChatMessage = Omit<Schemas['alpha_harness__api__chat__ChatMessageOut'], 'meta'> & {
   meta: {
     picks?: ChatPick[]
     datasets?: string[]
@@ -62,7 +64,9 @@ export type ChatMessage = Omit<Schemas['ChatMessageOut'], 'meta'> & {
   }
 }
 
-export type ChatThread = Omit<Schemas['ChatThreadOut'], 'messages'> & { messages: ChatMessage[] }
+export type ChatThread = Omit<Schemas['alpha_harness__api__chat__ChatThreadOut'], 'messages'> & {
+  messages: ChatMessage[]
+}
 
 export interface ChatSayRequest {
   text: string
@@ -73,7 +77,9 @@ export interface ChatSayRequest {
   dataset_ids?: string[]
 }
 
-export type ChatReply = Omit<Schemas['ChatReply'], 'picks'> & { picks: ChatPick[] }
+export type ChatReply = Omit<Schemas['alpha_harness__api__chat__ChatReply'], 'picks'> & {
+  picks: ChatPick[]
+}
 
 export const llm = {
   providers: () => http.get<LLMProvidersResponse>('/api/llm/providers'),

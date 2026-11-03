@@ -7,6 +7,7 @@ import {
   DumbbellIcon, // forge: Gym Playground's icon
   FlaskConicalIcon,
   GaugeIcon, // forge: Today's icon (the quota gauge)
+  GavelIcon, // forge: Workshop's icon (the Hypothesis Court)
   Grid3x3Icon,
   HammerIcon, // forge: Template Studio's icon
   LayersIcon,
@@ -133,6 +134,12 @@ export const NAV = [
     group: 'Forge',
     label: 'Submittable Board',
     icon: CheckSquareIcon,
+  },
+  {
+    to: '/forge/workshop',
+    group: 'Forge',
+    label: 'Workshop',
+    icon: GavelIcon,
   },
   {
     to: '/forge/fieldsets',

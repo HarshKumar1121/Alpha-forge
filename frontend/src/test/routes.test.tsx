@@ -45,6 +45,7 @@ const ROUTES = [
   '/forge/studio',
   '/forge/pipelines',
   '/forge/board',
+  '/forge/workshop',
   '/forge/fieldsets',
   '/forge/datasets/analyst4',
   '/forge/analytics',
@@ -305,6 +306,17 @@ describe('the Pipelines screen', () => {
     expect(screen.getByText('Run history')).toBeTruthy()
     expect(screen.getByText('regular on USA TOP3000 analyst')).toBeTruthy()
     expect(screen.getByText('done')).toBeTruthy()
+    expect(screen.queryByText(CRASHED)).toBeNull()
+  })
+})
+
+describe('the Workshop screen', () => {
+  it('shows a hypothesis and its trial, with the agent panel beside it', async () => {
+    await mount('/forge/workshop')
+    expect(screen.getByText('Analyst revisions mean-revert fast')).toBeTruthy()
+    expect(screen.getByText(/Trial #1/)).toBeTruthy()
+    expect(screen.getByText('anl4_eps_mean: SURVIVES')).toBeTruthy()
+    expect(screen.getByText('Agent')).toBeTruthy()
     expect(screen.queryByText(CRASHED)).toBeNull()
   })
 })

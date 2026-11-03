@@ -40,7 +40,7 @@ def _fast_simulator(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def test_evidence_reads_prior_runs_without_simulating_anything(
-    client: httpx2.AsyncClient,
+    client: httpx2.AsyncClient,  # noqa: F811
     harness: Harness,  # noqa: F811
 ) -> None:
     async with harness.db.session() as session:
@@ -109,7 +109,7 @@ async def _run_trial_to_completion(
 
 
 async def test_a_trial_runs_in_the_validate_lane_and_records_a_verdict(
-    client: httpx2.AsyncClient,
+    client: httpx2.AsyncClient,  # noqa: F811
     harness: Harness,  # noqa: F811
 ) -> None:
     field_set_id = await make_field_set(harness)
@@ -129,7 +129,7 @@ async def test_a_trial_runs_in_the_validate_lane_and_records_a_verdict(
 
 
 async def test_promoting_with_no_survivors_is_refused(
-    client: httpx2.AsyncClient,
+    client: httpx2.AsyncClient,  # noqa: F811
     harness: Harness,  # noqa: F811
 ) -> None:
     field_set_id = await make_field_set(harness)
@@ -145,7 +145,7 @@ async def test_promoting_with_no_survivors_is_refused(
 
 
 async def test_promoting_survivors_and_approving_runs_in_the_reserve_lane(
-    client: httpx2.AsyncClient,
+    client: httpx2.AsyncClient,  # noqa: F811
     harness: Harness,  # noqa: F811
 ) -> None:
     field_set_id = await make_field_set(harness)
@@ -183,7 +183,7 @@ async def test_promoting_survivors_and_approving_runs_in_the_reserve_lane(
 
 
 async def test_promoting_twice_is_refused(
-    client: httpx2.AsyncClient,
+    client: httpx2.AsyncClient,  # noqa: F811
     harness: Harness,  # noqa: F811
 ) -> None:
     field_set_id = await make_field_set(harness)

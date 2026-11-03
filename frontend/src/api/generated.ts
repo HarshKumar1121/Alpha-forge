@@ -817,6 +817,235 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/forge/agent/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Say
+         * @description One turn with the agent panel. May call a few read/propose-only tools before it
+         *     answers (CLAUDE.md rule 5) — ``tool_calls`` shows which, so the panel can show its work.
+         */
+        post: operations["say_api_forge_agent_chat_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/agent/chat/threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Chat Threads */
+        get: operations["list_chat_threads_api_forge_agent_chat_threads_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/agent/chat/threads/{thread_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Chat Thread */
+        get: operations["get_chat_thread_api_forge_agent_chat_threads__thread_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete Chat Thread */
+        delete: operations["delete_chat_thread_api_forge_agent_chat_threads__thread_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/agent/failures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Failures By Reason */
+        get: operations["failures_by_reason_api_forge_agent_failures_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/agent/hypotheses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Hypotheses */
+        get: operations["list_hypotheses_api_forge_agent_hypotheses_get"];
+        put?: never;
+        /** Propose Hypothesis */
+        post: operations["propose_hypothesis_api_forge_agent_hypotheses_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/agent/lessons": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Lessons */
+        get: operations["list_lessons_api_forge_agent_lessons_get"];
+        put?: never;
+        /** Record Lesson */
+        post: operations["record_lesson_api_forge_agent_lessons_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/agent/proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Proposals */
+        get: operations["list_proposals_api_forge_agent_proposals_get"];
+        put?: never;
+        /**
+         * Propose Pipeline Run
+         * @description Write an approval card. Spends nothing (CLAUDE.md rule 5) — the same write the model's
+         *     own ``propose_pipeline_run`` tool makes.
+         */
+        post: operations["propose_pipeline_run_api_forge_agent_proposals_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/agent/proposals/{proposal_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Proposal
+         * @description The only route in this router that can spend quota. Marks the proposal approved and
+         *     starts the run in the background, in the reserve lane — this is the UI's Approve button,
+         *     never something the model's tool-use loop calls on its own. Poll ``GET /proposals`` or
+         *     ``GET /runs`` for completion, the same pattern ``POST /api/forge/pipelines/run`` uses.
+         */
+        post: operations["approve_proposal_api_forge_agent_proposals__proposal_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/agent/proposals/{proposal_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject Proposal */
+        post: operations["reject_proposal_api_forge_agent_proposals__proposal_id__reject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/agent/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Pipeline Runs */
+        get: operations["pipeline_runs_api_forge_agent_runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/agent/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Tools
+         * @description Every tool the model may call. Read-only — proof that no tool here can spend or submit
+         *     lives in ``tests/test_forge_agent_tools.py``, not in this route.
+         */
+        get: operations["tools_api_forge_agent_tools_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/agent/weekly-summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Weekly Summary
+         * @description Trigger the weekly job by hand (also runs automatically; see ``forge/agent/weekly.py``).
+         */
+        post: operations["run_weekly_summary_api_forge_agent_weekly_summary_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/forge/analytics/factors/{alpha_id}": {
         parameters: {
             query?: never;
@@ -1483,6 +1712,86 @@ export interface paths {
         get: operations["template_detail_api_forge_templates__template_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/workshop/evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Evidence
+         * @description "Your last N alphas on these fields failed this check" — read, never simulated.
+         */
+        post: operations["evidence_api_forge_workshop_evidence_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/workshop/trials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Trials */
+        get: operations["list_trials_api_forge_workshop_trials_get"];
+        put?: never;
+        /**
+         * Start Trial
+         * @description Start a Court trial in the background — spends real quota in the ``validate`` lane the
+         *     moment this is called. Poll ``GET /trials/{id}`` for the verdict.
+         */
+        post: operations["start_trial_api_forge_workshop_trials_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/workshop/trials/{trial_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Trial */
+        get: operations["get_trial_api_forge_workshop_trials__trial_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/workshop/trials/{trial_id}/promote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Promote Trial
+         * @description Write a ``court_promotion`` approval card for this trial's survivors. Spends nothing
+         *     (CLAUDE.md rule 5) — approve it from ``POST /api/forge/agent/proposals/{id}/approve``.
+         */
+        post: operations["promote_trial_api_forge_workshop_trials__trial_id__promote_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3650,24 +3959,6 @@ export interface components {
             /** Name */
             name: string | null;
         };
-        /** ChatMessageOut */
-        ChatMessageOut: {
-            /** Createdat */
-            createdAt: string | null;
-            /** Id */
-            id: number;
-            /** Meta */
-            meta: {
-                [key: string]: unknown;
-            };
-            /**
-             * Role
-             * @enum {string}
-             */
-            role: "user" | "assistant";
-            /** Text */
-            text: string;
-        };
         /** ChatOptions */
         ChatOptions: {
             defaultReasoning: components["schemas"]["Reasoning"];
@@ -3676,47 +3967,23 @@ export interface components {
             /** Reasoning */
             reasoning: components["schemas"]["ReasoningOption"][];
         };
-        /** ChatReply */
-        ChatReply: {
-            /** Catalognote */
-            catalogNote: string | null;
-            /** Datasets */
-            datasets: string[];
-            /** Dropped */
-            dropped: string[];
-            /** Model */
-            model: string;
-            /** Picks */
-            picks: {
+        /** ChatSay */
+        ChatSay: {
+            /** Context */
+            context?: {
                 [key: string]: unknown;
-            }[];
-            reasoning: components["schemas"]["Reasoning"];
-            /** Reply */
-            reply: string;
+            };
+            /** Model */
+            model?: string | null;
+            /**
+             * Role
+             * @default researcher
+             */
+            role: string;
+            /** Text */
+            text: string;
             /** Threadid */
-            threadId: number;
-            usage: components["schemas"]["LLMUsage"];
-        };
-        /** ChatThreadOut */
-        ChatThreadOut: {
-            /** Id */
-            id: number;
-            /** Messages */
-            messages: components["schemas"]["ChatMessageOut"][];
-            scope: components["schemas"]["ThreadScope"];
-            /** Title */
-            title: string;
-        };
-        /** ChatThreadSummary */
-        ChatThreadSummary: {
-            /** Id */
-            id: number;
-            /** Scope */
-            scope: string;
-            /** Title */
-            title: string;
-            /** Updatedat */
-            updatedAt: string | null;
+            threadId?: number | null;
         };
         /** CheckOut */
         CheckOut: {
@@ -4168,6 +4435,34 @@ export interface components {
             /** Slotsused */
             slotsUsed: number;
         };
+        /** Evidence */
+        Evidence: {
+            /** Days */
+            days: number;
+            /** Fields */
+            fields: string[];
+            /** Findings */
+            findings: components["schemas"]["Finding"][];
+            /** Pipeline */
+            pipeline: string;
+            /** Samplesize */
+            sampleSize: number;
+        };
+        /** EvidenceRequest */
+        EvidenceRequest: {
+            /**
+             * Days
+             * @default 90
+             */
+            days: number;
+            /** Fields */
+            fields?: string[];
+            /**
+             * Pipeline
+             * @default
+             */
+            pipeline: string;
+        };
         /**
          * EvolutionMarket
          * @description A market holding unsubmitted Alphas, and how many.
@@ -4268,13 +4563,6 @@ export interface components {
             rSquared: number | null;
             /** Residualsharpe */
             residualSharpe: number | null;
-        };
-        /** Failure */
-        Failure: {
-            /** Count */
-            count: number;
-            /** Reason */
-            reason: string;
         };
         /** FamilyOut */
         FamilyOut: {
@@ -4620,6 +4908,19 @@ export interface components {
             /** Vector Operators */
             vector_operators?: string[];
         };
+        /** Finding */
+        Finding: {
+            /** Check */
+            check: string;
+            /** Count */
+            count: number;
+            /** Nodecay */
+            noDecay: number;
+            /** Note */
+            note: string;
+            /** Samplesize */
+            sampleSize: number;
+        };
         /** ForgeDataset */
         ForgeDataset: {
             /** Accountmultiplier */
@@ -4963,6 +5264,31 @@ export interface components {
             /** Websocketclients */
             websocketClients: number;
         };
+        /** Hypothesis */
+        Hypothesis: {
+            /** Createdat */
+            createdAt: string;
+            /** Expectedsign */
+            expectedSign: string;
+            /** Fields */
+            fields: string[];
+            /** Horizon */
+            horizon: string;
+            /** Id */
+            id: number;
+            /** Mechanism */
+            mechanism: string;
+            /** Pipeline */
+            pipeline: string;
+            /** Status */
+            status: string;
+            /** Template */
+            template: string;
+            /** Title */
+            title: string;
+            /** Verdict */
+            verdict: string;
+        };
         /** Ic */
         Ic: {
             /** Hit */
@@ -5177,7 +5503,7 @@ export interface components {
             /** Failed */
             failed: number;
             /** Failures */
-            failures: components["schemas"]["Failure"][];
+            failures: components["schemas"]["alpha_harness__api__lab_tasks__Failure"][];
             /** Fields */
             fields: number;
             /** Finishedat */
@@ -5271,6 +5597,19 @@ export interface components {
         LeftOut: {
             /** Vector */
             vector: number;
+        };
+        /** Lesson */
+        Lesson: {
+            /** Createdat */
+            createdAt: string;
+            /** Id */
+            id: number;
+            /** Source */
+            source: string;
+            /** Tags */
+            tags: string[];
+            /** Text */
+            text: string;
         };
         /** LintRequest */
         LintRequest: {
@@ -5570,6 +5909,33 @@ export interface components {
             name: string;
             /** Templatecomplexity */
             templateComplexity: string[];
+        };
+        /** PipelineRunSummary */
+        PipelineRunSummary: {
+            /** Budget */
+            budget: number;
+            /** Candidates */
+            candidates: number;
+            /** Fieldset */
+            fieldSet: string;
+            /** Finalists */
+            finalists: number;
+            /** Finishedat */
+            finishedAt: string | null;
+            /** Lane */
+            lane: string;
+            /** Pipeline */
+            pipeline: string;
+            /** Rejected */
+            rejected: number;
+            /** Runid */
+            runId: string;
+            /** Spent */
+            spent: number;
+            /** Startedat */
+            startedAt: string;
+            /** Status */
+            status: string;
         };
         /** PlanPreview */
         PlanPreview: {
@@ -6021,6 +6387,18 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** Promote */
+        Promote: {
+            /** Budget */
+            budget: number;
+            /**
+             * Force
+             * @default false
+             */
+            force: boolean;
+            /** Rationale */
+            rationale: string;
+        };
         /** PromptInfo */
         PromptInfo: {
             /** Body */
@@ -6040,6 +6418,71 @@ export interface components {
         PromptList: {
             /** Prompts */
             prompts: components["schemas"]["PromptInfo"][];
+        };
+        /** Proposal */
+        Proposal: {
+            /** Createdat */
+            createdAt: string;
+            /** Error */
+            error: string;
+            /** Id */
+            id: number;
+            /** Kind */
+            kind: string;
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            };
+            /** Rationale */
+            rationale: string;
+            /** Runid */
+            runId: string;
+            /** Source */
+            source: string;
+            /** Status */
+            status: string;
+        };
+        /** ProposeHypothesis */
+        ProposeHypothesis: {
+            /**
+             * Expectedsign
+             * @default
+             */
+            expectedSign: string;
+            /** Fields */
+            fields?: string[];
+            /**
+             * Horizon
+             * @default
+             */
+            horizon: string;
+            /** Mechanism */
+            mechanism: string;
+            /**
+             * Pipeline
+             * @default
+             */
+            pipeline: string;
+            /**
+             * Template
+             * @default
+             */
+            template: string;
+            /** Title */
+            title: string;
+        };
+        /** ProposePipelineRun */
+        ProposePipelineRun: {
+            /** Budget */
+            budget: number;
+            /** Fieldsetid */
+            fieldSetId: number;
+            /** Pipeline */
+            pipeline: string;
+            /** Rationale */
+            rationale: string;
+            /** Templateids */
+            templateIds: string[];
         };
         /**
          * ProvenSettings
@@ -6380,6 +6823,13 @@ export interface components {
             code: string;
             /** Name */
             name: string;
+        };
+        /** RecordLesson */
+        RecordLesson: {
+            /** Tags */
+            tags?: string[];
+            /** Text */
+            text: string;
         };
         /** RegionNode */
         RegionNode: {
@@ -7680,6 +8130,17 @@ export interface components {
             /** Used */
             used: number;
         };
+        /** ToolSchema */
+        ToolSchema: {
+            /** Description */
+            description: string;
+            /** Inputschema */
+            inputSchema: {
+                [key: string]: unknown;
+            };
+            /** Name */
+            name: string;
+        };
         /**
          * TreeNode
          * @description One step of a template, as the Blocks view draws it. ``...`` is a name: an empty input.
@@ -7707,6 +8168,84 @@ export interface components {
         TreeRequest: {
             /** Text */
             text: string;
+        };
+        /** TrialCreate */
+        TrialCreate: {
+            /**
+             * Expectedsign
+             * @default +
+             */
+            expectedSign: string;
+            /** Fieldsetid */
+            fieldSetId: number;
+            /** Fields */
+            fields: string[];
+            /**
+             * Horizon
+             * @default
+             */
+            horizon: string;
+            /** Hypothesisid */
+            hypothesisId?: number | null;
+            /**
+             * Mechanism
+             * @default
+             */
+            mechanism: string;
+            /** Pipeline */
+            pipeline: string;
+            /**
+             * Template
+             * @default
+             */
+            template: string;
+            /**
+             * Testbudget
+             * @default 15
+             */
+            testBudget: number;
+            /**
+             * Title
+             * @default
+             */
+            title: string;
+        };
+        /** TrialOut */
+        TrialOut: {
+            /** Case */
+            case: {
+                [key: string]: unknown;
+            } | null;
+            /** Createdat */
+            createdAt: string;
+            /** Error */
+            error: string;
+            /** Fieldsetid */
+            fieldSetId: number;
+            /** Fields */
+            fields: string[];
+            /** Finishedat */
+            finishedAt: string | null;
+            /** Hypothesis */
+            hypothesis: {
+                [key: string]: unknown;
+            };
+            /** Hypothesisid */
+            hypothesisId: number | null;
+            /** Id */
+            id: number;
+            /** Lane */
+            lane: string;
+            /** Pipeline */
+            pipeline: string;
+            /** Proposalid */
+            proposalId: number | null;
+            /** Spent */
+            spent: number;
+            /** Status */
+            status: string;
+            /** Verdict */
+            verdict: string;
         };
         /**
          * Tuple4
@@ -7967,6 +8506,129 @@ export interface components {
             /** Verificationurl */
             verificationUrl: string | null;
         };
+        /** ChatMessageOut */
+        alpha_harness__api__chat__ChatMessageOut: {
+            /** Createdat */
+            createdAt: string | null;
+            /** Id */
+            id: number;
+            /** Meta */
+            meta: {
+                [key: string]: unknown;
+            };
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+            /** Text */
+            text: string;
+        };
+        /** ChatReply */
+        alpha_harness__api__chat__ChatReply: {
+            /** Catalognote */
+            catalogNote: string | null;
+            /** Datasets */
+            datasets: string[];
+            /** Dropped */
+            dropped: string[];
+            /** Model */
+            model: string;
+            /** Picks */
+            picks: {
+                [key: string]: unknown;
+            }[];
+            reasoning: components["schemas"]["Reasoning"];
+            /** Reply */
+            reply: string;
+            /** Threadid */
+            threadId: number;
+            usage: components["schemas"]["LLMUsage"];
+        };
+        /** ChatThreadOut */
+        alpha_harness__api__chat__ChatThreadOut: {
+            /** Id */
+            id: number;
+            /** Messages */
+            messages: components["schemas"]["alpha_harness__api__chat__ChatMessageOut"][];
+            scope: components["schemas"]["ThreadScope"];
+            /** Title */
+            title: string;
+        };
+        /** ChatThreadSummary */
+        alpha_harness__api__chat__ChatThreadSummary: {
+            /** Id */
+            id: number;
+            /** Scope */
+            scope: string;
+            /** Title */
+            title: string;
+            /** Updatedat */
+            updatedAt: string | null;
+        };
+        /** ChatMessageOut */
+        alpha_harness__api__forge_agent__ChatMessageOut: {
+            /** Createdat */
+            createdAt: string;
+            /** Id */
+            id: number;
+            /** Meta */
+            meta: {
+                [key: string]: unknown;
+            };
+            /** Role */
+            role: string;
+            /** Text */
+            text: string;
+        };
+        /** ChatReply */
+        alpha_harness__api__forge_agent__ChatReply: {
+            /** Model */
+            model: string;
+            /** Reply */
+            reply: string;
+            /** Role */
+            role: string;
+            /** Threadid */
+            threadId: number;
+            /** Toolcalls */
+            toolCalls: {
+                [key: string]: unknown;
+            }[];
+            /** Usage */
+            usage: {
+                [key: string]: number;
+            };
+        };
+        /** ChatThreadOut */
+        alpha_harness__api__forge_agent__ChatThreadOut: {
+            /** Id */
+            id: number;
+            /** Messages */
+            messages: components["schemas"]["alpha_harness__api__forge_agent__ChatMessageOut"][];
+            /** Role */
+            role: string;
+            /** Title */
+            title: string;
+        };
+        /** ChatThreadSummary */
+        alpha_harness__api__forge_agent__ChatThreadSummary: {
+            /** Id */
+            id: number;
+            /** Role */
+            role: string;
+            /** Title */
+            title: string;
+            /** Updatedat */
+            updatedAt: string;
+        };
+        /** Failure */
+        alpha_harness__api__forge_agent__Failure: {
+            /** Check */
+            check: string;
+            /** Count */
+            count: number;
+        };
         /** PreviewRequest */
         alpha_harness__api__forge_studio__PreviewRequest: {
             /** Choices */
@@ -7982,6 +8644,13 @@ export interface components {
             limit: number;
             /** Templateid */
             templateId: string;
+        };
+        /** Failure */
+        alpha_harness__api__lab_tasks__Failure: {
+            /** Count */
+            count: number;
+            /** Reason */
+            reason: string;
         };
         /**
          * PreviewRequest
@@ -8917,7 +9586,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ChatReply"];
+                    "application/json": components["schemas"]["alpha_harness__api__chat__ChatReply"];
                 };
             };
             /** @description Validation Error */
@@ -8968,7 +9637,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ChatThreadSummary"][];
+                    "application/json": components["schemas"]["alpha_harness__api__chat__ChatThreadSummary"][];
                 };
             };
             /** @description Validation Error */
@@ -8999,7 +9668,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ChatThreadOut"];
+                    "application/json": components["schemas"]["alpha_harness__api__chat__ChatThreadOut"];
                 };
             };
             /** @description Validation Error */
@@ -9208,6 +9877,464 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    say_api_forge_agent_chat_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatSay"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["alpha_harness__api__forge_agent__ChatReply"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_chat_threads_api_forge_agent_chat_threads_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["alpha_harness__api__forge_agent__ChatThreadSummary"][];
+                };
+            };
+        };
+    };
+    get_chat_thread_api_forge_agent_chat_threads__thread_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["alpha_harness__api__forge_agent__ChatThreadOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_chat_thread_api_forge_agent_chat_threads__thread_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                thread_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    failures_by_reason_api_forge_agent_failures_get: {
+        parameters: {
+            query?: {
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["alpha_harness__api__forge_agent__Failure"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_hypotheses_api_forge_agent_hypotheses_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Hypothesis"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    propose_hypothesis_api_forge_agent_hypotheses_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProposeHypothesis"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Hypothesis"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_lessons_api_forge_agent_lessons_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Lesson"][];
+                };
+            };
+        };
+    };
+    record_lesson_api_forge_agent_lessons_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecordLesson"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Lesson"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_proposals_api_forge_agent_proposals_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Proposal"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    propose_pipeline_run_api_forge_agent_proposals_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProposePipelineRun"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Proposal"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_proposal_api_forge_agent_proposals__proposal_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                proposal_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Proposal"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reject_proposal_api_forge_agent_proposals__proposal_id__reject_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                proposal_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Proposal"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pipeline_runs_api_forge_agent_runs_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PipelineRunSummary"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    tools_api_forge_agent_tools_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolSchema"][];
+                };
+            };
+        };
+    };
+    run_weekly_summary_api_forge_agent_weekly_summary_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Lesson"];
                 };
             };
         };
@@ -10359,6 +11486,160 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ForgeTemplateDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    evidence_api_forge_workshop_evidence_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvidenceRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Evidence"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_trials_api_forge_workshop_trials_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrialOut"][];
+                };
+            };
+        };
+    };
+    start_trial_api_forge_workshop_trials_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrialCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrialOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_trial_api_forge_workshop_trials__trial_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                trial_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrialOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    promote_trial_api_forge_workshop_trials__trial_id__promote_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                trial_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Promote"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */
