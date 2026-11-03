@@ -1,0 +1,26 @@
+# Factor library for multi-factor regression (Phase 8b): how much of an alpha's PnL is
+# explained by well-known risk factors, versus genuinely new. Separate from court.yaml's
+# known_factors (used for the single-factor collision check during judging) — this list is for
+# attribution (betas, R-squared, residual Sharpe), not a pass/fail gate.
+
+factors:
+  - id: momentum
+    name: Momentum (12-1)
+    expr: "rank(ts_sum(returns, 252) - ts_sum(returns, 21))"
+    rationale: Classic cross-sectional momentum, skipping the most recent month.
+  - id: short_term_reversal
+    name: Short-term reversal
+    expr: "-rank(ts_sum(returns, 5))"
+    rationale: Mean reversion over the last week; the standard "dumb" factor to rule out.
+  - id: size
+    name: Size
+    expr: "-rank(cap)"
+    rationale: Small-cap tilt, the most common unintentional exposure.
+  - id: low_volatility
+    name: Low volatility
+    expr: "-rank(ts_std_dev(returns, 63))"
+    rationale: Low-vol anomaly; many "robust" alphas are secretly this.
+  - id: liquidity
+    name: Liquidity (illiquidity premium)
+    expr: "rank(ts_mean(volume * close, 20))"
+    rationale: Volume/turnover based factor; distinguishes liquidity-driven effects from genuine signal.

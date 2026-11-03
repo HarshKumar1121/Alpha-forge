@@ -1,0 +1,12 @@
+# Copy this to <name>.yaml for a new alpha type's pipeline. Files starting with `_` are skipped.
+name: CHANGE_ME
+alpha_type: CHANGE_ME       # a key in config/forge/alpha_types/
+lane: CHANGE_ME             # a key in config/forge/lanes.yaml
+template_complexity: [simple]
+correlation:
+  kind: self                 # "self" or "power-pool"
+  top_n: 5
+check:
+  top_n: 10
+budget:
+  default: 40

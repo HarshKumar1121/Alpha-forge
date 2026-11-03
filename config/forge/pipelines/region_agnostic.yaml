@@ -1,0 +1,12 @@
+# The same ideas outside the US: Europe, Asia, global and region-agnostic.
+name: region_agnostic
+alpha_type: region_agnostic
+lane: other_regions
+template_complexity: [simple, medium]
+correlation:
+  kind: self
+  top_n: 5
+check:
+  top_n: 10
+budget:
+  default: 40

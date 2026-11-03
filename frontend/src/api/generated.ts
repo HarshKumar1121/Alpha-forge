@@ -817,6 +817,130 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/forge/analytics/factors/{alpha_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Factor Regression
+         * @description Betas, R-squared and residual Sharpe of ``alpha_id`` against ``factors.yaml``.
+         *
+         *     Needs the alpha's own settings (region/delay/universe/...) to run the factor expressions in
+         *     a comparable scope, so only alphas the board already knows about (``forge_pipeline_alpha``)
+         *     can be regressed.
+         */
+        get: operations["factor_regression_api_forge_analytics_factors__alpha_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/analytics/pool": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pool Compare
+         * @description Correlation matrix, dendrogram, PCA and families across a handful of alphas.
+         */
+        get: operations["pool_compare_api_forge_analytics_pool_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/analytics/tear-sheet/{alpha_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Tear Sheet
+         * @description Everything a desk looks at for one alpha, from its real BRAIN recordsets.
+         */
+        get: operations["tear_sheet_api_forge_analytics_tear_sheet__alpha_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/board": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Board
+         * @description The board from what is already kept. Free: nothing here reaches BRAIN.
+         */
+        get: operations["get_board_api_forge_board_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/board/fetch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fetch
+         * @description Start filling the board from BRAIN in the background. Spends no simulations.
+         */
+        post: operations["fetch_api_forge_board_fetch_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/board/repair": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Queue Repair
+         * @description Simulate one repair of a refused alpha in the validate lane. Never submits anything.
+         */
+        post: operations["queue_repair_api_forge_board_repair_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/forge/data/datasets": {
         parameters: {
             query?: never;
@@ -956,6 +1080,113 @@ export interface paths {
          * @description Run one expression on the Gym and return its tear sheet. Free; never touches BRAIN.
          */
         post: operations["simulate_api_forge_gym_simulate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/pipelines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Pipelines
+         * @description Every pipeline config under ``config/forge/pipelines`` (CLAUDE.md rule 7: the lane, the
+         *     template complexities and the budget are platform/personal choices, kept in YAML).
+         */
+        get: operations["list_pipelines_api_forge_pipelines_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/pipelines/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview
+         * @description What this pipeline would generate, what lint would keep, and what the Quota Governor
+         *     would admit — all free: nothing here queues a simulation.
+         */
+        post: operations["preview_api_forge_pipelines_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/pipelines/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Pipeline
+         * @description Start a pipeline run in the background. Spends real quota through the Quota Governor
+         *     the orchestrator already calls; never submits anything (CLAUDE.md rule 1).
+         */
+        post: operations["run_pipeline_api_forge_pipelines_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/pipelines/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Runs
+         * @description Every pipeline run this process knows about, most recent first — the history panel.
+         */
+        get: operations["list_runs_api_forge_pipelines_runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/pipelines/runs/{task_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Run
+         * @description The finished report for a run started with ``POST /run``, read from its durable row —
+         *     survives past ``TaskRegistry``'s 60s linger and a server restart.
+         *
+         *     While it is still going, the caller is expected to watch the ``tasks`` websocket topic for
+         *     progress and call this once the task's state turns ``done``.
+         */
+        get: operations["get_run_api_forge_pipelines_runs__task_id__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2712,6 +2943,22 @@ export interface components {
             /** Name */
             name: string;
         };
+        /**
+         * AddsOut
+         * @description What submitting this alpha does to your pool, from BRAIN's before/after.
+         */
+        AddsOut: {
+            /** Scoreafter */
+            scoreAfter: number | null;
+            /** Scorebefore */
+            scoreBefore: number | null;
+            /** Scoredelta */
+            scoreDelta: number | null;
+            /** Sharpeafter */
+            sharpeAfter: number | null;
+            /** Sharpebefore */
+            sharpeBefore: number | null;
+        };
         /** AfterCost */
         AfterCost: {
             /** Figures */
@@ -2826,6 +3073,55 @@ export interface components {
             }[];
             /** Type */
             type: string | null;
+        };
+        /** AlphaOut */
+        AlphaOut: {
+            adds: components["schemas"]["AddsOut"] | null;
+            /** Alphaid */
+            alphaId: string;
+            /** Alphatype */
+            alphaType: string;
+            /** Brainurl */
+            brainUrl: string;
+            /** Checks */
+            checks: components["schemas"]["CheckOut"][];
+            /** Checkssource */
+            checksSource: string | null;
+            correlation: components["schemas"]["CorrelationOut"] | null;
+            description: components["schemas"]["DescriptionOut"] | null;
+            /** Expression */
+            expression: string;
+            /** Leadercorrelation */
+            leaderCorrelation: number | null;
+            /** Pipeline */
+            pipeline: string;
+            /** Powerpool */
+            powerPool: boolean;
+            /** Quotablocked */
+            quotaBlocked: string[];
+            /** Region */
+            region: string;
+            /** Repairs */
+            repairs: components["schemas"]["RepairOut"][];
+            /** Repairsqueued */
+            repairsQueued: number;
+            /** Stage */
+            stage: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ready" | "pending" | "not_ready" | "unchecked";
+            /** Testsharpe */
+            testSharpe: number | null;
+            /** Trainfitness */
+            trainFitness: number | null;
+            /** Trainsharpe */
+            trainSharpe: number | null;
+            /** Turnover */
+            turnover: number | null;
+            /** Whynot */
+            whyNot: string[];
         };
         /** AlphaPage */
         AlphaPage: {
@@ -3159,6 +3455,16 @@ export interface components {
             /** By */
             by: string;
         };
+        /** Board */
+        Board: {
+            /** Checklist */
+            checklist: components["schemas"]["ChecklistItem"][];
+            /** Days */
+            days: components["schemas"]["DayGroup"][];
+            /** Familythreshold */
+            familyThreshold: number;
+            missing: components["schemas"]["Missing"];
+        };
         /**
          * BrainPayload
          * @description BRAIN's own JSON, passed through as the platform sent it.
@@ -3233,6 +3539,17 @@ export interface components {
         Cancelled: {
             /** Cancelled */
             cancelled: boolean;
+        };
+        /** CandidateOut */
+        CandidateOut: {
+            /** Alphaid */
+            alphaId: string | null;
+            /** Expression */
+            expression: string;
+            /** Testsharpe */
+            testSharpe: number | null;
+            /** Trainsharpe */
+            trainSharpe: number | null;
         };
         /** CatalogCounts */
         CatalogCounts: {
@@ -3401,11 +3718,47 @@ export interface components {
             /** Updatedat */
             updatedAt: string | null;
         };
+        /** CheckOut */
+        CheckOut: {
+            /** Limit */
+            limit?: unknown;
+            /** Name */
+            name: string;
+            /** Result */
+            result: string;
+            /** Role */
+            role: string;
+            /** Value */
+            value?: unknown;
+        };
         /**
          * CheckResult
          * @enum {string}
          */
         CheckResult: "PASS" | "FAIL" | "PENDING" | "WARNING" | "ERROR";
+        /** ChecklistItem */
+        ChecklistItem: {
+            /** Alphaid */
+            alphaId: string;
+            /** Alphatype */
+            alphaType: string;
+            /** Brainurl */
+            brainUrl: string;
+            /** Expression */
+            expression: string;
+            /** Powerpool */
+            powerPool: boolean;
+            /** Rank */
+            rank: number;
+            /** Region */
+            region: string;
+            /** Scoredelta */
+            scoreDelta: number | null;
+            /** Steps */
+            steps: string[];
+            /** Trainsharpe */
+            trainSharpe: number | null;
+        };
         /** Choice */
         Choice: {
             /** Label */
@@ -3424,6 +3777,19 @@ export interface components {
             newId: string;
             /** Templateid */
             templateId: string;
+        };
+        /** ClusterOut */
+        ClusterOut: {
+            /** Distance */
+            distance: number;
+            /** Id */
+            id: number;
+            /** Left */
+            left: string;
+            /** Members */
+            members: string[];
+            /** Right */
+            right: string;
         };
         /** Competition */
         Competition: {
@@ -3473,6 +3839,13 @@ export interface components {
             /** Alpha Ids */
             alpha_ids: string[];
         };
+        /** CorrelatedAlphaOut */
+        CorrelatedAlphaOut: {
+            /** Alphaid */
+            alphaId: string;
+            /** Correlation */
+            correlation: number;
+        };
         /** CorrelatedPair */
         CorrelatedPair: {
             /** A */
@@ -3481,6 +3854,17 @@ export interface components {
             b: string;
             /** Correlation */
             correlation: number;
+        };
+        /** CorrelationOut */
+        CorrelationOut: {
+            /** Ceiling */
+            ceiling: number;
+            /** Kind */
+            kind: string;
+            /** Max */
+            max: number | null;
+            /** Over */
+            over: boolean;
         };
         /** CoverageBin */
         CoverageBin: {
@@ -3638,6 +4022,25 @@ export interface components {
             /** Value Score */
             value_score: number | null;
         };
+        /** DayGroup */
+        DayGroup: {
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /** Types */
+            types: components["schemas"]["TypeGroup"][];
+        };
+        /** DeflatedSharpeOut */
+        DeflatedSharpeOut: {
+            /** Deflated */
+            deflated: boolean;
+            /** Ntrials */
+            nTrials: number;
+            /** Value */
+            value: number | null;
+        };
         /** DelayNode */
         DelayNode: {
             /** Label */
@@ -3670,6 +4073,33 @@ export interface components {
             text: string;
             /** Thin */
             thin: string[];
+        };
+        /** DescriptionOut */
+        DescriptionOut: {
+            /** Checks */
+            checks?: components["schemas"]["CheckOut"][];
+            /** Edited */
+            edited: boolean;
+            /** Text */
+            text: string;
+        };
+        /** DistributionOut */
+        DistributionOut: {
+            /** Kurtosis */
+            kurtosis: number | null;
+            /** Mean */
+            mean: number | null;
+            /** Qq */
+            qq: number[][];
+            /** Skew */
+            skew: number | null;
+            /** Std */
+            std: number | null;
+            /** Worstdays */
+            worstDays: [
+                string,
+                number
+            ][];
         };
         /** DraftRequest */
         DraftRequest: {
@@ -3820,12 +4250,54 @@ export interface components {
             /** Yamltext */
             yamlText: string;
         };
+        /** FactorsOut */
+        FactorsOut: {
+            /** Alpha */
+            alpha: number | null;
+            /** Alphaid */
+            alphaId: string;
+            /** Betas */
+            betas: {
+                [key: string]: number;
+            };
+            /** Factorsused */
+            factorsUsed: string[];
+            /** Nobs */
+            nObs: number;
+            /** Rsquared */
+            rSquared: number | null;
+            /** Residualsharpe */
+            residualSharpe: number | null;
+        };
         /** Failure */
         Failure: {
             /** Count */
             count: number;
             /** Reason */
             reason: string;
+        };
+        /** FamilyOut */
+        FamilyOut: {
+            /**
+             * Basis
+             * @enum {string}
+             */
+            basis: "pnl" | "structure";
+            /** Comparisonset */
+            comparisonSet: string;
+            /** Id */
+            id: string;
+            leader: components["schemas"]["AlphaOut"];
+            /** Members */
+            members: components["schemas"]["AlphaOut"][];
+        };
+        /** FetchRequest */
+        FetchRequest: {
+            /**
+             * Days
+             * @default 2
+             */
+            days: number;
         };
         /** FieldAvailabilityRow */
         FieldAvailabilityRow: {
@@ -4500,6 +4972,13 @@ export interface components {
             /** T */
             t: number | null;
         };
+        /** IcOut */
+        IcOut: {
+            /** Horizons */
+            horizons: number[];
+            /** Values */
+            values: (number | null)[];
+        };
         /** IcPoint */
         IcPoint: {
             /** Horizon */
@@ -4860,6 +5339,20 @@ export interface components {
             universe: string;
         };
         /**
+         * Missing
+         * @description What the board would show with one more fetch (free: no simulations).
+         */
+        Missing: {
+            /** Checks */
+            checks: number;
+            /** Correlations */
+            correlations: number;
+            /** Performance */
+            performance: number;
+            /** Pnl */
+            pnl: number;
+        };
+        /**
          * ModelInfo
          * @description One model and the limits its user gave it. Each key gets these limits in full.
          */
@@ -5037,6 +5530,15 @@ export interface components {
              */
             start: string;
         };
+        /** PcaOut */
+        PcaOut: {
+            /** Explainedvarianceratio */
+            explainedVarianceRatio: number[];
+            /** Loadings */
+            loadings: {
+                [key: string]: number[];
+            };
+        };
         /** Period */
         Period: {
             /** End */
@@ -5049,6 +5551,56 @@ export interface components {
             inSample: components["schemas"]["Period"];
             test: components["schemas"]["Period"] | null;
             train: components["schemas"]["Period"] | null;
+        };
+        /** PipelineOut */
+        PipelineOut: {
+            /** Alphatype */
+            alphaType: string;
+            /** Checktopn */
+            checkTopN: number;
+            /** Correlationkind */
+            correlationKind: string;
+            /** Correlationtopn */
+            correlationTopN: number;
+            /** Defaultbudget */
+            defaultBudget: number;
+            /** Lane */
+            lane: string;
+            /** Name */
+            name: string;
+            /** Templatecomplexity */
+            templateComplexity: string[];
+        };
+        /** PlanPreview */
+        PlanPreview: {
+            admission: components["schemas"]["QuotaAdmission"];
+            /** Budget */
+            budget: number;
+            /** Eligible */
+            eligible: number;
+            /** Fieldset */
+            fieldSet: string;
+            /** Generated */
+            generated: number;
+            /** Pipeline */
+            pipeline: string;
+            /** Rejectedsample */
+            rejectedSample: components["schemas"]["RejectedCandidate"][];
+            /** Rejectedtotal */
+            rejectedTotal: number;
+            /** Templates */
+            templates: string[];
+        };
+        /** PlanRequest */
+        PlanRequest: {
+            /** Budget */
+            budget?: number | null;
+            /** Fieldsetid */
+            fieldSetId: number;
+            /** Pipeline */
+            pipeline: string;
+            /** Templateids */
+            templateIds: string[];
         };
         /** PlanTotals */
         PlanTotals: {
@@ -5066,6 +5618,28 @@ export interface components {
             day: string;
             /** Pnl */
             pnl: number;
+        };
+        /** PoolOut */
+        PoolOut: {
+            /** Alphaids */
+            alphaIds: string[];
+            /** Clusters */
+            clusters: components["schemas"]["ClusterOut"][];
+            /** Correlationmatrix */
+            correlationMatrix: {
+                [key: string]: {
+                    [key: string]: number | null;
+                };
+            };
+            /** Families */
+            families: {
+                [key: string]: unknown;
+            }[];
+            /** Maxcorrelation */
+            maxCorrelation: number | null;
+            /** Meanabscorrelation */
+            meanAbsCorrelation: number | null;
+            pca: components["schemas"]["PcaOut"];
         };
         /** PortfolioMember */
         PortfolioMember: {
@@ -5585,6 +6159,25 @@ export interface components {
             /** Stopping */
             stopping: boolean;
         };
+        /** QuotaAdmission */
+        QuotaAdmission: {
+            /** Admitted */
+            admitted: number;
+            /** Admittedcost */
+            admittedCost: number;
+            /** Asked */
+            asked: number;
+            /** Globalremaining */
+            globalRemaining: number;
+            /** Lane */
+            lane: string;
+            /** Laneremaining */
+            laneRemaining: number;
+            /** Reason */
+            reason: string;
+            /** Trimmed */
+            trimmed: number;
+        };
         /** QuotaEstimate */
         QuotaEstimate: {
             /** Admitted */
@@ -5820,6 +6413,13 @@ export interface components {
             /** Universes */
             universes: string[];
         };
+        /** RejectedCandidate */
+        RejectedCandidate: {
+            /** Expression */
+            expression: string;
+            /** Reason */
+            reason: string;
+        };
         /** RenderedAlpha */
         RenderedAlpha: {
             /** Datafields */
@@ -5845,6 +6445,45 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** RepairOut */
+        RepairOut: {
+            /** Check */
+            check: string;
+            /** Key */
+            key: string | null;
+            /** Needs */
+            needs: string[];
+            /** Why */
+            why: string;
+        };
+        /** RepairQueued */
+        RepairQueued: {
+            /** Alphaid */
+            alphaId: string;
+            /** Expression */
+            expression: string;
+            /** Lane */
+            lane: string;
+            /** Laneremaining */
+            laneRemaining: number;
+            /** Repair */
+            repair: string;
+            /** Settings */
+            settings: {
+                [key: string]: unknown;
+            };
+            /** Taskid */
+            taskId: string;
+            /** Why */
+            why: string;
+        };
+        /** RepairRequest */
+        RepairRequest: {
+            /** Alphaid */
+            alphaId: string;
+            /** Repair */
+            repair?: string | null;
+        };
         /**
          * ResolveOptionsRequest
          * @description Settings chosen so far. Partial is fine — that is the point.
@@ -5854,6 +6493,88 @@ export interface components {
             settings?: {
                 [key: string]: unknown;
             };
+        };
+        /** RunReport */
+        RunReport: {
+            /** Candidates */
+            candidates: components["schemas"]["CandidateOut"][];
+            /** Checks */
+            checks: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
+            /** Correlations */
+            correlations: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
+            /** Finalists */
+            finalists: components["schemas"]["CandidateOut"][];
+            /** Pipeline */
+            pipeline: string;
+            /** Rejected */
+            rejected: components["schemas"]["RejectedCandidate"][];
+            /** Spent */
+            spent: number;
+            /** Status */
+            status: string;
+        };
+        /** RunRequest */
+        RunRequest: {
+            /** Budget */
+            budget?: number | null;
+            /** Fieldsetid */
+            fieldSetId: number;
+            /** Pipeline */
+            pipeline: string;
+            /** Templateids */
+            templateIds: string[];
+        };
+        /** RunStarted */
+        RunStarted: {
+            /** Budget */
+            budget: number;
+            /** Fieldset */
+            fieldSet: string;
+            /** Pipeline */
+            pipeline: string;
+            /** Taskid */
+            taskId: string;
+        };
+        /**
+         * RunSummary
+         * @description One row of the run-history panel — durable past ``TaskRegistry``'s 60s linger.
+         */
+        RunSummary: {
+            /** Budget */
+            budget: number;
+            /** Candidatescount */
+            candidatesCount: number;
+            /** Fieldset */
+            fieldSet: string;
+            /** Finalistscount */
+            finalistsCount: number;
+            /** Finishedat */
+            finishedAt: string | null;
+            /** Lane */
+            lane: string;
+            /** Pipeline */
+            pipeline: string;
+            /** Rejectedcount */
+            rejectedCount: number;
+            /** Spent */
+            spent: number;
+            /**
+             * Startedat
+             * Format: date-time
+             */
+            startedAt: string;
+            /** Status */
+            status: string;
+            /** Taskid */
+            taskId: string;
         };
         /** SampleAlpha */
         SampleAlpha: {
@@ -6655,6 +7376,11 @@ export interface components {
             /** Removed */
             removed: number;
         };
+        /** TaskStarted */
+        TaskStarted: {
+            /** Taskid */
+            taskId: string;
+        };
         /** TasksSummary */
         TasksSummary: {
             /** Busy */
@@ -6667,6 +7393,61 @@ export interface components {
             running: number;
             /** Tasks */
             tasks: components["schemas"]["BackgroundTask"][];
+        };
+        /** TearSheetOut */
+        TearSheetOut: {
+            /** Alphaid */
+            alphaId: string;
+            /** Bootstrapsharpeci */
+            bootstrapSharpeCi: [
+                number | null,
+                number | null
+            ];
+            /** Cumulative */
+            cumulative: number[];
+            /** Days */
+            days: string[];
+            deflatedSharpe: components["schemas"]["DeflatedSharpeOut"];
+            distribution: components["schemas"]["DistributionOut"];
+            /** Factorsummary */
+            factorSummary: string | null;
+            ic: components["schemas"]["IcOut"];
+            /** Ma */
+            ma: (number | null)[];
+            /** Malower */
+            maLower: (number | null)[];
+            /** Maupper */
+            maUpper: (number | null)[];
+            /** Monthlyreturns */
+            monthlyReturns: {
+                [key: string]: number;
+            };
+            /** Permutationpvalue */
+            permutationPValue: number | null;
+            /** Pnl */
+            pnl: number[];
+            /** Poolcorrelation */
+            poolCorrelation: components["schemas"]["CorrelatedAlphaOut"][];
+            /** Probsharpeabove125 */
+            probSharpeAbove125: number | null;
+            /** Rollingsharpe */
+            rollingSharpe: (number | null)[];
+            /** Rollingvol */
+            rollingVol: (number | null)[];
+            /** Sharpe */
+            sharpe: number | null;
+            /** Turnover */
+            turnover: number[];
+            /** Turnoverdays */
+            turnoverDays: string[];
+            /** Underwater */
+            underwater: number[];
+            /** Verdict */
+            verdict: string;
+            /** Yearly */
+            yearly: {
+                [key: string]: unknown;
+            }[];
         };
         /** TemplateBody */
         TemplateBody: {
@@ -6950,6 +7731,17 @@ export interface components {
             id: string;
             /** N */
             n: number;
+        };
+        /** TypeGroup */
+        TypeGroup: {
+            /** Alphatype */
+            alphaType: string;
+            /** Alphas */
+            alphas: number;
+            /** Families */
+            families: components["schemas"]["FamilyOut"][];
+            /** Ready */
+            ready: number;
         };
         /** UniverseHistory */
         UniverseHistory: {
@@ -8420,6 +9212,198 @@ export interface operations {
             };
         };
     };
+    factor_regression_api_forge_analytics_factors__alpha_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                alpha_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FactorsOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pool_compare_api_forge_analytics_pool_get: {
+        parameters: {
+            query: {
+                /** @description Comma-separated BRAIN alpha ids. */
+                alpha_ids: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PoolOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    tear_sheet_api_forge_analytics_tear_sheet__alpha_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                alpha_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TearSheetOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_board_api_forge_board_get: {
+        parameters: {
+            query?: {
+                /** @description How many days back, today included. */
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Board"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fetch_api_forge_board_fetch_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FetchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskStarted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    queue_repair_api_forge_board_repair_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepairRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepairQueued"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     datasets_api_forge_data_datasets_get: {
         parameters: {
             query: {
@@ -8737,6 +9721,143 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GymTearSheet"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_pipelines_api_forge_pipelines_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PipelineOut"][];
+                };
+            };
+        };
+    };
+    preview_api_forge_pipelines_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlanRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlanPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_pipeline_api_forge_pipelines_run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunStarted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_runs_api_forge_pipelines_runs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunSummary"][];
+                };
+            };
+        };
+    };
+    get_run_api_forge_pipelines_runs__task_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunReport"];
                 };
             };
             /** @description Validation Error */

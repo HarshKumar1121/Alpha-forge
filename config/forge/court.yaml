@@ -62,3 +62,18 @@ repairs:
     needs:
     - adv20
     why: 'Tilt to liquid names: if the effect only lives in microcaps it isn''t tradeable.'
+# The Submittable Board's repairs: a failing BRAIN check, by BRAIN's own name, -> the repair
+# above that answers it. Names differ where the Court's diagnosis is narrower than BRAIN's check
+# (LOW_FITNESS is repaired as the fast-trading kind, the only kind smoothing can fix).
+check_repairs:
+  HIGH_TURNOVER: HIGH_TURNOVER
+  LOW_FITNESS: LOW_FITNESS_FAST
+  LOW_TURNOVER: LOW_TURNOVER
+  CONCENTRATED_WEIGHT: CONCENTRATED_WEIGHT
+  LOW_SUB_UNIVERSE_SHARPE: LOW_SUB_UNIVERSE_SHARPE
+# What to do about a failing check no mechanical repair can answer.
+check_advice:
+  LOW_SHARPE: No repair can add a signal that is not there. Try another field or template.
+  SELF_CORRELATION: Too close to an alpha you already submitted. Look for a different idea, not a variant.
+  POWER_POOL_CORRELATION: Too close to your Power Pool alphas. Use different data, or beat the closest one's Sharpe by 10%.
+  IS_LADDER_SHARPE: Sharpe is not steady across the in-sample years. A new idea is likelier to pass than a tweak.

@@ -1,0 +1,12 @@
+# The main factory: templates crossed with field sets, looking for Regular alphas.
+name: regular
+alpha_type: regular
+lane: forge_regular
+template_complexity: [simple, medium, complex]
+correlation:
+  kind: self          # BrainEndpoints.correlations(alpha_id, kind="self")
+  top_n: 5             # only the top 5 finalists get a real correlation call
+check:
+  top_n: 10            # only the top 10 train-gate passers get a real /check call
+budget:
+  default: 60

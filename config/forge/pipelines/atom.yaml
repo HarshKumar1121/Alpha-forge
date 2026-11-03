@@ -1,0 +1,12 @@
+# Single-dataset alphas, for the ATOM competition.
+name: atom
+alpha_type: atom
+lane: atom
+template_complexity: [simple, medium]
+correlation:
+  kind: self
+  top_n: 5
+check:
+  top_n: 10
+budget:
+  default: 40

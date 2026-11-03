@@ -70,6 +70,26 @@ async def test_pnl_is_served_after_a_run_and_empty_before() -> None:
     assert rows[0][0] < rows[-1][0]  # oldest first
 
 
+async def test_turnover_and_yearly_stats_are_served_after_a_run_and_empty_before() -> None:
+    fresh = GymSimulator()
+    req = request_for("-ts_sum(returns, 5)", SETTINGS)
+    aid = fresh.alpha_id(req)
+    assert await fresh.turnover(aid) == []
+    assert await fresh.yearly_stats(aid) == []
+
+    (out,) = await fresh.simulate([req])
+    assert out.alpha_id is not None
+
+    turnover_rows = await fresh.turnover(out.alpha_id)
+    assert len(turnover_rows) > 2000
+    assert turnover_rows[0][0] < turnover_rows[-1][0]  # oldest first
+
+    yearly_rows = await fresh.yearly_stats(out.alpha_id)
+    assert yearly_rows
+    assert all({"year", "sharpe"} <= row.keys() for row in yearly_rows)
+    assert [row["year"] for row in yearly_rows] == sorted(row["year"] for row in yearly_rows)
+
+
 def test_settings_are_approximated_for_400_stocks() -> None:
     s = request_for(
         "rank(close)", {**SETTINGS, "universe": "TOP1000", "neutralization": "SUBINDUSTRY"}

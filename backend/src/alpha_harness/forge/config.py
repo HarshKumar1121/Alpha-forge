@@ -58,17 +58,26 @@ def learning() -> dict[str, Any]:
     return read_yaml(config_dir() / "learning.yaml")
 
 
+@cache
+def factors() -> dict[str, Any]:
+    """``factors.yaml``: the regression factor library for Phase 8 analytics."""
+    return read_yaml(config_dir() / "factors.yaml")
+
+
 def reload() -> None:
     """Forget every cached config, so the next read sees the files as they are now."""
     from . import alpha_types
     from .data import crowding
+    from .pipelines import config as pipelines_config
     from .quota import config as quota_config
     from .research import templates
 
     court.cache_clear()
     lanes.cache_clear()
     learning.cache_clear()
+    factors.cache_clear()
     crowding.weights.cache_clear()
     quota_config.load.cache_clear()
     alpha_types.load_all.cache_clear()
     templates.load_library.cache_clear()
+    pipelines_config.load_all.cache_clear()

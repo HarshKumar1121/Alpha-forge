@@ -395,12 +395,7 @@ class Researcher:
                 and not set(r["needs"]) <= self.available
             ):
                 continue
-            settings = {**c.settings, **(r.get("settings") or {})}
-            expr = c.expression
-            if "expr" in r:
-                inner = f"ts_backfill({c.field}, 63)"
-                rule = str(r["expr"]).replace("$inner", inner)
-                expr = on_result(c.expression, lambda x, rule=rule: rule.replace("$x", f"({x})"))
+            expr, settings = apply_repair(c.expression, c.settings, c.field, r)
             seen_key = expr + str(sorted(settings.items()))
             if seen_key in seen:
                 continue
@@ -451,7 +446,20 @@ class Researcher:
         seen = {c.expression for c in probe_cands}
         self.log(f"R1 exploring behaviour-matched templates… ({self.left()} sims left)")
         r1 = await self.explore(profiles, seen)
-        pool = probe_cands + r1
+        return await self.run_from(probe_cands + r1, profiles)
+
+    async def run_from(
+        self, seeded: list[Cand], profiles: dict[str, Profile] | None = None
+    ) -> Report:
+        """R2 (expand) onward, starting from already-simulated candidates.
+
+        For a caller that already knows which templates bind to which fields — e.g. a Phase 6
+        pipeline's own generate + eligibility-lint stage — R0 (profile) and R1 (explore) do not
+        apply: ``seeded`` plays R1's role, already simulated and ranked here.
+        """
+        profiles = profiles or {}
+        seen = {c.expression for c in seeded}
+        pool = list(seeded)
         ranked = sorted(pool, key=lambda c: -_nz(c.train_sharpe))
         self.log(f"R2 expanding the top third… ({self.left()} sims left)")
         r2 = await self.expand(ranked, seen)
@@ -531,6 +539,18 @@ class Researcher:
             self.budget,
             dsr,
         )
+
+
+def apply_repair(
+    expression: str, settings: dict[str, Any], field: str, rule: dict[str, Any]
+) -> tuple[str, dict[str, Any]]:
+    """One ``court.yaml`` repair applied: its settings laid over, its ``expr`` wrapped around
+    the expression's result (``$x``), with ``$inner`` the backfilled field the alpha reads."""
+    repaired = {**settings, **(rule.get("settings") or {})}
+    if "expr" not in rule:
+        return expression, repaired
+    template = str(rule["expr"]).replace("$inner", f"ts_backfill({field}, 63)")
+    return on_result(expression, lambda x: template.replace("$x", f"({x})")), repaired
 
 
 def _repair_for(reasons: str, turnover: float) -> str | None:

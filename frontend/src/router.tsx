@@ -175,10 +175,29 @@ const forgeMyTemplates = createRoute({
   }),
   component: lazyRouteComponent(() => import('@/screens/forge/my-templates'), 'MyTemplatesScreen'),
 })
+const forgePipelines = createRoute({
+  getParentRoute: () => forge,
+  path: 'pipelines',
+  component: lazyRouteComponent(() => import('@/screens/forge/pipelines'), 'PipelinesScreen'),
+})
+const forgeBoard = createRoute({
+  getParentRoute: () => forge,
+  path: 'board',
+  component: lazyRouteComponent(() => import('@/screens/forge/board'), 'BoardScreen'),
+})
 const forgeFieldSets = createRoute({
   getParentRoute: () => forge,
   path: 'fieldsets',
   component: lazyRouteComponent(() => import('@/screens/forge/fieldsets'), 'FieldSetsScreen'),
+})
+const forgeAnalytics = createRoute({
+  getParentRoute: () => forge,
+  path: 'analytics',
+  // The alpha id travels in the URL, so a link from the Board or a reload lands on the same one.
+  validateSearch: (search: Record<string, unknown>) => ({
+    alpha: typeof search['alpha'] === 'string' ? search['alpha'] : undefined,
+  }),
+  component: lazyRouteComponent(() => import('@/screens/forge/analytics'), 'AnalyticsScreen'),
 })
 const forgeDataset = createRoute({
   getParentRoute: () => forge,
@@ -288,8 +307,11 @@ export const routeTree = root.addChildren([
     forgeTemplates,
     forgeMyTemplates,
     forgeStudio,
+    forgePipelines,
+    forgeBoard,
     forgeFieldSets,
     forgeDataset,
+    forgeAnalytics,
   ]), // forge: Forge section
   competitionsRoute,
   tasks.addChildren([tasksIndex, taskResults]),

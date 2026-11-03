@@ -67,6 +67,23 @@ class ResearchStore(Protocol):
         """Alpha ids of what you already submitted, to check new alphas against."""
         ...
 
+    async def get_check(self, alpha_id: str) -> dict[str, Any] | None:
+        """A BRAIN ``/check`` body already fetched for this alpha, or ``None``.
+
+        Lets a pipeline resume after a restart without spending a second ``/check`` call on an
+        alpha it already has an answer for.
+        """
+        ...
+
+    async def save_check(self, alpha_id: str, body: dict[str, Any]) -> None: ...
+
+    async def get_correlation(self, alpha_id: str, kind: str) -> dict[str, Any] | None:
+        """A BRAIN correlation body already fetched for this alpha and ``kind`` ("self" or
+        "power-pool"), or ``None``."""
+        ...
+
+    async def save_correlation(self, alpha_id: str, kind: str, body: dict[str, Any]) -> None: ...
+
 
 @dataclass(slots=True)
 class InMemoryResearchStore:
@@ -80,6 +97,10 @@ class InMemoryResearchStore:
     )
     _pool: dict[tuple[str, str | None], list[str]] = field(
         default_factory=dict[tuple[str, str | None], list[str]]
+    )
+    _checks: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
+    _correlations: dict[tuple[str, str], dict[str, Any]] = field(
+        default_factory=dict[tuple[str, str], dict[str, Any]]
     )
 
     async def find(self, request: SimulationRequest) -> Hit | None:
@@ -109,3 +130,15 @@ class InMemoryResearchStore:
 
     def set_pool(self, kind: str, region: str | None, alpha_ids: list[str]) -> None:
         self._pool[kind, region] = list(alpha_ids)
+
+    async def get_check(self, alpha_id: str) -> dict[str, Any] | None:
+        return self._checks.get(alpha_id)
+
+    async def save_check(self, alpha_id: str, body: dict[str, Any]) -> None:
+        self._checks[alpha_id] = body
+
+    async def get_correlation(self, alpha_id: str, kind: str) -> dict[str, Any] | None:
+        return self._correlations.get((alpha_id, kind))
+
+    async def save_correlation(self, alpha_id: str, kind: str, body: dict[str, Any]) -> None:
+        self._correlations[alpha_id, kind] = body

@@ -1,13 +1,20 @@
 /**
- * ECharts for Forge's heatmaps, scatters and bars (time series stay on lightweight-charts).
+ * ECharts for Forge's heatmaps, scatters, bars and rolling-window lines. The main cumulative
+ * PnL curve stays on lightweight-charts (`PortfolioChart`); this is for the smaller analytical
+ * charts around it.
  *
  * Only the chart types and components in use are registered, so the bundle carries those and
  * nothing else. Colours come from the theme tokens through `color()`, the same bridge the PnL
  * charts use, because a canvas cannot read CSS variables.
  */
 
-import { BarChart, ScatterChart } from 'echarts/charts'
-import { GridComponent, MarkLineComponent, TooltipComponent } from 'echarts/components'
+import { BarChart, LineChart, ScatterChart } from 'echarts/charts'
+import {
+  GridComponent,
+  LegendComponent,
+  MarkLineComponent,
+  TooltipComponent,
+} from 'echarts/components'
 import type { EChartsCoreOption } from 'echarts/core'
 import * as echarts from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
@@ -17,8 +24,10 @@ import { color } from '@/screens/pool/pnl-chart'
 
 echarts.use([
   BarChart,
+  LineChart,
   ScatterChart,
   GridComponent,
+  LegendComponent,
   TooltipComponent,
   MarkLineComponent,
   CanvasRenderer,

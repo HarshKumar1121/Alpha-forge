@@ -31,8 +31,11 @@ teach the user. Prefer readable code with docstrings that explain the quant reas
 - **v2 phases:** 3 Quota Governor + Today · 4 Real scope and data · 5 Template Studio v2 ·
   6 Type pipelines on BRAIN · 7 Families and Submittable Board · 8 Research analytics ·
   9 Learning engine · 10 AI agent with memory · 11 Practice mode and Real-Price Lab.
-- **Next:** Phase 6 (type pipelines on BRAIN; also wire/verify the Phase 5 Studio frontend and
-  populate `template_stats`, deferred to this phase).
+- **Also done:** Phase 6 (type pipelines on BRAIN) and Phase 7 backend (`forge/board/`,
+  `/api/forge/board`: families per comparison set, check reading, why-not + court.yaml repairs,
+  queue repair into the validate lane, submission checklist).
+- **Next:** Phase 7 frontend (Submittable Board screen under `screens/forge/board/`).
+  Still deferred: wire/verify the Phase 5 Studio frontend and populate `template_stats`.
 
 ## Layout
 

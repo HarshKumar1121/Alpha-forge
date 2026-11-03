@@ -81,6 +81,8 @@ class GymSimulator:
         self.seed = seed
         self.limits = limits or CheckLimits.from_alpha_type(alpha_types.load("regular"))
         self._pnl: dict[str, pd.Series] = {}
+        self._turnover: dict[str, pd.Series] = {}
+        self._yearly: dict[str, dict[int, float]] = {}
 
     @property
     def market(self) -> Market:
@@ -107,7 +109,19 @@ class GymSimulator:
         return await asyncio.to_thread(self._run_all, list(requests))
 
     async def pnl(self, alpha_id: str) -> list[tuple[date, float]]:
-        series = self._pnl.get(alpha_id)
+        return self._rows(self._pnl.get(alpha_id))
+
+    async def turnover(self, alpha_id: str) -> list[tuple[date, float]]:
+        return self._rows(self._turnover.get(alpha_id))
+
+    async def yearly_stats(self, alpha_id: str) -> list[dict[str, Any]]:
+        """Synthetic yearly stats: the per-year Sharpe the Gym already computes for its own
+        tear sheet (``SimResult.yearly``). No turnover/returns breakdown — the Gym approximates
+        BRAIN's ``yearly-stats`` recordset only as far as the Playground itself needs."""
+        return [{"year": y, "sharpe": s} for y, s in sorted(self._yearly.get(alpha_id, {}).items())]
+
+    @staticmethod
+    def _rows(series: pd.Series | None) -> list[tuple[date, float]]:
         if series is None:
             return []
         days = pd.DatetimeIndex(series.index)
@@ -135,5 +149,7 @@ class GymSimulator:
             log.debug("gym simulation failed", expression=request.regular, error=str(exc))
             return SimOutcome(request, None, None, error=str(exc))
         self._pnl[aid] = result.pnl
+        self._turnover[aid] = result.turnover
+        self._yearly[aid] = result.yearly
         alpha: dict[str, Any] = {**as_brain_alpha(result), "id": aid}
         return SimOutcome(request, aid, alpha)

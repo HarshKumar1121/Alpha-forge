@@ -12,6 +12,14 @@ export default defineConfig({
   resolve: {
     alias: { '@': path.resolve(import.meta.dirname, 'src') },
   },
+  // forge: /forge/analytics is a lazy route that deep-imports four echarts subpaths and
+  // mounts six EChart instances on first render. Left undeclared, Vite only discovers them
+  // on first navigation to that route, mid-session — which can race into a
+  // re-optimize/stale-module-URL reload loop ("Outdated Optimize Dep" 504s). Declaring them
+  // up front makes cold start pre-bundle them instead.
+  optimizeDeps: {
+    include: ['echarts/core', 'echarts/charts', 'echarts/components', 'echarts/renderers'],
+  },
   // Built into the backend package, which serves it: `uvx alpha-harness` needs no Node.
   build: {
     outDir: path.resolve(import.meta.dirname, '../backend/src/alpha_harness/web'),

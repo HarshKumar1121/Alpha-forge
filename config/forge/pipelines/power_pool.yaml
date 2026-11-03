@@ -1,0 +1,12 @@
+# Deliberately simple alphas (few operators, few fields) aimed at the Power Pool.
+name: power_pool
+alpha_type: power_pool
+lane: power_pool
+template_complexity: [simple]
+correlation:
+  kind: power-pool     # BrainEndpoints.correlations(alpha_id, kind="power-pool")
+  top_n: 5
+check:
+  top_n: 10
+budget:
+  default: 30

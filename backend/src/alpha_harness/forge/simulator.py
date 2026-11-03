@@ -93,6 +93,14 @@ class Simulator(Protocol):
         """Daily PnL rows, oldest first. Empty when the simulator has none for this id."""
         ...
 
+    async def turnover(self, alpha_id: str) -> list[tuple[date, float]]:
+        """Daily turnover rows, oldest first. Empty when the simulator has none for this id."""
+        ...
+
+    async def yearly_stats(self, alpha_id: str) -> list[dict[str, Any]]:
+        """BRAIN's ``yearly-stats`` recordset rows, oldest first. Empty when none exist."""
+        ...
+
 
 @runtime_checkable
 class FieldSource(Protocol):

@@ -1,6 +1,8 @@
 import {
+  ActivityIcon, // forge: Analytics' icon
   BookmarkIcon, // forge: Field Sets' icon
   ChartPieIcon,
+  CheckSquareIcon, // forge: Submittable Board's icon
   DatabaseIcon,
   DumbbellIcon, // forge: Gym Playground's icon
   FlaskConicalIcon,
@@ -12,6 +14,7 @@ import {
   LibraryIcon, // forge: Template Library's icon
   ListChecksIcon,
   PencilIcon, // forge: My Templates' icon
+  PlayIcon, // forge: Pipelines' icon
   RefreshCwIcon,
   SparklesIcon,
   TriangleIcon,
@@ -120,10 +123,28 @@ export const NAV = [
     icon: HammerIcon,
   },
   {
+    to: '/forge/pipelines',
+    group: 'Forge',
+    label: 'Pipelines',
+    icon: PlayIcon,
+  },
+  {
+    to: '/forge/board',
+    group: 'Forge',
+    label: 'Submittable Board',
+    icon: CheckSquareIcon,
+  },
+  {
     to: '/forge/fieldsets',
     group: 'Forge',
     label: 'Field Sets',
     icon: BookmarkIcon,
+  },
+  {
+    to: '/forge/analytics',
+    group: 'Forge',
+    label: 'Analytics',
+    icon: ActivityIcon,
   },
   {
     to: '/tasks',
