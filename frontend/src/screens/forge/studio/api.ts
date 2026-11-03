@@ -16,6 +16,7 @@ export type MyTemplate = Schemas['MyTemplate']
 export type MyTemplateVersion = Schemas['MyTemplateVersion']
 export type LintResponse = Schemas['LintResponse']
 export type ExportedTemplate = Schemas['ExportedTemplate']
+export type NuggetSummaryOut = Schemas['NuggetSummaryOut']
 
 const B = '/api/forge/studio'
 
@@ -25,6 +26,7 @@ export const studio = {
     expression: string
     templateId?: string | undefined
     fieldSetId?: number | undefined
+    nuggetId?: string | undefined
   }) => http.post<DescriptionDraft>(`${B}/description/draft`, body),
   saveDescription: (body: {
     expression: string

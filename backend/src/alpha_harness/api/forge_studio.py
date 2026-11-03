@@ -20,6 +20,9 @@ from ..catalog.queries import Tuple4
 from ..forge.alpha_types import load_all
 from ..forge.data.fieldsets import resolve, scope_of
 from ..forge.data.models import FieldSet
+from ..forge.data.scope import Scope as ScopeModel
+from ..forge.nuggets.models import Nugget
+from ..forge.nuggets.service import resolved_treatment
 from ..forge.research.binding import (
     MAX_RENDERED,
     ScopeData,
@@ -76,10 +79,21 @@ class RenderedAlpha(Out):
 
 class PreviewRequest(Out):
     template_id: str = Field(min_length=1, max_length=80)
-    field_set_id: int
+    #: Exactly one of these names what to fill the template's field slots from.
+    field_set_id: int | None = None
+    #: A Data Nugget instead of a field set — its fields fill the slots, each wrapped in its
+    #: own resolved data-treatment (override or default), not the template's own cleaning.
+    nugget_id: str | None = None
     #: Slot name -> a pinned value (a field id, a window, a group), or a list of them.
     choices: dict[str, Any] = Field(default_factory=dict[str, Any])
     limit: int = Field(default=50, ge=1, le=MAX_RENDERED)
+
+
+class NuggetSummaryOut(Out):
+    nugget_id: str
+    name: str
+    rationale: str
+    claim: str
 
 
 class PreviewResponse(Out):
@@ -98,6 +112,9 @@ class PreviewResponse(Out):
     missing_fields: list[str]
     #: How many of the rendered alphas fit each type.
     fit_counts: dict[str, int]
+    #: Set when bound to a Data Nugget rather than a field set — its rationale and claim, for
+    #: the Studio to show above the rendered alphas.
+    nugget: NuggetSummaryOut | None = None
 
 
 class DescriptionDraft(Out):
@@ -112,6 +129,10 @@ class DescriptionDraft(Out):
     #: True when this is a saved description rather than a fresh draft.
     saved: bool
     edited: bool
+    #: The Data Nugget's own rationale and claim, shown above the expression, when the alpha
+    #: was bound to one — never BRAIN's description text, which stays the three parts above.
+    nugget_rationale: str | None = None
+    nugget_claim: str | None = None
 
 
 class Deleted(Out):
@@ -128,6 +149,9 @@ class DraftRequest(Out):
     expression: str = Field(min_length=1, max_length=8000)
     template_id: str | None = None
     field_set_id: int | None = None
+    #: The Data Nugget this alpha was rendered from, if any — its rationale and claim are
+    #: echoed back on the draft for the Studio to show above the expression.
+    nugget_id: str | None = None
 
 
 class SaveDescriptionRequest(Out):
@@ -152,6 +176,20 @@ async def _field_set(state: State, field_set_id: int) -> FieldSet:
     if row is None:
         raise refuse(404, "not_found", f"There is no field set {field_set_id}.")
     return row
+
+
+async def _nugget(state: State, nugget_id: str) -> Nugget:
+    async with state.db.session() as session:
+        row = (await session.scalars(select(Nugget).where(Nugget.nugget_id == nugget_id))).first()
+    if row is None:
+        raise refuse(404, "not_found", f"No nugget {nugget_id!r}.")
+    return row
+
+
+def _nugget_summary(row: Nugget) -> NuggetSummaryOut:
+    return NuggetSummaryOut(
+        nugget_id=row.nugget_id, name=row.name, rationale=row.rationale, claim=row.claim
+    )
 
 
 async def _template(state: State, template_id: str) -> Template:
@@ -185,7 +223,7 @@ async def _scope_data(state: State, scope: Tuple4, t: Template) -> ScopeData:
     return ScopeData(catalog=catalog, groups=available_groups(catalog))
 
 
-def _saved(row: AlphaDescription) -> DescriptionDraft:
+def _saved(row: AlphaDescription, nugget: Nugget | None = None) -> DescriptionDraft:
     """A stored description as the editor reads it, re-composed so the text is never stale."""
     text = compose(row.idea, row.data_rationale, row.operator_rationale)
     return DescriptionDraft(
@@ -197,6 +235,8 @@ def _saved(row: AlphaDescription) -> DescriptionDraft:
         thin=short(text),
         saved=True,
         edited=row.edited,
+        nugget_rationale=nugget.rationale if nugget else None,
+        nugget_claim=nugget.claim if nugget else None,
     )
 
 
@@ -224,15 +264,42 @@ async def _operators(state: State) -> dict[str, dict[str, Any]]:
 
 @router.post("/preview")
 async def preview(body: PreviewRequest, state: State) -> PreviewResponse:
-    """Every alpha a template renders on a field set, and what each one qualifies for."""
-    row = await _field_set(state, body.field_set_id)
+    """Every alpha a template renders on a field set or a Data Nugget, and what each one
+    qualifies for."""
+    if (body.field_set_id is None) == (body.nugget_id is None):
+        raise refuse(
+            422,
+            "bad_source",
+            "Give exactly one of fieldSetId or nuggetId to fill the template's field slots.",
+        )
     t = await _template(state, body.template_id)
-    scope = scope_of(row).to_tuple4()
 
-    resolved = await resolve(row, state.queries)
-    set_rows = resolved["fields"]
+    nugget_out: NuggetSummaryOut | None = None
+    treatments: dict[str, str] | None = None
+    if body.field_set_id is not None:
+        row = await _field_set(state, body.field_set_id)
+        scope = scope_of(row).to_tuple4()
+        resolved = await resolve(row, state.queries)
+        set_rows = resolved["fields"]
+        missing_fields = resolved["missing"]
+        field_set_label = row.name
+    else:
+        nugget = await _nugget(state, body.nugget_id)  # type: ignore[arg-type]
+        scope = ScopeModel(
+            instrument_type=nugget.instrument_type,
+            region=nugget.region,
+            delay=nugget.delay,
+            universe=nugget.universe,
+        ).to_tuple4()
+        set_rows = await state.queries.fields_by_id(scope, list(nugget.field_ids))
+        found = {str(r["field_id"]) for r in set_rows}
+        missing_fields = [f for f in nugget.field_ids if f not in found]
+        field_set_label = f"Nugget: {nugget.name}"
+        treatments = {f: resolved_treatment(f, nugget.data_treatment) for f in nugget.field_ids}
+        nugget_out = _nugget_summary(nugget)
+
     scope_data = await _scope_data(state, scope, t)
-    # The field set's own fields join the market's grouping fields and the template's needs.
+    # The field source's own fields join the market's grouping fields and the template's needs.
     catalog = {**scope_catalog(set_rows), **scope_data.catalog}
     scope_data = ScopeData(catalog=catalog, groups=available_groups(catalog))
 
@@ -246,6 +313,7 @@ async def preview(body: PreviewRequest, state: State) -> PreviewResponse:
             scope_data,
             choices=body.choices or None,
             limit=body.limit,
+            treatments=treatments,
         )
         rendered: list[RenderedAlpha] = []
         counts: dict[str, int] = dict.fromkeys(types, 0)
@@ -277,15 +345,16 @@ async def preview(body: PreviewRequest, state: State) -> PreviewResponse:
             )
         return PreviewResponse(
             template_id=t.id,
-            field_set=row.name,
+            field_set=field_set_label,
             scope=scope.label,
             rendered=rendered,
             total=result.total,
             blockers=list(result.blockers),
             notes=list(result.notes),
             offered=result.offered,
-            missing_fields=list(resolved["missing"]),
+            missing_fields=list(missing_fields),
             fit_counts=counts,
+            nugget=nugget_out,
         )
 
     # Expanding and linting a couple of hundred alphas is pure CPU; keep it off the loop.
@@ -299,8 +368,10 @@ async def description_draft(body: DraftRequest, state: State) -> DescriptionDraf
     Returns the saved description instead when one exists, so opening an alpha a second time
     shows what was written rather than overwriting it with a fresh draft.
     """
+    nugget = await _nugget(state, body.nugget_id) if body.nugget_id else None
+
     if (stored := await _stored_description(state, body.expression)) is not None:
-        return _saved(stored)
+        return _saved(stored, nugget)
 
     t = await _template(state, body.template_id) if body.template_id else None
     fields: dict[str, dict[str, Any]] = {}
@@ -308,6 +379,15 @@ async def description_draft(body: DraftRequest, state: State) -> DescriptionDraf
         row = await _field_set(state, body.field_set_id)
         resolved = await resolve(row, state.queries)
         fields = scope_catalog(resolved["fields"])
+    elif nugget is not None:
+        scope = ScopeModel(
+            instrument_type=nugget.instrument_type,
+            region=nugget.region,
+            delay=nugget.delay,
+            universe=nugget.universe,
+        ).to_tuple4()
+        rows = await state.queries.fields_by_id(scope, list(nugget.field_ids))
+        fields = scope_catalog(rows)
     operators = await _operators(state)
     made = draft(t, body.expression, fields=fields, operators=operators)
     return DescriptionDraft(
@@ -319,6 +399,8 @@ async def description_draft(body: DraftRequest, state: State) -> DescriptionDraf
         thin=list(made.thin),
         saved=False,
         edited=False,
+        nugget_rationale=nugget.rationale if nugget else None,
+        nugget_claim=nugget.claim if nugget else None,
     )
 
 

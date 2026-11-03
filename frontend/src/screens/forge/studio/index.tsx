@@ -12,6 +12,7 @@ import { Link, useNavigate, useSearch } from '@tanstack/react-router'
 import { useState } from 'react'
 import { DASH, fmt } from '@/lib/format'
 import { fieldSets } from '@/screens/forge/data/api'
+import { nuggets } from '@/screens/forge/nuggets/api'
 import { forgeTemplates } from '@/screens/forge/templates/api'
 import {
   Badge,
@@ -25,11 +26,14 @@ import {
   Page,
   PageHeader,
   Panel,
+  Segmented,
   Skeleton,
 } from '@/ui/kit'
 import { Select, Sheet } from '@/ui/overlay'
-import { type RenderedAlpha, studio } from './api'
+import { type NuggetSummaryOut, type RenderedAlpha, studio } from './api'
 import { DescriptionPanel } from './description'
+
+type Source = 'fieldSet' | 'nugget'
 
 export function TemplateStudioScreen() {
   const search = useSearch({ from: '/forge/studio' })
@@ -37,6 +41,7 @@ export function TemplateStudioScreen() {
   const [openIndex, setOpenIndex] = useState<number | null>(null)
 
   const sets = useQuery({ queryKey: ['forge-fieldsets'], queryFn: fieldSets.list })
+  const myNuggets = useQuery({ queryKey: ['forge-nuggets', 'list'], queryFn: () => nuggets.list() })
   const templates = useQuery({
     queryKey: ['forge-templates', 'list'],
     queryFn: forgeTemplates.list,
@@ -44,24 +49,41 @@ export function TemplateStudioScreen() {
   })
 
   const templateId = search.t ?? templates.data?.templates[0]?.id
-  const fieldSetId = search.fs ?? sets.data?.[0]?.id
-  const set = (templateId ?? '') && (fieldSetId ?? 0) ? { templateId, fieldSetId } : null
+  // A nugget id in the URL wins: it is the more specific choice when both could resolve.
+  const source: Source = search.n ? 'nugget' : 'fieldSet'
+  const fieldSetId = source === 'fieldSet' ? (search.fs ?? sets.data?.[0]?.id) : undefined
+  const nuggetId = source === 'nugget' ? search.n : undefined
+  const canRender =
+    (templateId ?? '') && (source === 'fieldSet' ? (fieldSetId ?? 0) : (nuggetId ?? ''))
 
   const preview = useQuery({
-    queryKey: ['forge-studio', 'preview', templateId, fieldSetId],
+    queryKey: ['forge-studio', 'preview', templateId, fieldSetId, nuggetId],
     queryFn: () =>
       studio.preview({
         templateId: templateId as string,
-        fieldSetId: fieldSetId as number,
+        fieldSetId: fieldSetId ?? null,
+        nuggetId: nuggetId ?? null,
         limit: 50,
       }),
-    enabled: Boolean(set),
+    enabled: Boolean(canRender),
   })
   const p = preview.data
 
-  const choose = (change: { t?: string; fs?: number }) => {
+  const choose = (change: { t?: string; fs?: number; n?: string }) => {
     setOpenIndex(null)
     void navigate({ to: '/forge/studio', search: { ...search, ...change } })
+  }
+
+  const chooseSource = (next: Source) => {
+    setOpenIndex(null)
+    if (next === 'fieldSet') {
+      void navigate({ to: '/forge/studio', search: { ...search, n: undefined } })
+    } else {
+      void navigate({
+        to: '/forge/studio',
+        search: { ...search, n: myNuggets.data?.[0]?.nuggetId, fs: undefined },
+      })
+    }
   }
 
   return (
@@ -87,16 +109,42 @@ export function TemplateStudioScreen() {
             onChange={(value) => choose({ t: value })}
           />
         </Field>
-        <Field label="Field set" hint="Its market decides which fields and groups exist.">
-          <Select
-            label="Field set"
-            items={(sets.data ?? []).map((s) => ({
-              value: String(s.id),
-              label: `${s.name} — ${s.scope.region} D${s.scope.delay} ${s.scope.universe}`,
-            }))}
-            value={fieldSetId == null ? null : String(fieldSetId)}
-            onChange={(value) => choose({ fs: Number(value) })}
-          />
+        <Field
+          label="Field source"
+          hint="A field set's raw fields, or a Data Nugget's — each with its own treatment."
+        >
+          <div className="flex flex-col gap-2">
+            <Segmented
+              label="Field source"
+              value={source}
+              onChange={chooseSource}
+              items={[
+                { value: 'fieldSet', label: 'Field set' },
+                { value: 'nugget', label: 'Nugget' },
+              ]}
+            />
+            {source === 'fieldSet' ? (
+              <Select
+                label="Field set"
+                items={(sets.data ?? []).map((s) => ({
+                  value: String(s.id),
+                  label: `${s.name} — ${s.scope.region} D${s.scope.delay} ${s.scope.universe}`,
+                }))}
+                value={fieldSetId == null ? null : String(fieldSetId)}
+                onChange={(value) => choose({ fs: Number(value) })}
+              />
+            ) : (
+              <Select
+                label="Nugget"
+                items={(myNuggets.data ?? []).map((n) => ({
+                  value: n.nuggetId,
+                  label: `${n.name} — ${n.scope.region} D${n.scope.delay} ${n.scope.universe}`,
+                }))}
+                value={nuggetId ?? null}
+                onChange={(value) => choose({ n: value })}
+              />
+            )}
+          </div>
         </Field>
         {p && (
           <div className="flex flex-wrap items-end gap-4">
@@ -124,7 +172,9 @@ export function TemplateStudioScreen() {
       )}
 
       {preview.isError && <ErrorNotice error={preview.error} title="Could not render this" />}
-      {preview.isPending && set && <Skeleton className="h-64" label="Rendering alphas" />}
+      {preview.isPending && canRender && <Skeleton className="h-64" label="Rendering alphas" />}
+
+      {p?.nugget && <NuggetCard nugget={p.nugget} />}
 
       {p && p.blockers.length > 0 && (
         <Notice tone="warn" title="This template cannot run on this field set">
@@ -160,10 +210,27 @@ export function TemplateStudioScreen() {
         alpha={openIndex == null ? null : (p?.rendered[openIndex] ?? null)}
         templateId={templateId}
         fieldSetId={fieldSetId}
+        nuggetId={nuggetId}
+        nugget={p?.nugget ?? null}
         scope={p?.scope ?? ''}
         onClose={() => setOpenIndex(null)}
       />
     </Page>
+  )
+}
+
+function NuggetCard({ nugget }: { nugget: NuggetSummaryOut }) {
+  return (
+    <Notice tone="info" title={`Bound to the nugget "${nugget.name}"`}>
+      <p className="text-body-compact text-ink">
+        <span className="font-medium">Rationale: </span>
+        {nugget.rationale}
+      </p>
+      <p className="mt-1 text-body-compact text-ink">
+        <span className="font-medium">Claim: </span>
+        {nugget.claim}
+      </p>
+    </Notice>
   )
 }
 
@@ -243,12 +310,16 @@ function AlphaSheet({
   alpha,
   templateId,
   fieldSetId,
+  nuggetId,
+  nugget,
   scope,
   onClose,
 }: {
   alpha: RenderedAlpha | null
   templateId: string | undefined
   fieldSetId: number | undefined
+  nuggetId: string | undefined
+  nugget: NuggetSummaryOut | null | undefined
   scope: string
   onClose: () => void
 }) {
@@ -261,6 +332,7 @@ function AlphaSheet({
     >
       {alpha && (
         <div className="flex flex-col gap-4">
+          {nugget && <NuggetCard nugget={nugget} />}
           <code className="num block rounded-md bg-canvas p-3 text-body-compact break-all text-ink">
             {alpha.expression}
           </code>
@@ -337,6 +409,7 @@ function AlphaSheet({
               expression={alpha.expression}
               templateId={templateId}
               fieldSetId={fieldSetId}
+              nuggetId={nuggetId}
               scope={scope}
             />
           )}

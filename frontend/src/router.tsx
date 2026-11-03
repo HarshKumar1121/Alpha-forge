@@ -160,10 +160,11 @@ const forgeTemplates = createRoute({
 const forgeStudio = createRoute({
   getParentRoute: () => forge,
   path: 'studio',
-  // Which template, on which field set: the pair is the screen's whole state.
+  // Which template, on which field set or nugget: the whole of the screen's state.
   validateSearch: (search: Record<string, unknown>) => ({
     t: typeof search['t'] === 'string' ? search['t'] : undefined,
     fs: typeof search['fs'] === 'number' ? search['fs'] : undefined,
+    n: typeof search['n'] === 'string' ? search['n'] : undefined,
   }),
   component: lazyRouteComponent(() => import('@/screens/forge/studio'), 'TemplateStudioScreen'),
 })
@@ -199,6 +200,11 @@ const forgeFieldSets = createRoute({
   getParentRoute: () => forge,
   path: 'fieldsets',
   component: lazyRouteComponent(() => import('@/screens/forge/fieldsets'), 'FieldSetsScreen'),
+})
+const forgeNuggets = createRoute({
+  getParentRoute: () => forge,
+  path: 'nuggets',
+  component: lazyRouteComponent(() => import('@/screens/forge/nuggets'), 'NuggetsScreen'),
 })
 const forgeAnalytics = createRoute({
   getParentRoute: () => forge,
@@ -321,6 +327,7 @@ export const routeTree = root.addChildren([
     forgeBoard,
     forgeWorkshop,
     forgeFieldSets,
+    forgeNuggets,
     forgeDataset,
     forgeAnalytics,
   ]), // forge: Forge section

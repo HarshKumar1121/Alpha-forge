@@ -47,6 +47,7 @@ const ROUTES = [
   '/forge/board',
   '/forge/workshop',
   '/forge/fieldsets',
+  '/forge/nuggets',
   '/forge/datasets/analyst4',
   '/forge/analytics',
   '/forge/analytics?alpha=ALPHA1',

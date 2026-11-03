@@ -58,6 +58,27 @@ async def preview(client: httpx2.AsyncClient, **body: Any) -> dict[str, Any]:
     return res.json()
 
 
+async def make_nugget(
+    client: httpx2.AsyncClient,
+    fields: list[str] = ANALYST[:2],
+    *,
+    data_treatment: dict[str, str] | None = None,
+    name: str = "EPS and revenue co-move",
+) -> dict[str, Any]:
+    body = {
+        "name": name,
+        "scope": USA,
+        "fieldIds": fields,
+        "dataTreatment": data_treatment or {},
+        "rationale": "Both are analyst consensus measures for the same company.",
+        "claim": "They predict returns together; wrong if they diverge persistently.",
+        "tags": ["analyst"],
+    }
+    res = await client.post("/api/forge/nuggets", json=body, headers=CLIENT)
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
 # --- binding a template to a field set ----------------------------------------
 
 
@@ -132,6 +153,100 @@ async def test_fields_the_market_lacks_are_reported(client: httpx2.AsyncClient) 
     body = await preview(client, templateId="analyst_revision", fieldSetId=field_set)
     assert body["missingFields"] == ["not_synced_here"]
     assert body["rendered"]
+
+
+# --- binding a template to a Data Nugget --------------------------------------
+
+
+async def test_a_template_binds_to_a_nugget_instead_of_a_field_set(
+    client: httpx2.AsyncClient,
+) -> None:
+    nugget = await make_nugget(client)
+    body = await preview(client, templateId="analyst_revision", nuggetId=nugget["nuggetId"])
+    assert body["blockers"] == []
+    assert body["fieldSet"] == f"Nugget: {nugget['name']}"
+    assert body["nugget"] == {
+        "nuggetId": nugget["nuggetId"],
+        "name": nugget["name"],
+        "rationale": nugget["rationale"],
+        "claim": nugget["claim"],
+    }
+    assert body["rendered"]
+    for alpha in body["rendered"]:
+        assert any(f in alpha["expression"] for f in ANALYST[:2])
+
+
+async def test_a_nuggets_resolved_treatment_wraps_the_slot_not_the_default_clean(
+    client: httpx2.AsyncClient,
+) -> None:
+    override = "ts_rank(anl4_eps_mean, 120)"
+    nugget = await make_nugget(client, data_treatment={"anl4_eps_mean": override})
+    body = await preview(
+        client,
+        templateId="analyst_revision",
+        nuggetId=nugget["nuggetId"],
+        choices={"X": "anl4_eps_mean"},
+    )
+    assert body["rendered"]
+    for alpha in body["rendered"]:
+        assert override in alpha["expression"]
+        assert "ts_backfill(anl4_eps_mean" not in alpha["expression"]
+
+
+async def test_a_nugget_field_without_an_override_still_gets_the_default_treatment(
+    client: httpx2.AsyncClient,
+) -> None:
+    override = "ts_rank(anl4_eps_mean, 120)"
+    nugget = await make_nugget(client, data_treatment={"anl4_eps_mean": override})
+    body = await preview(client, templateId="analyst_revision", nuggetId=nugget["nuggetId"])
+    assert body["rendered"]
+    exprs = [a["expression"] for a in body["rendered"]]
+    assert any(override in e for e in exprs)
+    assert any("ts_backfill(anl4_rev_mean, 63)" in e for e in exprs)
+
+
+async def test_preview_refuses_without_exactly_one_source(client: httpx2.AsyncClient) -> None:
+    neither = await client.post(
+        "/api/forge/studio/preview", json={"templateId": "analyst_revision"}, headers=CLIENT
+    )
+    assert neither.status_code == 422
+    assert neither.json()["detail"]["code"] == "bad_source"
+
+    nugget = await make_nugget(client)
+    field_set = await make_field_set(client)
+    both = await client.post(
+        "/api/forge/studio/preview",
+        json={
+            "templateId": "analyst_revision",
+            "fieldSetId": field_set,
+            "nuggetId": nugget["nuggetId"],
+        },
+        headers=CLIENT,
+    )
+    assert both.status_code == 422
+    assert both.json()["detail"]["code"] == "bad_source"
+
+
+async def test_a_description_draft_shows_the_nuggets_rationale_and_claim(
+    client: httpx2.AsyncClient,
+) -> None:
+    nugget = await make_nugget(client)
+    body = await preview(client, templateId="analyst_revision", nuggetId=nugget["nuggetId"])
+    expression = body["rendered"][0]["expression"]
+
+    res = await client.post(
+        "/api/forge/studio/description/draft",
+        json={
+            "expression": expression,
+            "templateId": "analyst_revision",
+            "nuggetId": nugget["nuggetId"],
+        },
+        headers=CLIENT,
+    )
+    assert res.status_code == 200, res.text
+    draft = res.json()
+    assert draft["nuggetRationale"] == nugget["rationale"]
+    assert draft["nuggetClaim"] == nugget["claim"]
 
 
 # --- eligibility, per rendered alpha ------------------------------------------

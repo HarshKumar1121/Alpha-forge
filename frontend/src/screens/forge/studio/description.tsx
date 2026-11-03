@@ -18,17 +18,19 @@ export function DescriptionPanel({
   expression,
   templateId,
   fieldSetId,
+  nuggetId,
   scope,
 }: {
   expression: string
   templateId: string | undefined
   fieldSetId: number | undefined
+  nuggetId: string | undefined
   scope: string
 }) {
   const client = useQueryClient()
   const draft = useQuery({
-    queryKey: ['forge-studio', 'description', expression],
-    queryFn: () => studio.draft({ expression, templateId, fieldSetId }),
+    queryKey: ['forge-studio', 'description', expression, nuggetId],
+    queryFn: () => studio.draft({ expression, templateId, fieldSetId, nuggetId }),
   })
 
   const [parts, setParts] = useState<Pick<
@@ -95,6 +97,22 @@ export function DescriptionPanel({
       {draft.isPending && <Skeleton className="h-40" label="Drafting" />}
       {parts && (
         <>
+          {(draft.data?.nuggetRationale || draft.data?.nuggetClaim) && (
+            <Notice tone="info" title="From the nugget this alpha was bound to">
+              {draft.data.nuggetRationale && (
+                <p className="text-body-compact text-ink">
+                  <span className="font-medium">Rationale: </span>
+                  {draft.data.nuggetRationale}
+                </p>
+              )}
+              {draft.data.nuggetClaim && (
+                <p className="mt-1 text-body-compact text-ink">
+                  <span className="font-medium">Claim: </span>
+                  {draft.data.nuggetClaim}
+                </p>
+              )}
+            </Notice>
+          )}
           <Field label="Idea" hint="What the alpha bets on, in plain words.">
             <Textarea
               rows={3}

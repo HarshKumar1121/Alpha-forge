@@ -405,12 +405,21 @@ def render(
     *,
     sign: int = 1,
     vector: Collection[str] = (),
+    treatments: Mapping[str, str] | None = None,
 ) -> str:
     """Fill a template. ``fields`` maps field slot -> field id; ``vector`` names the field ids
-    that are VECTOR fields; a negative ``sign`` flips the whole signal."""
+    that are VECTOR fields; a negative ``sign`` flips the whole signal.
+
+    ``treatments`` (field id -> an already-cleaned expression, e.g. a Data Nugget's
+    :func:`~..nuggets.service.resolved_treatment`) overrides the engine's own :func:`clean` for
+    that field — a slot bound to a nugget uses the nugget's chosen treatment, not the default.
+    """
     values: dict[str, str] = {k: str(v) for k, v in params.items()}
     for name, field in fields.items():
         slot = t.field_slot(name)
+        if treatments is not None and field in treatments:
+            values[name] = treatments[field]
+            continue
         is_vector = slot.type == "VECTOR" or field in vector
         values[name] = clean(field, vector=is_vector, aggregate=slot.aggregate)
     e = render_template(t.expr, values)
@@ -677,6 +686,7 @@ def expand_filled(
     choices: Mapping[str, Choice] | None = None,
     *,
     require_archetype: bool = True,
+    treatments: Mapping[str, str] | None = None,
 ) -> list[Filled]:
     """Every alpha the template yields over ``fields``, each with its slot choices.
 
@@ -684,7 +694,8 @@ def expand_filled(
     window or group slot pinned to one value or a subset of its allowed values. A choice that
     breaks a slot rule raises :class:`ConstraintError` saying which rule — never a silent
     empty list, because "no candidates" and "you asked for something illegal" are different
-    answers.
+    answers. ``treatments`` overrides the default cleaning for the fields it names — see
+    :func:`render`.
     """
     pinned, params = _apply_choices(t, fields, choices or {}, require_archetype=require_archetype)
     vector = {f.id for f in fields if f.type == "VECTOR"}
@@ -692,7 +703,9 @@ def expand_filled(
     combos = [dict(zip(keys, c, strict=True)) for c in itertools.product(*params.values())]
     return [
         Filled(
-            expression=render(t, {k: f.id for k, f in b.items()}, p, vector=vector),
+            expression=render(
+                t, {k: f.id for k, f in b.items()}, p, vector=vector, treatments=treatments
+            ),
             fields={k: f.id for k, f in b.items()},
             params=dict(p),
         )

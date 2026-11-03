@@ -1315,6 +1315,157 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/forge/nuggets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Nuggets
+         * @description Every nugget, newest first; narrowed to a scope when one is given.
+         */
+        get: operations["list_nuggets_api_forge_nuggets_get"];
+        put?: never;
+        /**
+         * Create Nugget
+         * @description Save a new nugget. Refused if a pair of its fields looks like one measure twice, unless
+         *     ``allow_duplicates`` says to save it anyway.
+         */
+        post: operations["create_nugget_api_forge_nuggets_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/nuggets/field-search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Field Search
+         * @description Data Explorer fields for building a nugget, each with its crowding and a dataset
+         *     heavy-use warning; ``low_crowding_only`` narrows to fields under the threshold.
+         */
+        post: operations["field_search_api_forge_nuggets_field_search_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/nuggets/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Profile Fields
+         * @description What each field looks like, read without simulating: type, cadence, category.
+         */
+        post: operations["profile_fields_api_forge_nuggets_profile_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/nuggets/suggest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Suggest
+         * @description Which pairs among these fields are structurally sane to write a nugget rationale for.
+         *
+         *     Advisory only: a valid pairing still needs the user's own rationale and claim, and an
+         *     invalid one can still be saved with ``allow_duplicates`` if the rejection is wrong.
+         */
+        post: operations["suggest_api_forge_nuggets_suggest_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/nuggets/{nugget_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Nugget Detail */
+        get: operations["nugget_detail_api_forge_nuggets__nugget_id__get"];
+        /**
+         * Update Nugget
+         * @description Save an edit as a new version. The scope and nugget id do not change here — clone it
+         *     (save as a new nugget) to move it to a different market.
+         */
+        put: operations["update_nugget_api_forge_nuggets__nugget_id__put"];
+        post?: never;
+        /** Delete Nugget */
+        delete: operations["delete_nugget_api_forge_nuggets__nugget_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/nuggets/{nugget_id}/correlation/{alpha_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Nugget Correlation
+         * @description The two correlation stages for an alpha this nugget produced: the free local estimate
+         *     against your synced pool, and — only when ``fetch_prod`` asks for it — BRAIN's own
+         *     verdict. The two are never averaged into one figure.
+         */
+        get: operations["nugget_correlation_api_forge_nuggets__nugget_id__correlation__alpha_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/nuggets/{nugget_id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Nugget Versions */
+        get: operations["nugget_versions_api_forge_nuggets__nugget_id__versions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/forge/pipelines": {
         parameters: {
             query?: never;
@@ -1668,7 +1819,8 @@ export interface paths {
         put?: never;
         /**
          * Preview
-         * @description Every alpha a template renders on a field set, and what each one qualifies for.
+         * @description Every alpha a template renders on a field set or a Data Nugget, and what each one
+         *     qualifies for.
          */
         post: operations["preview_api_forge_studio_preview_post"];
         delete?: never;
@@ -4199,6 +4351,17 @@ export interface components {
             /** Over */
             over: boolean;
         };
+        /** CorrelationStageOut */
+        CorrelationStageOut: {
+            /** Against */
+            against: string | null;
+            /** Caption */
+            caption: string;
+            /** Label */
+            label: string;
+            /** Value */
+            value: number | null;
+        };
         /** CoverageBin */
         CoverageBin: {
             /** Fields */
@@ -4398,6 +4561,10 @@ export interface components {
             expression: string;
             /** Idea */
             idea: string;
+            /** Nuggetclaim */
+            nuggetClaim?: string | null;
+            /** Nuggetrationale */
+            nuggetRationale?: string | null;
             /** Operatorrationale */
             operatorRationale: string;
             /** Saved */
@@ -4440,6 +4607,8 @@ export interface components {
             expression: string;
             /** Fieldsetid */
             fieldSetId?: number | null;
+            /** Nuggetid */
+            nuggetId?: string | null;
             /** Templateid */
             templateId?: string | null;
         };
@@ -4794,6 +4963,56 @@ export interface components {
             results: components["schemas"]["DataFieldRow"][];
             /** Total */
             total: number;
+        };
+        /** FieldProfileOut */
+        FieldProfileOut: {
+            /** Cadence */
+            cadence: string;
+            /** Category */
+            category: string;
+            /** Coverage */
+            coverage: number | null;
+            /** Datasetid */
+            datasetId: string | null;
+            /** Datasetname */
+            datasetName: string | null;
+            /** Datecoverage */
+            dateCoverage: number | null;
+            /** Description */
+            description: string | null;
+            /** Fieldid */
+            fieldId: string;
+            /** Fieldtype */
+            fieldType: string;
+            /** Needsaggregation */
+            needsAggregation: boolean;
+        };
+        /** FieldSearchRequest */
+        FieldSearchRequest: {
+            /** Crowdingthreshold */
+            crowdingThreshold?: number | null;
+            filter?: components["schemas"]["FieldFilter"];
+            /**
+             * Lowcrowdingonly
+             * @default false
+             */
+            lowCrowdingOnly: boolean;
+            scope: components["schemas"]["NuggetScope"];
+        };
+        /** FieldSearchRow */
+        FieldSearchRow: {
+            /** Crowding */
+            crowding: number | null;
+            /** Datasetid */
+            datasetId: string | null;
+            /** Datasetwarning */
+            datasetWarning: string | null;
+            /** Description */
+            description: string | null;
+            /** Fieldid */
+            fieldId: string;
+            /** Fieldtype */
+            fieldType: string;
         };
         /** FieldSetDetail */
         FieldSetDetail: {
@@ -5879,6 +6098,154 @@ export interface components {
             /** Trainsharpe */
             trainSharpe: number | null;
         };
+        /** NuggetCorrelationOut */
+        NuggetCorrelationOut: {
+            prodFinal: components["schemas"]["CorrelationStageOut"] | null;
+            selfPrescreen: components["schemas"]["CorrelationStageOut"];
+        };
+        /** NuggetDetail */
+        NuggetDetail: {
+            /** Claim */
+            claim: string;
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /** Datatreatment */
+            dataTreatment: {
+                [key: string]: string;
+            };
+            /** Fieldids */
+            fieldIds: string[];
+            /** Fields */
+            fields: components["schemas"]["FieldProfileOut"][];
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Nuggetid */
+            nuggetId: string;
+            /** Rationale */
+            rationale: string;
+            /** Resolvedtreatment */
+            resolvedTreatment: {
+                [key: string]: string;
+            };
+            scope: components["schemas"]["NuggetScope"];
+            /** Tags */
+            tags: string[];
+            /**
+             * Updatedat
+             * Format: date-time
+             */
+            updatedAt: string;
+            /** Version */
+            version: number;
+        };
+        /** NuggetIn */
+        NuggetIn: {
+            /**
+             * Allowduplicates
+             * @default false
+             */
+            allowDuplicates: boolean;
+            /** Claim */
+            claim: string;
+            /** Datatreatment */
+            dataTreatment?: {
+                [key: string]: string;
+            };
+            /** Fieldids */
+            fieldIds: string[];
+            /** Name */
+            name: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+            /** Rationale */
+            rationale: string;
+            scope: components["schemas"]["NuggetScope"];
+            /** Tags */
+            tags?: string[];
+        };
+        /** NuggetOut */
+        NuggetOut: {
+            /** Claim */
+            claim: string;
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /** Datatreatment */
+            dataTreatment: {
+                [key: string]: string;
+            };
+            /** Fieldids */
+            fieldIds: string[];
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Nuggetid */
+            nuggetId: string;
+            /** Rationale */
+            rationale: string;
+            scope: components["schemas"]["NuggetScope"];
+            /** Tags */
+            tags: string[];
+            /**
+             * Updatedat
+             * Format: date-time
+             */
+            updatedAt: string;
+            /** Version */
+            version: number;
+        };
+        /** NuggetScope */
+        NuggetScope: {
+            /** Delay */
+            delay: number;
+            /**
+             * Instrumenttype
+             * @default EQUITY
+             */
+            instrumentType: string;
+            /** Region */
+            region: string;
+            /** Universe */
+            universe: string;
+        };
+        /** NuggetSummaryOut */
+        NuggetSummaryOut: {
+            /** Claim */
+            claim: string;
+            /** Name */
+            name: string;
+            /** Nuggetid */
+            nuggetId: string;
+            /** Rationale */
+            rationale: string;
+        };
+        /** NuggetVersionOut */
+        NuggetVersionOut: {
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /** Note */
+            note: string;
+            /** Snapshot */
+            snapshot: {
+                [key: string]: unknown;
+            };
+            /** Version */
+            version: number;
+        };
         /** OfferedModels */
         OfferedModels: {
             /** Error */
@@ -5942,6 +6309,17 @@ export interface components {
              * @enum {string}
              */
             maxTrade: "ON" | "OFF";
+        };
+        /** PairingSuggestionOut */
+        PairingSuggestionOut: {
+            /** Fielda */
+            fieldA: string;
+            /** Fieldb */
+            fieldB: string;
+            /** Reason */
+            reason: string;
+            /** Valid */
+            valid: boolean;
         };
         /** Pause */
         Pause: {
@@ -6464,6 +6842,7 @@ export interface components {
             missingFields: string[];
             /** Notes */
             notes: string[];
+            nugget?: components["schemas"]["NuggetSummaryOut"] | null;
             /** Offered */
             offered: {
                 [key: string]: unknown[];
@@ -6476,6 +6855,19 @@ export interface components {
             templateId: string;
             /** Total */
             total: number;
+        };
+        /** ProfileRequest */
+        ProfileRequest: {
+            /** Fieldids */
+            fieldIds: string[];
+            scope: components["schemas"]["NuggetScope"];
+        };
+        /** ProfileResponse */
+        ProfileResponse: {
+            /** Fields */
+            fields: components["schemas"]["FieldProfileOut"][];
+            /** Missing */
+            missing: string[];
         };
         /** Promote */
         Promote: {
@@ -7654,6 +8046,15 @@ export interface components {
             /** Unvalidated */
             unvalidated: number;
         };
+        /** SuggestResponse */
+        SuggestResponse: {
+            /** Fields */
+            fields: components["schemas"]["FieldProfileOut"][];
+            /** Missing */
+            missing: string[];
+            /** Suggestions */
+            suggestions: components["schemas"]["PairingSuggestionOut"][];
+        };
         /** SuperPlan */
         SuperPlan: {
             /** Combos */
@@ -8746,12 +9147,14 @@ export interface components {
                 [key: string]: unknown;
             };
             /** Fieldsetid */
-            fieldSetId: number;
+            fieldSetId?: number | null;
             /**
              * Limit
              * @default 50
              */
             limit: number;
+            /** Nuggetid */
+            nuggetId?: string | null;
             /** Templateid */
             templateId: string;
         };
@@ -10958,6 +11361,333 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GymTearSheet"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_nuggets_api_forge_nuggets_get: {
+        parameters: {
+            query?: {
+                region?: string | null;
+                universe?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NuggetOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_nugget_api_forge_nuggets_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NuggetIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NuggetOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    field_search_api_forge_nuggets_field_search_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FieldSearchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FieldSearchRow"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    profile_fields_api_forge_nuggets_profile_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    suggest_api_forge_nuggets_suggest_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuggestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    nugget_detail_api_forge_nuggets__nugget_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                nugget_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NuggetDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_nugget_api_forge_nuggets__nugget_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                nugget_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NuggetIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NuggetOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_nugget_api_forge_nuggets__nugget_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                nugget_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Deleted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    nugget_correlation_api_forge_nuggets__nugget_id__correlation__alpha_id__get: {
+        parameters: {
+            query?: {
+                fetch_prod?: boolean;
+                prod_kind?: string;
+            };
+            header?: never;
+            path: {
+                nugget_id: string;
+                alpha_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NuggetCorrelationOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    nugget_versions_api_forge_nuggets__nugget_id__versions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                nugget_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NuggetVersionOut"][];
                 };
             };
             /** @description Validation Error */

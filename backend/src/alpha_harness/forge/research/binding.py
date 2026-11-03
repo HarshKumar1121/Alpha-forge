@@ -152,8 +152,14 @@ def bind(
     *,
     choices: Mapping[str, Any] | None = None,
     limit: int = MAX_RENDERED,
+    treatments: Mapping[str, str] | None = None,
 ) -> Binding:
-    """Render every alpha this template yields on this field set, in this market."""
+    """Render every alpha this template yields on this field set, in this market.
+
+    ``treatments`` (field id -> a resolved data-treatment expression) binds a slot to a Data
+    Nugget's fields instead of the engine's own default cleaning — see
+    :func:`~.templates.render`.
+    """
     blockers: list[str] = []
     notes: list[str] = []
 
@@ -178,7 +184,7 @@ def bind(
     wanted: dict[str, Any] = {k: v for k, v in offered.items() if v}
     wanted.update(choices or {})
     try:
-        filled = expand_filled(t, fields, wanted, require_archetype=False)
+        filled = expand_filled(t, fields, wanted, require_archetype=False, treatments=treatments)
     except ConstraintError as exc:
         return Binding(blockers=(str(exc),), notes=tuple(notes), offered=offered)
 
