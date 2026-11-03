@@ -29,6 +29,13 @@ crowding:
   alpha_count_weight: 0.5         # alphas already built on it: how mined the signal is
   user_count_weight: 0.5          # researchers who used it: how many people compete there
 
+# Data Nugget crowding gate (forge/nuggets/field_search.py): same crowding score, two knobs
+# on how it's used while building a nugget. Not thresholds for what a nugget *is* — only for
+# the field-search filter and the dataset warning, so a caller can always override them.
+nuggets:
+  crowding_threshold: 0.7         # "low crowding only" filter default
+  heavy_dataset_crowding: 0.75    # warn when adding a field from a dataset at least this crowded
+
 families:
   pnl_corr_threshold: 0.6
   pool_collision: 0.7

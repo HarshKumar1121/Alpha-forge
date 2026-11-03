@@ -37,6 +37,7 @@ from .api import (
     forge_data,  # forge: scopes, datasets, crowding; same missing seam
     forge_fieldsets,  # forge: field sets CRUD; same missing seam
     forge_gym,  # forge: Gym Playground route; no router auto-discovery seam exists
+    forge_nuggets,  # forge: Data Nuggets (profile, suggest, CRUD, correlation); same seam
     forge_pipelines,  # forge: Pipelines screen (plan preview, real run); same missing seam
     forge_quota,  # forge: Quota Governor / Today route; same missing seam
     forge_studio,  # forge: Template Studio (binding, eligibility, my templates); same seam
@@ -204,6 +205,7 @@ def create_app() -> FastAPI:
     app.include_router(forge_quota.router)  # forge: Quota Governor (read-only, spends nothing)
     app.include_router(forge_data.router)  # forge: real scopes and data (read-only)
     app.include_router(forge_fieldsets.router)  # forge: field sets (local SQLite only)
+    app.include_router(forge_nuggets.router)  # forge: Data Nuggets (offline except correlation)
     app.include_router(forge_studio.router)  # forge: Template Studio (offline, spends nothing)
     app.include_router(forge_pipelines.router)  # forge: Pipelines (preview free, run spends quota)
     app.include_router(forge_board.router)  # forge: Submittable Board (repairs spend validate lane)

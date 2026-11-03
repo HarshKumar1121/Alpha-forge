@@ -533,6 +533,33 @@ def _semantic_side(tokens: frozenset[str]) -> frozenset[str] | None:
     return None
 
 
+# --- public wrappers, for callers outside the template-slot engine --------------------------
+#
+# Data Nuggets (``forge/nuggets``) reuse this module's one definition of "these words name the
+# same statistic" rather than keeping a second copy that could drift from it — through these
+# three functions, not the private helpers above.
+
+
+def semantic_side_of(field_id: str) -> frozenset[str] | None:
+    """Which half of a known statistic pair (mean/std, estimate/actual, ...) ``field_id``'s
+    words name, or ``None`` when it names neither."""
+    return _semantic_side(_tokens(field_id))
+
+
+def is_semantic_pair(side_a: frozenset[str] | None, side_b: frozenset[str] | None) -> bool:
+    """Whether ``side_a`` and ``side_b`` are the two different halves of one known statistic
+    pair — ``False`` for the same half twice, or for either being ``None``."""
+    if side_a is None or side_b is None or side_a == side_b:
+        return False
+    return any(side_a in pair and side_b in pair for pair in _SEMANTIC_PAIRS)
+
+
+def semantic_stem(field_id: str) -> frozenset[str]:
+    """``field_id``'s word tokens with the statistic words (mean/std/estimate/...) stripped
+    out — what is left should name the same thing for two fields that are really a pair."""
+    return _tokens(field_id) - _SEMANTIC_TOKENS
+
+
 def semantic_problem(
     t: Template, name: str, f: FieldInfo, bound: Mapping[str, FieldInfo]
 ) -> str | None:
