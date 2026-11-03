@@ -41,6 +41,7 @@ from .api import (
     forge_quota,  # forge: Quota Governor / Today route; same missing seam
     forge_studio,  # forge: Template Studio (binding, eligibility, my templates); same seam
     forge_templates,  # forge: Template Library route; same missing seam
+    forge_workshop,  # forge: Hypothesis Workshop (evidence, Court trials); same missing seam
     ga,
     lab_tasks,
     llm,
@@ -208,6 +209,7 @@ def create_app() -> FastAPI:
     app.include_router(forge_board.router)  # forge: Submittable Board (repairs spend validate lane)
     app.include_router(forge_analytics.router)  # forge: tear-sheet analytics (read-only)
     app.include_router(forge_agent.router)  # forge: agent tools/memory (approve route spends)
+    app.include_router(forge_workshop.router)  # forge: Workshop (trial spends validate lane)
     app.include_router(ws.router)
 
     @app.get("/api/health", tags=["meta"])

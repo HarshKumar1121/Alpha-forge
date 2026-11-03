@@ -56,11 +56,11 @@ async def test_hypothesis_and_lesson_round_trip(client: httpx2.AsyncClient) -> N
 
 
 async def test_approving_a_proposal_runs_it_in_the_reserve_lane_not_the_pipelines_own_lane(
-    client: httpx2.AsyncClient,
+    client: httpx2.AsyncClient,  # noqa: F811
     harness: Harness,  # noqa: F811
 ) -> None:
     await make_template(harness)
-    field_set_id = await make_field_set(client, harness)
+    field_set_id = await make_field_set(harness)
 
     proposed = await client.post(
         "/api/forge/agent/proposals",
@@ -109,11 +109,11 @@ async def test_approving_a_proposal_runs_it_in_the_reserve_lane_not_the_pipeline
 
 
 async def test_approving_twice_is_refused(
-    client: httpx2.AsyncClient,
+    client: httpx2.AsyncClient,  # noqa: F811
     harness: Harness,  # noqa: F811
 ) -> None:
     await make_template(harness)
-    field_set_id = await make_field_set(client, harness)
+    field_set_id = await make_field_set(harness)
     proposed = await client.post(
         "/api/forge/agent/proposals",
         json={
@@ -133,11 +133,11 @@ async def test_approving_twice_is_refused(
 
 
 async def test_rejecting_a_proposal_never_runs_it(
-    client: httpx2.AsyncClient,
+    client: httpx2.AsyncClient,  # noqa: F811
     harness: Harness,  # noqa: F811
 ) -> None:
     await make_template(harness)
-    field_set_id = await make_field_set(client, harness)
+    field_set_id = await make_field_set(harness)
     proposed = await client.post(
         "/api/forge/agent/proposals",
         json={

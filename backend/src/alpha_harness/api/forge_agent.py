@@ -15,6 +15,7 @@ from pydantic import Field
 
 from ..forge.agent import store as agent_store
 from ..forge.agent import weekly
+from ..forge.agent.chat import AgentChat, UnknownRoleError
 from ..forge.agent.execution import execute_proposal
 from ..forge.agent.tools import TOOL_SCHEMAS
 from ..schemas import Out
@@ -279,3 +280,96 @@ async def run_weekly_summary(state: State) -> Lesson:
     """Trigger the weekly job by hand (also runs automatically; see ``forge/agent/weekly.py``)."""
     row = await weekly.run_weekly_summary(state.db)
     return _lesson_out(row)
+
+
+# --- the agent panel's chat: every screen, context-aware -----------------------------------
+
+
+class ChatThreadSummary(Out):
+    id: int
+    title: str
+    role: str
+    updated_at: str
+
+
+class ChatMessageOut(Out):
+    id: int
+    role: str
+    text: str
+    meta: dict[str, Any]
+    created_at: str
+
+
+class ChatThreadOut(Out):
+    id: int
+    title: str
+    role: str
+    messages: list[ChatMessageOut]
+
+
+class ChatSay(Out):
+    thread_id: int | None = None
+    text: str = Field(min_length=1)
+    role: str = "researcher"
+    model: str | None = None
+    #: The panel's own context: ``{"screen": "forge/board", "selectedAlphaId": "...", ...}``.
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChatReply(Out):
+    thread_id: int
+    role: str
+    reply: str
+    tool_calls: list[dict[str, Any]]
+    model: str
+    usage: dict[str, int]
+
+
+def _message_out(row: Any) -> ChatMessageOut:
+    return ChatMessageOut(
+        id=row.id,
+        role=row.role,
+        text=row.text,
+        meta=row.meta,
+        created_at=row.created_at.isoformat(),
+    )
+
+
+@router.get("/chat/threads")
+async def list_chat_threads(state: State) -> list[ChatThreadSummary]:
+    rows = await AgentChat(state.db, state.llm).threads()
+    return [
+        ChatThreadSummary(id=t.id, title=t.title, role=t.role, updated_at=t.updated_at.isoformat())
+        for t in rows
+    ]
+
+
+@router.get("/chat/threads/{thread_id}")
+async def get_chat_thread(thread_id: int, state: State) -> ChatThreadOut:
+    found = await AgentChat(state.db, state.llm).thread(thread_id)
+    if found is None:
+        raise refuse(404, "not_found", f"No conversation {thread_id}.")
+    row, messages = found
+    return ChatThreadOut(
+        id=row.id, title=row.title, role=row.role, messages=[_message_out(m) for m in messages]
+    )
+
+
+@router.delete("/chat/threads/{thread_id}", status_code=204)
+async def delete_chat_thread(thread_id: int, state: State) -> None:
+    await AgentChat(state.db, state.llm).delete(thread_id)
+
+
+@router.post("/chat")
+async def say(body: ChatSay, state: State) -> ChatReply:
+    """One turn with the agent panel. May call a few read/propose-only tools before it
+    answers (CLAUDE.md rule 5) — ``tool_calls`` shows which, so the panel can show its work."""
+    try:
+        out = await AgentChat(state.db, state.llm).say(
+            body.thread_id, body.text, role=body.role, model=body.model, context=body.context
+        )
+    except UnknownRoleError as exc:
+        raise refuse(422, "unknown_role", str(exc)) from exc
+    except ValueError as exc:
+        raise refuse(400, "cannot_answer", str(exc)) from exc
+    return ChatReply.model_validate(out)

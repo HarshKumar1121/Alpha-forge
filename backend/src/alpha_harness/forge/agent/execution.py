@@ -37,6 +37,8 @@ async def execute_proposal(state: AppState, proposal: AgentProposal) -> Pipeline
         raise ApprovalRequiredError(
             f"Proposal {proposal.id} is {proposal.status!r}, not approved; nothing was run."
         )
+    if proposal.kind == "court_promotion":
+        return await _execute_court_promotion(state, proposal)
     if proposal.kind != "pipeline_run":
         raise ValueError(f"Don't know how to execute proposal kind {proposal.kind!r}")
 
@@ -117,6 +119,72 @@ async def execute_proposal(state: AppState, proposal: AgentProposal) -> Pipeline
             "rejected": [{"expression": e, "reason": r} for e, r in report.rejected],
             "checks": report.checks,
             "correlations": report.correlations,
+        },
+    )
+    await agent_store.set_proposal_status(state.db, proposal.id, "executed", run_id=run_id)
+    return report
+
+
+async def _execute_court_promotion(state: AppState, proposal: AgentProposal) -> PipelineReport:
+    """The other proposal kind: survivors of a Workshop Court trial, approved for real alphas.
+
+    Same two gates as the ``pipeline_run`` branch above — refused if not approved (checked by
+    the caller before this is reached), and forced into the reserve lane by
+    :func:`~..workshop.trial.execute_promotion` regardless of which lane the trial itself ran
+    the Court in (``validate``).
+    """
+    from ...api import forge_pipelines as pipelines_api
+    from ..pipelines.orchestrator import PipelineReport
+    from ..workshop import store as workshop_store
+    from ..workshop.trial import execute_promotion
+
+    trial_id = proposal.payload["trial_id"]
+    trial = await workshop_store.get_trial(state.db, trial_id)
+    if trial is None:
+        raise ValueError(f"Proposal {proposal.id} names trial {trial_id}, which no longer exists.")
+    alpha_type_name = pipelines_api._pipeline(trial.pipeline).alpha_type
+
+    run_id = f"agent-proposal-{proposal.id}"
+    await pipelines_store.start_run(
+        state.db,
+        run_id,
+        pipeline=trial.pipeline,
+        field_set=f"field_set:{trial.field_set_id}",
+        lane=RESERVE_LANE,
+        template_ids=[],
+        budget=proposal.payload["budget"],
+    )
+    try:
+        research_report = await execute_promotion(state, trial, proposal.payload)
+    except Exception as exc:
+        await pipelines_store.finish_run(state.db, run_id, status="failed", error=str(exc))
+        await agent_store.set_proposal_status(state.db, proposal.id, "failed", error=str(exc))
+        raise
+
+    report = PipelineReport(research=research_report, rejected=[], checks={}, correlations={})
+    from ..board.store import record_run
+
+    await record_run(
+        state.db,
+        report,
+        pipeline=trial.pipeline,
+        alpha_type=alpha_type_name,
+        correlation="",
+        run_id=run_id,
+    )
+    await pipelines_store.finish_run(
+        state.db,
+        run_id,
+        status="done",
+        report={
+            "status": "done",
+            "pipeline": run_id,
+            "spent": research_report.spent,
+            "candidates": [{"expression": c.expression} for c in research_report.candidates],
+            "finalists": [{"expression": c.expression} for c in research_report.finalists],
+            "rejected": [],
+            "checks": {},
+            "correlations": {},
         },
     )
     await agent_store.set_proposal_status(state.db, proposal.id, "executed", run_id=run_id)

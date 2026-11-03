@@ -9,7 +9,7 @@ the database opens, so :func:`alpha_harness.db.sqlite.migrate` creates the table
 from datetime import datetime  # noqa: TC003 - SQLAlchemy reads Mapped[datetime] at runtime
 from typing import Any
 
-from sqlalchemy import JSON, Index, String, Text
+from sqlalchemy import JSON, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...db.models import Base, UtcDateTime, utcnow
@@ -95,3 +95,37 @@ class AgentProposal(Base):
     decided_at: Mapped[datetime | None] = mapped_column(UtcDateTime, default=None)
 
     __table_args__ = (Index("ix_agent_proposal_created", "created_at"),)
+
+
+class AgentChatThread(Base):
+    """One agent-panel conversation. The panel opens on every screen, so a thread's title is
+    whatever the first message was about, not the screen it started on — the same conversation
+    is expected to follow the researcher from screen to screen."""
+
+    __tablename__ = "forge_agent_chat_thread"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(120), default="")
+    #: Which system prompt this thread talks to: ``researcher`` | ``critic`` | ``analyst`` |
+    #: ``tutor`` (``forge/agent/prompts.py``).
+    role: Mapped[str] = mapped_column(String(16), default="researcher")
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow, onupdate=utcnow)
+
+    __table_args__ = (Index("ix_agent_chat_thread_updated", "updated_at"),)
+
+
+class AgentChatMessage(Base):
+    """One turn. ``meta`` holds what made the turn reproducible: the screen context the panel
+    sent with a ``user`` message, and the tool calls + usage an ``assistant`` reply made."""
+
+    __tablename__ = "forge_agent_chat_message"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    thread_id: Mapped[int] = mapped_column(Integer)
+    role: Mapped[str] = mapped_column(String(16))  # user | assistant
+    text: Mapped[str] = mapped_column(Text, default="")
+    meta: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=utcnow)
+
+    __table_args__ = (Index("ix_agent_chat_message_thread", "thread_id"),)
