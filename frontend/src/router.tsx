@@ -206,6 +206,11 @@ const forgeNuggets = createRoute({
   path: 'nuggets',
   component: lazyRouteComponent(() => import('@/screens/forge/nuggets'), 'NuggetsScreen'),
 })
+const forgeWorkbench = createRoute({
+  getParentRoute: () => forge,
+  path: 'workbench',
+  component: lazyRouteComponent(() => import('@/screens/forge/workbench'), 'WorkbenchScreen'),
+})
 const forgeAnalytics = createRoute({
   getParentRoute: () => forge,
   path: 'analytics',
@@ -328,6 +333,7 @@ export const routeTree = root.addChildren([
     forgeWorkshop,
     forgeFieldSets,
     forgeNuggets,
+    forgeWorkbench,
     forgeDataset,
     forgeAnalytics,
   ]), // forge: Forge section

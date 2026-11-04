@@ -1896,6 +1896,71 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/forge/workbench/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run
+         * @description Run every candidate for real, through the Quota Governor, tagged so it shows up in Tasks
+         *     and the Simulation Matrix like any other run. Never submits anything.
+         */
+        post: operations["run_api_forge_workbench_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/workbench/run/{task_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Run
+         * @description This run's candidates and whatever has come back for each so far.
+         */
+        get: operations["get_run_api_forge_workbench_run__task_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/workbench/tray": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Tray
+         * @description The fields in this scope's tray, or an empty one when nothing has been saved yet.
+         */
+        get: operations["get_tray_api_forge_workbench_tray_get"];
+        /**
+         * Set Tray
+         * @description Replace this scope's tray with the given fields, in the order given.
+         */
+        put: operations["set_tray_api_forge_workbench_tray_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/forge/workshop/evidence": {
         parameters: {
             query?: never;
@@ -7433,6 +7498,40 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** RunCandidateIn */
+        RunCandidateIn: {
+            /** Expression */
+            expression: string;
+            /** Fieldids */
+            fieldIds?: string[];
+            /** Templateid */
+            templateId?: string | null;
+        };
+        /** RunItemOut */
+        RunItemOut: {
+            /** Alphaid */
+            alphaId: string | null;
+            /** Delay */
+            delay: number;
+            /** Error */
+            error: string | null;
+            /** Expression */
+            expression: string;
+            /** Fieldids */
+            fieldIds: string[];
+            /** Region */
+            region: string;
+            /** Status */
+            status: string;
+            /** Templateid */
+            templateId: string | null;
+            /** Testsharpe */
+            testSharpe: number | null;
+            /** Trainsharpe */
+            trainSharpe: number | null;
+            /** Universe */
+            universe: string;
+        };
         /** RunReport */
         RunReport: {
             /** Candidates */
@@ -7460,26 +7559,12 @@ export interface components {
             /** Status */
             status: string;
         };
-        /** RunRequest */
-        RunRequest: {
-            /** Budget */
-            budget?: number | null;
-            /** Fieldsetid */
-            fieldSetId?: number | null;
-            fields?: components["schemas"]["InlineFields"] | null;
-            /** Pipeline */
-            pipeline: string;
-            /** Templateids */
-            templateIds: string[];
-        };
-        /** RunStarted */
-        RunStarted: {
-            /** Budget */
-            budget: number;
-            /** Fieldset */
-            fieldSet: string;
-            /** Pipeline */
-            pipeline: string;
+        /** RunResult */
+        RunResult: {
+            /** Items */
+            items: components["schemas"]["RunItemOut"][];
+            /** Status */
+            status: string;
             /** Taskid */
             taskId: string;
         };
@@ -8640,6 +8725,16 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** TrayIn */
+        TrayIn: {
+            /** Fieldids */
+            fieldIds?: string[];
+        };
+        /** TrayOut */
+        TrayOut: {
+            /** Fieldids */
+            fieldIds: string[];
+        };
         /**
          * TreeNode
          * @description One step of a template, as the Blocks view draws it. ``...`` is a name: an empty input.
@@ -9140,6 +9235,29 @@ export interface components {
             /** Count */
             count: number;
         };
+        /** RunRequest */
+        alpha_harness__api__forge_pipelines__RunRequest: {
+            /** Budget */
+            budget?: number | null;
+            /** Fieldsetid */
+            fieldSetId?: number | null;
+            fields?: components["schemas"]["InlineFields"] | null;
+            /** Pipeline */
+            pipeline: string;
+            /** Templateids */
+            templateIds: string[];
+        };
+        /** RunStarted */
+        alpha_harness__api__forge_pipelines__RunStarted: {
+            /** Budget */
+            budget: number;
+            /** Fieldset */
+            fieldSet: string;
+            /** Pipeline */
+            pipeline: string;
+            /** Taskid */
+            taskId: string;
+        };
         /** PreviewRequest */
         alpha_harness__api__forge_studio__PreviewRequest: {
             /** Choices */
@@ -9157,6 +9275,22 @@ export interface components {
             nuggetId?: string | null;
             /** Templateid */
             templateId: string;
+        };
+        /** RunRequest */
+        alpha_harness__api__forge_workbench__RunRequest: {
+            /** Candidates */
+            candidates: components["schemas"]["RunCandidateIn"][];
+        };
+        /** RunStarted */
+        alpha_harness__api__forge_workbench__RunStarted: {
+            /** Admitted */
+            admitted: number;
+            /** Asked */
+            asked: number;
+            /** Lane */
+            lane: string;
+            /** Taskid */
+            taskId: string;
         };
         /** Failure */
         alpha_harness__api__lab_tasks__Failure: {
@@ -11763,7 +11897,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RunRequest"];
+                "application/json": components["schemas"]["alpha_harness__api__forge_pipelines__RunRequest"];
             };
         };
         responses: {
@@ -11773,7 +11907,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RunStarted"];
+                    "application/json": components["schemas"]["alpha_harness__api__forge_pipelines__RunStarted"];
                 };
             };
             /** @description Validation Error */
@@ -12359,6 +12493,153 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ForgeTemplateDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_api_forge_workbench_run_post: {
+        parameters: {
+            query: {
+                /** @description e.g. USA, EUR, GLB */
+                region: string;
+                delay: number;
+                /** @description e.g. TOP3000 */
+                universe: string;
+                instrumentType?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["alpha_harness__api__forge_workbench__RunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["alpha_harness__api__forge_workbench__RunStarted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_run_api_forge_workbench_run__task_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_tray_api_forge_workbench_tray_get: {
+        parameters: {
+            query: {
+                /** @description e.g. USA, EUR, GLB */
+                region: string;
+                delay: number;
+                /** @description e.g. TOP3000 */
+                universe: string;
+                instrumentType?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrayOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_tray_api_forge_workbench_tray_put: {
+        parameters: {
+            query: {
+                /** @description e.g. USA, EUR, GLB */
+                region: string;
+                delay: number;
+                /** @description e.g. TOP3000 */
+                universe: string;
+                instrumentType?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrayIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrayOut"];
                 };
             };
             /** @description Validation Error */

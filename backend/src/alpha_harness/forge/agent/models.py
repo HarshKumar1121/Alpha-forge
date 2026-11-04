@@ -36,7 +36,7 @@ class AgentHypothesis(Base):
     template: Mapped[str] = mapped_column(Text, default="")
     #: The real template this idea was picked for, if the picker named one — see
     #: ``forge.research.templates.get``. ``""`` for older hypotheses that only have free text.
-    template_id: Mapped[str] = mapped_column(String(80), default="")
+    template_id: Mapped[str] = mapped_column(String(80), default="", server_default="")
     fields: Mapped[list[Any]] = mapped_column(JSON, default=list)
     #: Who wrote it: ``user`` or one of the agent roles (``researcher``, ``critic``, ...).
     source: Mapped[str] = mapped_column(String(32), default="user")

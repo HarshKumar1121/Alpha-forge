@@ -290,6 +290,7 @@ export const FIXTURES: Record<string, unknown> = {
 
   // --- Forge ---------------------------------------------------------------
   '/api/forge/scopes': SCOPE_TREE,
+  '/api/forge/workbench/tray': { fieldIds: [] },
   '/api/forge/data/datasets': {
     datasets: [forgeDataset('analyst4', 'analyst'), forgeDataset('pv1', 'pv')],
     unparsed: 0,

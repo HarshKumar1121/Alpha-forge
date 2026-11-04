@@ -13,6 +13,7 @@ import {
   HammerIcon, // forge: Template Studio's icon
   LayersIcon,
   LayoutGridIcon,
+  LayoutPanelLeftIcon, // forge: Workbench's icon
   LibraryIcon, // forge: Template Library's icon
   ListChecksIcon,
   PencilIcon, // forge: My Templates' icon
@@ -153,6 +154,12 @@ export const NAV = [
     group: 'Forge',
     label: 'Data Nuggets',
     icon: GripIcon,
+  },
+  {
+    to: '/forge/workbench',
+    group: 'Forge',
+    label: 'Workbench',
+    icon: LayoutPanelLeftIcon,
   },
   {
     to: '/forge/analytics',

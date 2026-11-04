@@ -48,6 +48,7 @@ const ROUTES = [
   '/forge/workshop',
   '/forge/fieldsets',
   '/forge/nuggets',
+  '/forge/workbench',
   '/forge/datasets/analyst4',
   '/forge/analytics',
   '/forge/analytics?alpha=ALPHA1',
@@ -401,6 +402,29 @@ describe('the Workshop screen', () => {
     expect(href).toContain('/forge/pipelines')
     expect(href).toContain('fs=1')
     expect(href).toContain('t=analyst_revision')
+    expect(screen.queryByText(CRASHED)).toBeNull()
+  })
+})
+
+describe('the Workbench screen', () => {
+  it('shows the market bar and the field tray', async () => {
+    await mount('/forge/workbench')
+    expect(screen.getByText('Market')).toBeTruthy()
+    expect(screen.getByText('Field tray')).toBeTruthy()
+    expect(screen.getByText('0 in tray')).toBeTruthy()
+    expect(screen.queryByText(CRASHED)).toBeNull()
+  })
+
+  it('lets the field panel search fields and adds them to the tray', async () => {
+    await mount('/forge/workbench')
+    fireEvent.click(screen.getByRole('radio', { name: 'Search fields' }))
+    fireEvent.change(screen.getByLabelText('Search field catalog'), {
+      target: { value: 'eps' },
+    })
+    await waitFor(() => expect(screen.getByText('anl4_eps_mean')).toBeTruthy())
+    const row = screen.getByText('anl4_eps_mean').closest('[role="row"]') as HTMLElement
+    fireEvent.click(within(row).getByRole('checkbox'))
+    await waitFor(() => expect(screen.getByText('1 in tray')).toBeTruthy())
     expect(screen.queryByText(CRASHED)).toBeNull()
   })
 })
