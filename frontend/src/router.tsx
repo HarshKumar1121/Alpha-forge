@@ -239,9 +239,15 @@ const tasksIndex = createRoute({
   getParentRoute: () => tasks,
   path: '/',
   // In the address, so a reload or the way back from a task's results lands where it was.
-  validateSearch: (search: Record<string, unknown>): { view?: 'submittable'; task?: number } => ({
+  // forge: a task id is a Study id (number) for a lab task, or a Forge run's own string id —
+  // see screens/forge/tasks-bridge.ts.
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { view?: 'submittable'; task?: number | string } => ({
     ...(search['view'] === 'submittable' ? { view: 'submittable' as const } : {}),
-    ...(typeof search['task'] === 'number' ? { task: search['task'] } : {}),
+    ...(typeof search['task'] === 'number' || typeof search['task'] === 'string'
+      ? { task: search['task'] }
+      : {}),
   }),
   component: lazyRouteComponent(() => import('@/screens/tasks'), 'TasksScreen'),
 })

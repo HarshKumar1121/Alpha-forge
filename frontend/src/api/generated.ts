@@ -817,6 +817,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/forge/advisor/postrun/{alpha_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Postrun
+         * @description One verdict and one concrete next step after a run lands: train/test Sharpe, factor
+         *     exposure and the Board's check status tied together, reusing the Board's repair lookup and
+         *     the tear sheet's own numbers rather than computing anything new.
+         */
+        get: operations["postrun_api_forge_advisor_postrun__alpha_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/advisor/preflight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preflight
+         * @description One paragraph before a run: field behaviour, any pairing concern, and how this template
+         *     has scored on data like this before. Free: a catalog read and a local table lookup.
+         */
+        post: operations["preflight_api_forge_advisor_preflight_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/forge/agent/chat": {
         parameters: {
             query?: never;
@@ -1850,6 +1893,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/forge/templates/by-scope": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Templates By Scope
+         * @description Templates for a market, picked before any field — the Template Lab's own order.
+         *
+         *     Reads every field this scope's catalog carries (up to the same 500-field cap a field set
+         *     resolves to) and keeps the templates whose slots that catalog could fill at all
+         *     (:func:`~..forge.research.templates.fits_fields`), the same check ``/compatible`` runs
+         *     against a user's own field_ids. Templates outside ``dataset_category`` (the template's own
+         *     ``category`` prefix, e.g. ``fundamental``) are left out entirely rather than marked
+         *     ineligible — the Lab only ever shows templates for the category in hand.
+         */
+        get: operations["templates_by_scope_api_forge_templates_by_scope_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/forge/templates/compatible": {
         parameters: {
             query?: never;
@@ -1929,6 +1999,27 @@ export interface paths {
          * @description This run's candidates and whatever has come back for each so far.
          */
         get: operations["get_run_api_forge_workbench_run__task_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/workbench/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Runs
+         * @description Every Workbench run this process knows about, most recent first — mirrors the Pipelines
+         *     run-history panel (CLAUDE.md: every Forge simulation shows up in Tasks, tagged with source).
+         */
+        get: operations["list_runs_api_forge_workbench_runs_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6697,6 +6788,20 @@ export interface components {
             /** Taskid */
             taskId: string;
         };
+        /** PostRunOut */
+        PostRunOut: {
+            /** Action */
+            action: string;
+            /**
+             * Actionkind
+             * @enum {string}
+             */
+            actionKind: "repair" | "field_swap" | "close" | "wait" | "fetch" | "ready";
+            /** Alphaid */
+            alphaId: string;
+            /** Verdict */
+            verdict: string;
+        };
         /**
          * PowerPoolCorrelation
          * @description What the Power Pool panel shows for one task.
@@ -6879,6 +6984,31 @@ export interface components {
              * @enum {integer}
              */
             updateCheckHours: 0 | 1 | 6 | 24;
+        };
+        /** PreflightOut */
+        PreflightOut: {
+            /** Paragraph */
+            paragraph: string;
+            /** Warnings */
+            warnings: string[];
+        };
+        /** PreflightRequest */
+        PreflightRequest: {
+            /** Delay */
+            delay: number;
+            /** Fieldids */
+            fieldIds: string[];
+            /**
+             * Instrumenttype
+             * @default EQUITY
+             */
+            instrumentType: string;
+            /** Region */
+            region: string;
+            /** Templateid */
+            templateId: string;
+            /** Universe */
+            universe: string;
         };
         /** Preview */
         Preview: {
@@ -7568,39 +7698,6 @@ export interface components {
             /** Taskid */
             taskId: string;
         };
-        /**
-         * RunSummary
-         * @description One row of the run-history panel — durable past ``TaskRegistry``'s 60s linger.
-         */
-        RunSummary: {
-            /** Budget */
-            budget: number;
-            /** Candidatescount */
-            candidatesCount: number;
-            /** Fieldset */
-            fieldSet: string;
-            /** Finalistscount */
-            finalistsCount: number;
-            /** Finishedat */
-            finishedAt: string | null;
-            /** Lane */
-            lane: string;
-            /** Pipeline */
-            pipeline: string;
-            /** Rejectedcount */
-            rejectedCount: number;
-            /** Spent */
-            spent: number;
-            /**
-             * Startedat
-             * Format: date-time
-             */
-            startedAt: string;
-            /** Status */
-            status: string;
-            /** Taskid */
-            taskId: string;
-        };
         /** SampleAlpha */
         SampleAlpha: {
             /** Expression */
@@ -7724,6 +7821,34 @@ export interface components {
             multiplier: number | null;
             /** Name */
             name: string | null;
+        };
+        /** ScopeTemplate */
+        ScopeTemplate: {
+            /** Angle */
+            angle: string;
+            /** Category */
+            category: string;
+            /** Complexity */
+            complexity: string;
+            /** Datasetcategory */
+            datasetCategory: string;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Rationale */
+            rationale: string;
+            /** Scopeeligible */
+            scopeEligible: boolean;
+            /** Slots */
+            slots: components["schemas"]["ForgeTemplateSlot"][];
+        };
+        /** ScopeTemplates */
+        ScopeTemplates: {
+            /** Datasetcategories */
+            datasetCategories: string[];
+            /** Templates */
+            templates: components["schemas"]["ScopeTemplate"][];
         };
         /** ScopeTree */
         ScopeTree: {
@@ -9258,14 +9383,53 @@ export interface components {
             /** Taskid */
             taskId: string;
         };
+        /**
+         * RunSummary
+         * @description One row of the run-history panel — durable past ``TaskRegistry``'s 60s linger.
+         */
+        alpha_harness__api__forge_pipelines__RunSummary: {
+            /** Budget */
+            budget: number;
+            /** Candidatescount */
+            candidatesCount: number;
+            /** Fieldset */
+            fieldSet: string;
+            /** Finalistscount */
+            finalistsCount: number;
+            /** Finishedat */
+            finishedAt: string | null;
+            /** Lane */
+            lane: string;
+            /** Pipeline */
+            pipeline: string;
+            /** Rejectedcount */
+            rejectedCount: number;
+            /** Spent */
+            spent: number;
+            /**
+             * Startedat
+             * Format: date-time
+             */
+            startedAt: string;
+            /** Status */
+            status: string;
+            /** Taskid */
+            taskId: string;
+        };
         /** PreviewRequest */
         alpha_harness__api__forge_studio__PreviewRequest: {
             /** Choices */
             choices?: {
                 [key: string]: unknown;
             };
+            /** Delay */
+            delay?: number | null;
+            /** Fieldids */
+            fieldIds?: string[] | null;
             /** Fieldsetid */
             fieldSetId?: number | null;
+            /** Instrumenttype */
+            instrumentType?: string | null;
             /**
              * Limit
              * @default 50
@@ -9273,8 +9437,12 @@ export interface components {
             limit: number;
             /** Nuggetid */
             nuggetId?: string | null;
+            /** Region */
+            region?: string | null;
             /** Templateid */
             templateId: string;
+            /** Universe */
+            universe?: string | null;
         };
         /** RunRequest */
         alpha_harness__api__forge_workbench__RunRequest: {
@@ -9291,6 +9459,27 @@ export interface components {
             lane: string;
             /** Taskid */
             taskId: string;
+        };
+        /** RunSummary */
+        alpha_harness__api__forge_workbench__RunSummary: {
+            /** Bestsharpe */
+            bestSharpe: number | null;
+            /** Createdat */
+            createdAt: string;
+            /** Delay */
+            delay: number;
+            /** Done */
+            done: number;
+            /** Failed */
+            failed: number;
+            /** Region */
+            region: string;
+            /** Taskid */
+            taskId: string;
+            /** Total */
+            total: number;
+            /** Universe */
+            universe: string;
         };
         /** Failure */
         alpha_harness__api__lab_tasks__Failure: {
@@ -10515,6 +10704,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AddedTask"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    postrun_api_forge_advisor_postrun__alpha_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                alpha_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PostRunOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preflight_api_forge_advisor_preflight_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreflightRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreflightOut"];
                 };
             };
             /** @description Validation Error */
@@ -11936,7 +12189,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RunSummary"][];
+                    "application/json": components["schemas"]["alpha_harness__api__forge_pipelines__RunSummary"][];
                 };
             };
         };
@@ -12442,6 +12695,41 @@ export interface operations {
             };
         };
     };
+    templates_by_scope_api_forge_templates_by_scope_get: {
+        parameters: {
+            query: {
+                region: string;
+                universe: string;
+                delay: number;
+                instrument_type?: string;
+                dataset_category?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScopeTemplates"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     compatible_templates_api_forge_templates_compatible_post: {
         parameters: {
             query?: never;
@@ -12573,6 +12861,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_runs_api_forge_workbench_runs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["alpha_harness__api__forge_workbench__RunSummary"][];
                 };
             };
         };

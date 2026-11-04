@@ -157,7 +157,9 @@ export function DesktopNotifications() {
     })
   }, [])
 
-  const statuses = useRef<Map<number, string> | null>(null)
+  // forge: LabTask.id is `number | string` since the Tasks screen also lists Forge runs; this
+  // tray notifier only ever sees `labTasks.list()`'s own rows, which are still Study ids.
+  const statuses = useRef<Map<number | string, string> | null>(null)
   useEffect(() => {
     const list = tasks.data?.tasks
     if (!list) return

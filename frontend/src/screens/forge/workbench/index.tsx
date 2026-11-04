@@ -10,14 +10,15 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
+import { catalog } from '@/api/catalog'
 import { type Scope, scopeLabel } from '@/api/types'
 import { DASH, fmt } from '@/lib/format'
 import { useDebounced } from '@/lib/use-debounced'
+import { PreflightAdvisor } from '@/screens/forge/advisor/panel'
 import { FieldPicker } from '@/screens/forge/data/field-picker'
-import { nuggets } from '@/screens/forge/nuggets/api'
 import { ForgeScopePicker, useForgeScope } from '@/screens/forge/scope/picker'
 import { type PreviewResponse, type RenderedAlpha, studio } from '@/screens/forge/studio/api'
-import { TemplatePicker } from '@/screens/forge/templates/template-picker'
+import { forgeTemplates, type ScopeTemplate } from '@/screens/forge/templates/api'
 import { templateLab } from '@/screens/research-labs/template/api'
 import {
   Badge,
@@ -44,13 +45,10 @@ export interface Candidate {
   fieldIds: string[]
 }
 
-type FieldSource = 'tray' | 'nugget'
-
 export function WorkbenchScreen() {
   const [scope, setScope] = useForgeScope()
   const client = useQueryClient()
   const [fieldIds, setFieldIds] = useState<string[]>([])
-  const [fieldSetId, setFieldSetId] = useState<number | null>(null)
   const [saveError, setSaveError] = useState<unknown>(null)
   // The scope the tray in `fieldIds` was loaded for, so a scope change loads fresh instead of
   // saving the previous scope's fields under the new one.
@@ -66,7 +64,6 @@ export function WorkbenchScreen() {
     if (!tray.data) return
     loadedFor.current = scopeLabel(scope)
     setFieldIds(tray.data.fieldIds)
-    setFieldSetId(null) // the saved tray is raw field ids; which field set (if any) is unknown
   }, [tray.data, scope.region, scope.delay, scope.universe, scope.instrumentType])
 
   const debounced = useDebounced(fieldIds, 400)
@@ -140,14 +137,7 @@ export function WorkbenchScreen() {
         {tray.isPending ? (
           <Skeleton className="h-40" label="Loading the tray" />
         ) : (
-          <FieldPicker
-            scope={scope}
-            selected={fieldIds}
-            onChange={(ids, fsId) => {
-              setFieldIds(ids)
-              setFieldSetId(fsId)
-            }}
-          />
+          <FieldPicker scope={scope} selected={fieldIds} onChange={(ids) => setFieldIds(ids)} />
         )}
       </Panel>
       <ExpressionPanel
@@ -156,10 +146,8 @@ export function WorkbenchScreen() {
           addCandidate({ expression, source: 'manual', templateId: null, fieldIds })
         }
       />
-      <TemplateDrawer
+      <TemplateLab
         scope={scope}
-        fieldIds={fieldIds}
-        fieldSetId={fieldSetId}
         onAdd={(expression, templateId, alphaFieldIds) =>
           addCandidate({ expression, source: 'template', templateId, fieldIds: alphaFieldIds })
         }
@@ -247,101 +235,167 @@ function ExpressionPanel({
   )
 }
 
-function TemplateDrawer({
+/** A market and a dataset category, then only the templates that make sense for that data —
+ * selection-first, matching old alpha-harness's Template Lab. Fields stay editable per slot
+ * (never locked to a saved set) by previewing against this market's whole field catalog and
+ * letting a pinned slot narrow it, the same `choices` mechanism Template Studio uses. */
+function TemplateLab({
   scope,
-  fieldIds,
-  fieldSetId,
   onAdd,
 }: {
   scope: Scope
-  fieldIds: string[]
-  fieldSetId: number | null
   onAdd: (expression: string, templateId: string, fieldIds: string[]) => void
 }) {
+  const [datasetCategory, setDatasetCategory] = useState<string | null>(null)
   const [templateId, setTemplateId] = useState<string | null>(null)
-  const [source, setSource] = useState<FieldSource>('tray')
-  const [nuggetId, setNuggetId] = useState<string | null>(null)
+  const [choices, setChoices] = useState<Record<string, string | number>>({})
 
-  const myNuggets = useQuery({ queryKey: ['forge-nuggets', 'list'], queryFn: () => nuggets.list() })
-  const inScope = (myNuggets.data ?? []).filter(
-    (n) =>
-      n.scope.region === scope.region &&
-      n.scope.delay === scope.delay &&
-      n.scope.universe === scope.universe &&
-      n.scope.instrumentType === scope.instrumentType,
-  )
+  const byScope = useQuery({
+    queryKey: ['forge-templates', 'by-scope', scope],
+    queryFn: () =>
+      forgeTemplates.byScope({
+        region: scope.region,
+        universe: scope.universe,
+        delay: scope.delay,
+        instrumentType: scope.instrumentType,
+      }),
+  })
+  const categories = byScope.data?.datasetCategories ?? []
+  const eligible = (byScope.data?.templates ?? []).filter((t) => t.scopeEligible)
+  const inCategory = datasetCategory
+    ? eligible.filter((t) => t.datasetCategory === datasetCategory)
+    : eligible
+  const template: ScopeTemplate | null = inCategory.find((t) => t.id === templateId) ?? null
 
-  const canRender = Boolean(
-    templateId && (source === 'tray' ? fieldSetId != null : nuggetId != null),
-  )
+  useEffect(() => {
+    if (templateId && !inCategory.some((t) => t.id === templateId)) {
+      setTemplateId(null)
+      setChoices({})
+    }
+  }, [inCategory, templateId])
+
+  // The field pool a template's slots can draw from, before any single field is picked — the
+  // same 500-field cap scope eligibility was checked against.
+  const pool = useQuery({
+    queryKey: ['forge-templates-lab', 'catalog', scope],
+    queryFn: ({ signal }) => catalog.fields(scope, { limit: 500 }, signal),
+  })
+  const poolIds = pool.data?.results.map((r) => r.field_id) ?? []
+
+  const canPreview = Boolean(templateId) && poolIds.length > 0
   const preview = useQuery({
-    queryKey: ['forge-workbench', 'preview', templateId, source, fieldSetId, nuggetId],
+    queryKey: ['forge-workbench', 'lab-preview', scope, templateId, poolIds, choices],
     queryFn: () =>
       studio.preview({
         templateId: templateId as string,
-        fieldSetId: source === 'tray' ? fieldSetId : null,
-        nuggetId: source === 'nugget' ? nuggetId : null,
+        fieldIds: poolIds,
+        region: scope.region,
+        universe: scope.universe,
+        delay: scope.delay,
+        instrumentType: scope.instrumentType,
+        choices,
         limit: 50,
       }),
-    enabled: canRender,
+    enabled: canPreview,
   })
   const p: PreviewResponse | undefined = preview.data
 
+  const pin = (name: string, kind: string, value: string) =>
+    setChoices((prev) => ({ ...prev, [name]: kind === 'window' ? Number(value) : value }))
+  const unpin = (name: string) =>
+    setChoices((prev) => {
+      const { [name]: _, ...rest } = prev
+      return rest
+    })
+
   return (
     <Panel
-      title="Fill a template"
-      description="What this tells you: the real alphas a template renders here, and which alpha types each one actually qualifies for — the same check Template Studio and BRAIN's own eligibility rules use. Nothing here is simulated."
+      title="Template Lab"
+      description="What this tells you: pick a market and a dataset category first, then only the templates that fit it — swap in whichever real field, window or group you want per slot before running, nothing here is simulated."
       bodyClassName="flex flex-col gap-4 p-4"
     >
-      <div className="grid gap-4 sm:grid-cols-2">
-        <TemplatePicker
-          scope={scope}
-          fieldIds={fieldIds}
+      <Field
+        label="Dataset category"
+        hint="Templates for this market, grouped by the kind of data they're built for."
+      >
+        <Segmented
+          label="Dataset category"
+          value={datasetCategory ?? '__all__'}
+          onChange={(v) => setDatasetCategory(v === '__all__' ? null : v)}
+          items={[
+            { value: '__all__', label: 'All' },
+            ...categories.map((c) => ({ value: c, label: c })),
+          ]}
+        />
+      </Field>
+
+      {byScope.isError && (
+        <ErrorNotice error={byScope.error} title="Could not load templates for this market" />
+      )}
+
+      <Field
+        label="Template"
+        hint={
+          byScope.isSuccess && inCategory.length === 0
+            ? 'No template in the library binds to this market and category.'
+            : 'Only templates whose field slots this market could fill at all are offered.'
+        }
+      >
+        <Select
+          label="Template"
+          className="w-full"
           value={templateId}
           onChange={setTemplateId}
+          items={inCategory.map((t) => ({ value: t.id, label: `${t.name} (${t.complexity})` }))}
+          disabled={inCategory.length === 0}
         />
-        <Field
-          label="Field source"
-          hint="The tray's fields (saved as a field set) or a Data Nugget bound to this market."
-        >
-          <div className="flex flex-col gap-2">
-            <Segmented
-              label="Field source"
-              value={source}
-              onChange={setSource}
-              items={[
-                { value: 'tray', label: 'Tray' },
-                { value: 'nugget', label: 'Nugget' },
-              ]}
-            />
-            {source === 'nugget' && (
-              <Select
-                label="Nugget"
-                items={inScope.map((n) => ({ value: n.nuggetId, label: n.name }))}
-                value={nuggetId}
-                onChange={setNuggetId}
-                disabled={inScope.length === 0}
-              />
-            )}
-          </div>
-        </Field>
-      </div>
+      </Field>
 
-      {source === 'tray' && fieldSetId == null && fieldIds.length > 0 && (
-        <Notice tone="info" title="Save the tray as a field set to fill a template from it">
-          Use "Save as field set" above, or pick an existing field set in the tray panel — a
-          template renders from a saved set, the same way Template Studio does.
-        </Notice>
-      )}
-      {source === 'nugget' && inScope.length === 0 && (
-        <Notice tone="info" title="No nugget saved for this market yet">
-          Save one in Data Nuggets first — a nugget's fields keep their own data treatment when a
-          template binds to them.
-        </Notice>
+      {template && (
+        <>
+          <p className="text-body-compact text-ink-subtle">{template.rationale}</p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {template.slots.map((slot) => (
+              <Field
+                key={slot.name}
+                label={`Slot ${slot.name}${slot.hint ? ` — ${slot.hint}` : ''}`}
+                hint="Legal choices for this market right now; leave unpinned to see every combination."
+              >
+                <div className="flex items-center gap-2">
+                  <Select
+                    label={`Slot ${slot.name}`}
+                    className="w-full"
+                    mono
+                    value={choices[slot.name] != null ? String(choices[slot.name]) : null}
+                    onChange={(v) => pin(slot.name, slot.kind, v)}
+                    items={(p?.offered[slot.name] ?? []).map((v) => ({
+                      value: String(v),
+                      label: String(v),
+                    }))}
+                    disabled={!p || (p.offered[slot.name] ?? []).length === 0}
+                  />
+                  {choices[slot.name] != null && (
+                    <Button variant="ghost" size="sm" onClick={() => unpin(slot.name)}>
+                      Clear
+                    </Button>
+                  )}
+                </div>
+              </Field>
+            ))}
+          </div>
+        </>
       )}
 
       {preview.isError && <ErrorNotice error={preview.error} title="Could not render this" />}
-      {preview.isPending && canRender && <Skeleton className="h-48" label="Rendering alphas" />}
+      {preview.isPending && canPreview && <Skeleton className="h-48" label="Rendering alphas" />}
+
+      {p && templateId && (
+        <PreflightAdvisor
+          scope={scope}
+          templateId={templateId}
+          fieldIds={[...new Set(p.rendered.flatMap((r) => r.dataFields))]}
+        />
+      )}
 
       {p && (
         <div className="flex flex-wrap items-end gap-4">
@@ -357,17 +411,12 @@ function TemplateDrawer({
         </div>
       )}
       {p && p.blockers.length > 0 && (
-        <Notice tone="warn" title="This template cannot run on this field source">
+        <Notice tone="warn" title="This template cannot run on this market">
           <ul className="ml-4 list-disc">
             {p.blockers.map((b) => (
               <li key={b}>{b}</li>
             ))}
           </ul>
-        </Notice>
-      )}
-      {p && p.missingFields.length > 0 && (
-        <Notice tone="info" title="Some fields are not in this market">
-          <span className="num">{p.missingFields.join(', ')}</span> — they are skipped.
         </Notice>
       )}
       {p && p.notes.length > 0 && (

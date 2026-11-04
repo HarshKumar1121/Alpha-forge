@@ -13,6 +13,7 @@ export type RunCandidateIn = Schemas['RunCandidateIn']
 export type RunStarted = Schemas['alpha_harness__api__forge_workbench__RunStarted']
 export type RunResult = Schemas['RunResult']
 export type RunItemOut = Schemas['RunItemOut']
+export type RunSummary = Schemas['alpha_harness__api__forge_workbench__RunSummary']
 
 const B = '/api/forge/workbench'
 
@@ -23,4 +24,6 @@ export const workbench = {
   run: (scope: Scope, candidates: RunCandidateIn[]) =>
     http.post<RunStarted>(`${B}/run${scopeQs(scope)}`, { candidates }),
   getRun: (taskId: string) => http.get<RunResult>(`${B}/run/${encodeURIComponent(taskId)}`),
+  /** Every Workbench run grouped by task, most recent first — so Tasks can list it. */
+  listRuns: () => http.get<RunSummary[]>(`${B}/runs`),
 }

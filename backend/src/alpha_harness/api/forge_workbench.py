@@ -125,6 +125,21 @@ class RunResult(Out):
     items: list[RunItemOut]
 
 
+# forge: grouped so the Tasks screen can list every Workbench run the way it lists a Pipelines
+# run (``GET /api/forge/pipelines/runs``) — a Workbench run has no run-level row of its own,
+# only one ``WorkbenchRunItem`` per candidate, so this groups them by ``task_id`` on the fly.
+class RunSummary(Out):
+    task_id: str
+    region: str
+    delay: int
+    universe: str
+    total: int
+    done: int
+    failed: int
+    best_sharpe: float | None
+    created_at: str
+
+
 def _item_out(row: WorkbenchRunItem) -> RunItemOut:
     return RunItemOut(
         expression=row.expression,
@@ -241,6 +256,37 @@ async def run(scope: Scope, body: RunRequest, state: State) -> RunStarted:
     return RunStarted(
         task_id=task.id, lane=LANE, admitted=admission.admitted, asked=admission.asked
     )
+
+
+@router.get("/runs")
+async def list_runs(state: State) -> list[RunSummary]:
+    """Every Workbench run this process knows about, most recent first — mirrors the Pipelines
+    run-history panel (CLAUDE.md: every Forge simulation shows up in Tasks, tagged with source)."""
+    async with state.db.session() as s:
+        rows = (await s.scalars(select(WorkbenchRunItem).order_by(WorkbenchRunItem.id))).all()
+    by_task: dict[str, list[WorkbenchRunItem]] = {}
+    for row in rows:
+        by_task.setdefault(row.task_id, []).append(row)
+    out = [
+        RunSummary(
+            task_id=task_id,
+            region=items[0].region,
+            delay=items[0].delay,
+            universe=items[0].universe,
+            total=len(items),
+            done=sum(1 for i in items if i.status != "queued"),
+            failed=sum(1 for i in items if i.status == "failed"),
+            best_sharpe=(
+                max(sharpes)
+                if (sharpes := [i.train_sharpe for i in items if i.train_sharpe is not None])
+                else None
+            ),
+            created_at=min(i.created_at for i in items).isoformat(),
+        )
+        for task_id, items in by_task.items()
+    ]
+    out.sort(key=lambda r: r.created_at, reverse=True)
+    return out
 
 
 @router.get("/run/{task_id}")

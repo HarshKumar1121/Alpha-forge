@@ -15,7 +15,9 @@ export type RunReport = Schemas['RunReport']
 export type CandidateOut = Schemas['CandidateOut']
 export type RejectedCandidate = Schemas['RejectedCandidate']
 export type QuotaAdmission = Schemas['QuotaAdmission']
-export type RunSummary = Schemas['RunSummary']
+// forge: codegen drops the bare `RunSummary` name once Workbench's own `RunSummary` class also
+// exists, qualifying both by module path.
+export type RunSummary = Schemas['alpha_harness__api__forge_pipelines__RunSummary']
 export type InlineFields = Schemas['InlineFields']
 export type VerdictOut = Schemas['VerdictOut']
 

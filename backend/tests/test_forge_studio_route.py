@@ -205,6 +205,41 @@ async def test_a_nugget_field_without_an_override_still_gets_the_default_treatme
     assert any("ts_backfill(anl4_rev_mean, 63)" in e for e in exprs)
 
 
+async def test_a_template_renders_from_field_ids_picked_on_the_spot(
+    client: httpx2.AsyncClient,
+) -> None:
+    """The Template Lab's selection-first flow: no field set saved, just field_ids + scope."""
+    body = await preview(
+        client,
+        templateId="analyst_revision",
+        fieldIds=["anl4_eps_mean"],
+        **USA,
+    )
+    assert body["blockers"] == []
+    assert body["fieldSet"] == "(fields picked on this screen)"
+    assert body["rendered"]
+    assert body["rendered"][0]["fields"] == {"X": "anl4_eps_mean"}
+
+    # Swapping the field live re-renders without ever saving a field set.
+    swapped = await preview(
+        client,
+        templateId="analyst_revision",
+        fieldIds=["anl4_rev_mean"],
+        **USA,
+    )
+    assert swapped["rendered"][0]["fields"] == {"X": "anl4_rev_mean"}
+
+
+async def test_field_ids_without_a_scope_is_a_bad_source(client: httpx2.AsyncClient) -> None:
+    res = await client.post(
+        "/api/forge/studio/preview",
+        json={"templateId": "analyst_revision", "fieldIds": ["anl4_eps_mean"]},
+        headers=CLIENT,
+    )
+    assert res.status_code == 422
+    assert res.json()["detail"]["code"] == "bad_source"
+
+
 async def test_preview_refuses_without_exactly_one_source(client: httpx2.AsyncClient) -> None:
     neither = await client.post(
         "/api/forge/studio/preview", json={"templateId": "analyst_revision"}, headers=CLIENT

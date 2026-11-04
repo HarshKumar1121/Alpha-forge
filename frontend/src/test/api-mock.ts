@@ -291,6 +291,19 @@ export const FIXTURES: Record<string, unknown> = {
   // --- Forge ---------------------------------------------------------------
   '/api/forge/scopes': SCOPE_TREE,
   '/api/forge/workbench/tray': { fieldIds: [] },
+  '/api/forge/workbench/runs': [
+    {
+      taskId: 'workbench-task-1',
+      region: 'USA',
+      delay: 1,
+      universe: 'TOP3000',
+      total: 2,
+      done: 2,
+      failed: 0,
+      bestSharpe: 1.6,
+      createdAt: '2026-11-02T09:00:00Z',
+    },
+  ],
   '/api/forge/data/datasets': {
     datasets: [forgeDataset('analyst4', 'analyst'), forgeDataset('pv1', 'pv')],
     unparsed: 0,
@@ -579,7 +592,7 @@ export const FIXTURES: Record<string, unknown> = {
     total: 2,
     blockers: [],
     notes: [],
-    offered: { W: [21, 63] },
+    offered: { X: ['anl4_eps_mean', 'anl4_rev_mean'], W: [21, 63] },
     missingFields: [],
     fitCounts: { regular: 2, power_pool: 2, atom: 1 },
     rendered: [
@@ -874,6 +887,25 @@ export const FIXTURES: Record<string, unknown> = {
       },
     ],
   },
+  '/api/forge/templates/by-scope': {
+    datasetCategories: ['analyst', 'pv'],
+    templates: [
+      {
+        id: 'analyst_revision',
+        name: 'Revision against peers',
+        category: 'analyst/revision',
+        datasetCategory: 'analyst',
+        complexity: 'simple',
+        angle: 'change',
+        rationale: 'Estimates are revised in steps, so a fast riser tends to keep rising.',
+        scopeEligible: true,
+        slots: [
+          { name: 'X', kind: 'field', archetype: ['slow', 'medium'], hint: 'an analyst field' },
+          { name: 'W', kind: 'window', values: [21, 63] },
+        ],
+      },
+    ],
+  },
   '/api/forge/workshop/trials': [
     {
       id: 1,
@@ -964,6 +996,22 @@ export const FIXTURES: Record<string, unknown> = {
     residualSharpe: 1.1,
     nObs: 250,
     factorsUsed: ['momentum', 'size'],
+  },
+
+  // --- Run Advisor -----------------------------------------------------------
+  '/api/forge/advisor/preflight': {
+    paragraph:
+      'anl4_eps_mean is daily with 72% coverage. Track record: this template has no logged ' +
+      'attempts yet on this kind of data — its first result here will be the first entry.',
+    warnings: [],
+  },
+  '/api/forge/advisor/postrun/ALPHA1': {
+    alphaId: 'ALPHA1',
+    verdict:
+      'train Sharpe is 1.80 and holds up at 1.20 on the held-out test years; ' +
+      "BRAIN's checks say it is submittable.",
+    action: 'Nothing is flagging here — follow the Board checklist to submit it by hand.',
+    actionKind: 'ready',
   },
 }
 

@@ -24,6 +24,10 @@ import { useNow } from '@/lib/now'
 import { useRefetchOn } from '@/lib/ws'
 import { AlphaTable, type AlphaTableRow, fromRanked, option } from '@/screens/alpha-table'
 import { DatasetChips, useDatasetTree } from '@/screens/data/dataset-chips'
+import { useForgeTasks } from '@/screens/forge/tasks-bridge'
+// forge: every Forge simulation (Pipelines, Workbench, Workshop) appears in this same list —
+// see screens/forge/tasks-bridge.ts for why it is a projection rather than a Study row.
+import { ForgeTaskDetail } from '@/screens/forge/tasks-bridge-detail'
 import { alphaIds, useDetailSheet } from '@/screens/pool/detail'
 import { MAX_SIMULATIONS } from '@/screens/research-labs/lab-task'
 import { type LabTask, labTasks, type RankedAlpha, TOP_LIMIT } from '@/screens/tasks/api'
@@ -104,11 +108,17 @@ const TASK_DETAIL = 'task-detail'
 
 type Act = { action: 'runAll' } | { action: 'run' | 'pause' | 'stop' | 'remove'; task: LabTask }
 
+/** A row only a lab Study can act on: Run/Pause/Stop/Edit/Rename/Remove assume a resumable
+ *  Trial queue a Forge run does not have (it already ran once, to completion or failure). */
+const isLabTask = (task: LabTask) => task.source === undefined || task.source === 'lab'
+
 export function TasksScreen() {
   const queryClient = useQueryClient()
   const list = useQuery({ queryKey: ['lab-tasks'], queryFn: labTasks.list })
   useRefetchOn('studies', ['lab-tasks'], 2_000)
   useRefetchOn('simulations', ['lab-tasks'], 5_000)
+  // forge: merged in below, so Pipelines/Workbench/Workshop runs share this one list.
+  const forgeRows = useForgeTasks()
   const [editing, setEditing] = useState<LabTask | null>(null)
   const [renaming, setRenaming] = useState<LabTask | null>(null)
   const [confirming, setConfirming] = useState<Act | null>(null)
@@ -124,7 +134,7 @@ export function TasksScreen() {
     })
   // Once the reader has opened or closed a task, it stays their choice.
   const chose = useRef(search.task !== undefined)
-  const setSelectedId = (task: number | null) => {
+  const setSelectedId = (task: number | string | null) => {
     chose.current = true
     void navigate({
       search: ({ task: _, ...s }) => (task === null ? s : { ...s, task }),
@@ -144,7 +154,9 @@ export function TasksScreen() {
     meta: { inline: true },
     mutationFn: async (a: Act) => {
       if (a.action === 'runAll') await labTasks.runAll()
-      else await labTasks[a.action](a.task.id)
+      // forge: these actions only ever reach a lab-sourced task — Actions below hides them
+      // for a Forge-origin row, whose id is not a Study id.
+      else await labTasks[a.action](a.task.id as number)
     },
     onSuccess: () => {
       setConfirming(null)
@@ -159,7 +171,11 @@ export function TasksScreen() {
     setConfirming(a)
   }
 
-  const all = list.data?.tasks ?? []
+  // forge: Pipelines/Workbench/Workshop runs share this list — newest first, same as the
+  // lab tasks they are mixed with.
+  const all = [...(list.data?.tasks ?? []), ...forgeRows].sort((a, b) =>
+    (b.createdAt ?? '').localeCompare(a.createdAt ?? ''),
+  )
   const slots = list.data?.slots ?? 8
   const open = all.filter((t) => t.status !== 'COMPLETE' && t.status !== 'FAILED')
   const total = (tasks: LabTask[], pick: (t: LabTask) => number) =>
@@ -191,8 +207,10 @@ export function TasksScreen() {
           </span>
           <span className="text-ink-subtle">
             {t.name && ` · ${t.labName}${t.templateName ? ` · ${t.templateName}` : ''}`}
-            {/* A sweep spans many markets, so naming the source Alpha's one would mislead. */}
-            {t.lab === SETTINGS_SAMPLER ? (
+            {/* forge: a Forge-origin row's `name` above already carries its source tag
+                (pipeline/field set, or scope, or hypothesis); the region/delay/dataset line
+                below assumes a lab Study and has nothing to add, or nothing real to show. */}
+            {!isLabTask(t) ? null : t.lab === SETTINGS_SAMPLER ? (
               <>
                 {/* A sweep started from a typed expression has no source Alpha: "" not null. */}
                 {t.alphaId && (
@@ -399,12 +417,18 @@ export function TasksScreen() {
       )}
       {view === 'tasks' && selected && (
         <div id={TASK_DETAIL} className="scroll-mt-4">
-          <TaskDetail
-            task={selected}
-            onOpenAlpha={detail.open}
-            openAlpha={detail.openId}
-            onClose={() => setSelectedId(null)}
-          />
+          {/* forge: a Forge-origin row has no Trial rows to read "top Alphas" from — its own
+              screen's results are read directly instead. */}
+          {isLabTask(selected) ? (
+            <TaskDetail
+              task={selected}
+              onOpenAlpha={detail.open}
+              openAlpha={detail.openId}
+              onClose={() => setSelectedId(null)}
+            />
+          ) : (
+            <ForgeTaskDetail task={selected} onClose={() => setSelectedId(null)} />
+          )}
         </div>
       )}
 
@@ -499,6 +523,9 @@ function Actions({
 }) {
   const { status, stopping } = task
   const finished = status === 'COMPLETE' || status === 'FAILED'
+  // forge: a Forge-origin row already ran to completion the moment its own screen started it —
+  // nothing here resumes, pauses or renames it.
+  if (!isLabTask(task)) return null
   return (
     // Inside a clickable row: a click on these must not also select the row.
     <span
@@ -598,7 +625,9 @@ function TaskDetail({
     queryKey: ['lab-task-top', task.id],
     // The whole sweep is worth scrolling; the table virtualises, so the rows are cheap. Not
     // the target: cached Alphas and Full re-runs come back on top of it.
-    queryFn: () => labTasks.top(task.id, TOP_LIMIT),
+    // forge: TaskDetail only ever renders for a lab-sourced task (see index.tsx's switch
+    // above), whose id is a Study id.
+    queryFn: () => labTasks.top(task.id as number, TOP_LIMIT),
   })
   useRefetchOn('studies', ['lab-task-top', task.id], 10_000)
   // Arrives sorted on the objective already.
@@ -832,7 +861,8 @@ function RenameTask({ task, onClose }: { task: LabTask; onClose: () => void }) {
   const [name, setName] = useState(task.name ?? '')
   const rename = useMutation({
     meta: { inline: true },
-    mutationFn: () => labTasks.rename(task.id, name),
+    // forge: RenameTask only opens from a lab-sourced row's menu (Actions hides it otherwise).
+    mutationFn: () => labTasks.rename(task.id as number, name),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['lab-tasks'] })
       void queryClient.invalidateQueries({ queryKey: ['submittable-alphas'] })
@@ -890,7 +920,8 @@ function EditTask({ task, slots, onClose }: { task: LabTask; slots: number; onCl
   const valid = Number.isInteger(count) && count >= least && count <= MAX_SIMULATIONS
   const change = useMutation({
     meta: { inline: true },
-    mutationFn: () => labTasks.change(task.id, { cores, simulations: count }),
+    // forge: EditTask only opens from a lab-sourced row's Edit button (Actions hides it otherwise).
+    mutationFn: () => labTasks.change(task.id as number, { cores, simulations: count }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['lab-tasks'] })
       onClose()

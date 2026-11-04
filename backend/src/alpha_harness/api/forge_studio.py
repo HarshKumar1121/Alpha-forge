@@ -84,6 +84,14 @@ class PreviewRequest(Out):
     #: A Data Nugget instead of a field set — its fields fill the slots, each wrapped in its
     #: own resolved data-treatment (override or default), not the template's own cleaning.
     nugget_id: str | None = None
+    # forge: fields picked on the spot (the selection-first Template Lab flow) — same idea as
+    # CompatibleFieldsRequest, so a template can be previewed and its slots swapped live without
+    # first saving a named field set.
+    field_ids: list[str] | None = Field(default=None, max_length=500)
+    region: str | None = None
+    universe: str | None = None
+    delay: int | None = None
+    instrument_type: str | None = None
     #: Slot name -> a pinned value (a field id, a window, a group), or a list of them.
     choices: dict[str, Any] = Field(default_factory=dict[str, Any])
     limit: int = Field(default=50, ge=1, le=MAX_RENDERED)
@@ -266,11 +274,17 @@ async def _operators(state: State) -> dict[str, dict[str, Any]]:
 async def preview(body: PreviewRequest, state: State) -> PreviewResponse:
     """Every alpha a template renders on a field set or a Data Nugget, and what each one
     qualifies for."""
-    if (body.field_set_id is None) == (body.nugget_id is None):
+    sources = (
+        body.field_set_id is not None,
+        body.nugget_id is not None,
+        body.field_ids is not None,
+    )
+    if sum(sources) != 1:
         raise refuse(
             422,
             "bad_source",
-            "Give exactly one of fieldSetId or nuggetId to fill the template's field slots.",
+            "Give exactly one of fieldSetId, nuggetId or fieldIds to fill the template's field "
+            "slots.",
         )
     t = await _template(state, body.template_id)
 
@@ -283,6 +297,23 @@ async def preview(body: PreviewRequest, state: State) -> PreviewResponse:
         set_rows = resolved["fields"]
         missing_fields = resolved["missing"]
         field_set_label = row.name
+    elif body.field_ids is not None:
+        if body.region is None or body.universe is None or body.delay is None:
+            raise refuse(
+                422,
+                "bad_source",
+                "fieldIds needs region, universe and delay to know which market to preview on.",
+            )
+        scope = ScopeModel(
+            instrument_type=body.instrument_type or "EQUITY",
+            region=body.region,
+            delay=body.delay,
+            universe=body.universe,
+        ).to_tuple4()
+        set_rows = await state.queries.fields_by_id(scope, body.field_ids)
+        found = {str(r["field_id"]) for r in set_rows}
+        missing_fields = [f for f in body.field_ids if f not in found]
+        field_set_label = "(fields picked on this screen)"
     else:
         nugget = await _nugget(state, body.nugget_id)  # type: ignore[arg-type]
         scope = ScopeModel(

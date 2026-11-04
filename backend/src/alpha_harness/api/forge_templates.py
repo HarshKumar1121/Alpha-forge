@@ -13,9 +13,11 @@ from fastapi import APIRouter
 from pydantic import Field
 from sqlalchemy import select
 
+from ..catalog.queries import FieldFilter
 from ..forge.alpha_types import load_all
-from ..forge.data.fieldsets import resolve
+from ..forge.data.fieldsets import MAX_FIELDS, resolve
 from ..forge.data.models import MANUAL, FieldSet
+from ..forge.data.scope import Scope as ScopeModel
 from ..forge.expr import analyse
 from ..forge.local.template_fill import Unavailable, gym_example
 from ..forge.research.binding import field_infos
@@ -164,6 +166,31 @@ def _slot(name: str, s: object) -> ForgeTemplateSlot:
         )
     kind: Literal["window", "group"] = "group" if isinstance(s, GroupSlot) else "window"
     return ForgeTemplateSlot(name=name, kind=kind, values=list(getattr(s, "values", ())))
+
+
+# forge: the Template Lab's selection-first flow picks a market and a dataset category before
+# any field — so eligibility has to be checked against the scope's whole field catalog, not a
+# field_ids list the user has not picked yet.
+class ScopeTemplate(Out):
+    id: str
+    name: str
+    #: The template author's own taxonomy, e.g. "fundamental/value-quality" — the part before
+    #: the slash is what the Template Lab offers as a dataset category.
+    category: str
+    dataset_category: str
+    complexity: str
+    angle: str
+    rationale: str
+    #: False when nothing in this market's field catalog could fill every field slot.
+    scope_eligible: bool
+    slots: list[ForgeTemplateSlot]
+
+
+class ScopeTemplates(Out):
+    templates: list[ScopeTemplate]
+    #: Every dataset category any template declares, for the picker's chips — not filtered to
+    #: this scope, so switching market never hides a category the user had open.
+    dataset_categories: list[str]
 
 
 def _summary(
@@ -319,6 +346,49 @@ async def compatible_templates(body: CompatibleFieldsRequest, state: State) -> C
             if fits_fields(t, fields)
         ]
     )
+
+
+@router.get("/by-scope")
+async def templates_by_scope(
+    region: str,
+    universe: str,
+    delay: int,
+    state: State,
+    instrument_type: str = "EQUITY",
+    dataset_category: str | None = None,
+) -> ScopeTemplates:
+    """Templates for a market, picked before any field — the Template Lab's own order.
+
+    Reads every field this scope's catalog carries (up to the same 500-field cap a field set
+    resolves to) and keeps the templates whose slots that catalog could fill at all
+    (:func:`~..forge.research.templates.fits_fields`), the same check ``/compatible`` runs
+    against a user's own field_ids. Templates outside ``dataset_category`` (the template's own
+    ``category`` prefix, e.g. ``fundamental``) are left out entirely rather than marked
+    ineligible — the Lab only ever shows templates for the category in hand.
+    """
+    scope = ScopeModel(
+        instrument_type=instrument_type, region=region, delay=delay, universe=universe
+    ).to_tuple4()
+    page = await state.queries.fields(scope, FieldFilter(limit=MAX_FIELDS))
+    fields = field_infos(page["results"])
+    all_templates = load_library().templates
+    categories = sorted({t.category.split("/", 1)[0] for t in all_templates})
+    templates = [
+        ScopeTemplate(
+            id=t.id,
+            name=t.name,
+            category=t.category,
+            dataset_category=t.category.split("/", 1)[0],
+            complexity=t.complexity,
+            angle=t.angle,
+            rationale=t.rationale,
+            scope_eligible=fits_fields(t, fields),
+            slots=[_slot(k, s) for k, s in t.slots.items()],
+        )
+        for t in all_templates
+        if dataset_category is None or t.category.split("/", 1)[0] == dataset_category
+    ]
+    return ScopeTemplates(templates=templates, dataset_categories=categories)
 
 
 @router.get("/{template_id}")

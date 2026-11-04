@@ -31,6 +31,7 @@ from .api import (
     catalog,
     chat,
     competitions,
+    forge_advisor,  # forge: Run Advisor (preflight/postrun synthesis); same missing seam
     forge_agent,  # forge: AI agent tools, memory and approval cards; same missing seam
     forge_analytics,  # forge: tear-sheet analytics over real recordsets; same missing seam
     forge_board,  # forge: Submittable Board (families, why-not, repairs); same missing seam
@@ -211,6 +212,7 @@ def create_app() -> FastAPI:
     app.include_router(forge_pipelines.router)  # forge: Pipelines (preview free, run spends quota)
     app.include_router(forge_board.router)  # forge: Submittable Board (repairs spend validate lane)
     app.include_router(forge_analytics.router)  # forge: tear-sheet analytics (read-only)
+    app.include_router(forge_advisor.router)  # forge: Run Advisor (read-only, spends nothing)
     app.include_router(forge_agent.router)  # forge: agent tools/memory (approve route spends)
     app.include_router(forge_workshop.router)  # forge: Workshop (trial spends validate lane)
     app.include_router(forge_workbench.router)  # forge: Workbench tray (local SQLite only)

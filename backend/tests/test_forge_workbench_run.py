@@ -205,3 +205,29 @@ async def test_a_failed_simulation_is_reported_per_item(
 async def test_get_run_404s_for_an_unknown_task(client: httpx2.AsyncClient) -> None:
     res = await client.get("/api/forge/workbench/run/no-such-task", headers=CLIENT)
     assert res.status_code == 404
+
+
+async def test_runs_lists_every_run_grouped_for_the_tasks_screen(
+    client: httpx2.AsyncClient, harness: Harness
+) -> None:
+    res = await client.post(
+        "/api/forge/workbench/run",
+        params=USA,
+        json={"candidates": [{"expression": "rank(close)"}, {"expression": "rank(volume)"}]},
+        headers=CLIENT,
+    )
+    started = res.json()
+    await drain(harness.engine)
+    await _wait_for_run(client, started["taskId"])
+
+    res = await client.get("/api/forge/workbench/runs", headers=CLIENT)
+    assert res.status_code == 200, res.text
+    rows = res.json()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["taskId"] == started["taskId"]
+    assert row["region"] == "USA"
+    assert row["total"] == 2
+    assert row["done"] == 2
+    assert row["failed"] == 0
+    assert row["bestSharpe"] == pytest.approx(1.8)

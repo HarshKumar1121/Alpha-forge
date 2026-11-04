@@ -119,6 +119,61 @@ async def test_compatible_only_offers_templates_these_fields_can_actually_bind(
     assert all(isinstance(i, str) for i in ids)
 
 
+# -- GET /by-scope: templates for a market, picked before any field -----------
+
+
+async def test_by_scope_offers_only_templates_this_markets_catalog_could_fill(
+    client_and_state: tuple[httpx2.AsyncClient, Any],
+) -> None:
+    client, state = client_and_state
+    await _seed_dispersion_fields(state.catalog)
+
+    res = await client.get(
+        "/api/forge/templates/by-scope",
+        params={"region": "USA", "universe": "TOP3000", "delay": 1},
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    by_id = {t["id"]: t for t in body["templates"]}
+    assert by_id["analyst_dispersion"]["scopeEligible"] is True
+    assert by_id["analyst_dispersion"]["datasetCategory"] == "analyst"
+    assert by_id["analyst_dispersion"]["slots"]
+    assert "analyst" in body["datasetCategories"]
+
+
+async def test_by_scope_filters_to_one_dataset_category(
+    client_and_state: tuple[httpx2.AsyncClient, Any],
+) -> None:
+    client, state = client_and_state
+    await _seed_dispersion_fields(state.catalog)
+
+    res = await client.get(
+        "/api/forge/templates/by-scope",
+        params={
+            "region": "USA",
+            "universe": "TOP3000",
+            "delay": 1,
+            "dataset_category": "analyst",
+        },
+    )
+    assert res.status_code == 200, res.text
+    ids = {t["id"] for t in res.json()["templates"]}
+    assert ids and ids <= {"analyst_dispersion", "analyst_revision", "analyst_revision_group"}
+
+    none = await client.get(
+        "/api/forge/templates/by-scope",
+        params={
+            "region": "USA",
+            "universe": "TOP3000",
+            "delay": 1,
+            "dataset_category": "sentiment",
+        },
+    )
+    assert {t["id"] for t in none.json()["templates"]} and all(
+        t["datasetCategory"] == "sentiment" for t in none.json()["templates"]
+    )
+
+
 async def test_compatible_rejects_the_decoy_same_dataset_field(
     client_and_state: tuple[httpx2.AsyncClient, Any],
 ) -> None:

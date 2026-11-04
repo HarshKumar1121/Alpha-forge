@@ -427,6 +427,68 @@ describe('the Workbench screen', () => {
     await waitFor(() => expect(screen.getByText('1 in tray')).toBeTruthy())
     expect(screen.queryByText(CRASHED)).toBeNull()
   })
+
+  it('Template Lab offers only templates for the market and category, fields editable', async () => {
+    await mount('/forge/workbench')
+    expect(screen.getByText('Template Lab')).toBeTruthy()
+
+    // A dataset category chip filters the template list before any field is picked.
+    fireEvent.click(screen.getByRole('radio', { name: 'analyst' }))
+    const templatePicker = screen.getByRole('combobox', { name: 'Template' })
+    await act(async () => {
+      templatePicker.click()
+    })
+    const option = await screen.findByRole('option', { name: /Revision against peers/ })
+    await act(async () => {
+      option.click()
+    })
+
+    // Its field slots show up, editable right there — not locked to a saved field set.
+    await waitFor(() => expect(screen.getByText(/Slot X/)).toBeTruthy())
+    expect(screen.getByText(/Slot W/)).toBeTruthy()
+
+    const slotX = screen.getByRole('combobox', { name: 'Slot X' })
+    await act(async () => {
+      slotX.click()
+    })
+    const field = await screen.findByRole('option', { name: 'anl4_rev_mean' })
+    await act(async () => {
+      field.click()
+    })
+
+    await waitFor(() =>
+      expect(screen.getByText('rank(ts_delta(ts_backfill(anl4_rev_mean, 63), 63))')).toBeTruthy(),
+    )
+    expect(screen.queryByText(CRASHED)).toBeNull()
+  })
+})
+
+describe('the Tasks screen', () => {
+  it('lists a Pipelines run, a Workbench run and a Workshop trial, tagged with their source', async () => {
+    await mount('/tasks')
+    // Pipelines: `pipeline on fieldSet`, same as its own run-history panel shows it.
+    expect(screen.getByText('regular on USA TOP3000 analyst')).toBeTruthy()
+    // Workbench: candidate count and the scope it ran on.
+    expect(screen.getByText('2 candidates on USA D1 TOP3000')).toBeTruthy()
+    // Workshop: the hypothesis title and its verdict.
+    expect(
+      screen.getByText(/Analyst revisions mean-revert fast · regular \(SURVIVES\)/),
+    ).toBeTruthy()
+    // Each row says which Forge screen produced it — the "tagged with its source" part.
+    expect(screen.getByText(/Forge Pipeline/)).toBeTruthy()
+    expect(screen.getByText(/Forge Workbench/)).toBeTruthy()
+    expect(screen.getByText(/Forge Workshop/)).toBeTruthy()
+    expect(screen.queryByText(CRASHED)).toBeNull()
+  })
+
+  it('opens a Forge run with its own results, not a lab task’s Run/Pause/Stop controls', async () => {
+    await mount('/tasks')
+    fireEvent.click(screen.getByText('regular on USA TOP3000 analyst'))
+    await waitFor(() => expect(screen.getByText('Finalists')).toBeTruthy())
+    expect(screen.getByText('rank(ts_delta(ts_backfill(anl4_eps_mean, 63), 21))')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Run' })).toBeNull()
+    expect(screen.queryByText(CRASHED)).toBeNull()
+  })
 })
 
 describe('the Forge Analytics screen', () => {

@@ -7,8 +7,15 @@ type Schemas = components['schemas']
 
 /** IDLE: not started. QUEUED: run, waiting for its cores to fit in the free slots. */
 export type TaskStatus = Schemas['StudyStatus']
-export type LabTask = Schemas['LabTask']
-export type LabTasks = Schemas['LabTasks']
+// forge: a lab Study's id is a number; a Forge run's id (Pipelines/Workbench task id, or a
+// Workshop trial id) is projected here as a string by screens/forge/tasks-bridge.ts, so every
+// Forge simulation can appear in this same list (CLAUDE.md: tag each with its source).
+export type LabTask = Omit<Schemas['LabTask'], 'id'> & {
+  id: number | string
+  /** Which Forge screen produced this row. Absent (or `'lab'`) for an ordinary Study row. */
+  source?: 'lab' | 'forge-pipeline' | 'forge-workbench' | 'forge-workshop'
+}
+export type LabTasks = Omit<Schemas['LabTasks'], 'tasks'> & { tasks: LabTask[] }
 export type RankedAlpha = Omit<Schemas['RankedAlpha'], 'settings'> & {
   settings: { universe?: string; neutralization?: string; [key: string]: unknown } | null
 }
