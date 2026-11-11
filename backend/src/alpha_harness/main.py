@@ -35,6 +35,7 @@ from .api import (
     forge_agent,  # forge: AI agent tools, memory and approval cards; same missing seam
     forge_analytics,  # forge: tear-sheet analytics over real recordsets; same missing seam
     forge_board,  # forge: Submittable Board (families, why-not, repairs); same missing seam
+    forge_breakdown,  # forge: Results Breakdown for a finished task; same missing seam
     forge_data,  # forge: scopes, datasets, crowding; same missing seam
     forge_fieldsets,  # forge: field sets CRUD; same missing seam
     forge_gym,  # forge: Gym Playground route; no router auto-discovery seam exists
@@ -216,6 +217,7 @@ def create_app() -> FastAPI:
     app.include_router(forge_probe.router)  # forge: probe a real field (spends explore lane)
     app.include_router(forge_regression.router)  # forge: Regression Lab (spends explore lane)
     app.include_router(forge_board.router)  # forge: Submittable Board (repairs spend validate lane)
+    app.include_router(forge_breakdown.router)  # forge: Results Breakdown (read-only; stage local)
     app.include_router(forge_submit_helper.router)  # forge: Submit Helper (read-only)
     app.include_router(forge_analytics.router)  # forge: tear-sheet analytics (read-only)
     app.include_router(forge_advisor.router)  # forge: Run Advisor (read-only, spends nothing)

@@ -14,6 +14,11 @@ court:
   delay_days: 5
   retention: 0.6
   survive_score: 0.7
+  # Results Breakdown's near-miss cutoff: a failing check's value/limit margin (computed per
+  # check, see forge/board/breakdown.py:check_margin) at or above this counts as "close enough
+  # a repair is worth queuing". Starting point only -- re-check it against the real margins a
+  # finished task actually produces (Part 4) before trusting it.
+  near_miss_margin: 0.75
   severity:
     direction: 3
     stability: 3

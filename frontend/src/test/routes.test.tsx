@@ -45,6 +45,7 @@ const ROUTES = [
   '/forge/studio',
   '/forge/pipelines',
   '/forge/board',
+  '/forge/breakdown/1',
   '/forge/submit-helper',
   '/forge/workshop',
   '/forge/fieldsets',

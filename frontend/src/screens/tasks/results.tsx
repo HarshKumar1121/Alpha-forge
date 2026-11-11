@@ -259,10 +259,19 @@ export function TaskResultsScreen() {
             : 'Every Alpha this task produced'
         }
         actions={
-          <Button variant="ghost" render={<Link to="/tasks" search={{ task: id }} />}>
-            <ArrowLeftIcon />
-            Back to Tasks
-          </Button>
+          <div className="flex gap-2">
+            {/* forge: Results Breakdown over this task's own results; nothing new spent here */}
+            <Button
+              variant="ghost"
+              render={<Link to="/forge/breakdown/$taskId" params={{ taskId: String(id) }} />}
+            >
+              View results breakdown
+            </Button>
+            <Button variant="ghost" render={<Link to="/tasks" search={{ task: id }} />}>
+              <ArrowLeftIcon />
+              Back to Tasks
+            </Button>
+          </div>
         }
       />
 

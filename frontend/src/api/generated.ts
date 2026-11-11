@@ -1213,6 +1213,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/forge/breakdown/{task_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Breakdown
+         * @description Three sections over a finished task's own results. Free: nothing here reaches BRAIN.
+         */
+        get: operations["get_breakdown_api_forge_breakdown__task_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/breakdown/{task_id}/alphas/{alpha_id}/stage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stage For Repair
+         * @description Write (or refresh) the ``PipelineAlpha`` row ``/api/forge/board/repair`` needs to find
+         *     this Template Lab alpha. Spends nothing: it is a local write, not a simulation.
+         */
+        post: operations["stage_for_repair_api_forge_breakdown__task_id__alphas__alpha_id__stage_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/forge/data/datasets": {
         parameters: {
             query?: never;
@@ -1958,6 +1999,66 @@ export interface paths {
          *     qualifies for.
          */
         post: operations["preview_api_forge_studio_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/submit-helper/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check
+         * @description Start checking self- and production correlation for a hand-picked set of alphas.
+         */
+        post: operations["check_api_forge_submit_helper_check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/submit-helper/recent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recent
+         * @description Recent pipeline alphas, newest first, to pick from instead of pasting ids by hand.
+         */
+        get: operations["recent_api_forge_submit_helper_recent_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/submit-helper/result": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Result
+         * @description The last completed check, if any. Free: reads only what was already kept.
+         */
+        get: operations["result_api_forge_submit_helper_result_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4207,6 +4308,32 @@ export interface components {
         BrainPayload: {
             [key: string]: unknown;
         };
+        /** Breakdown */
+        Breakdown: {
+            /** Failures */
+            failures: components["schemas"]["FailureCount"][];
+            /** Minn */
+            minN: number;
+            /** Nearmissmargin */
+            nearMissMargin: number;
+            /** Nearmisses */
+            nearMisses: components["schemas"]["NearMiss"][];
+            /** Poolcollisionceiling */
+            poolCollisionCeiling: number;
+            /**
+             * Sliceby
+             * @enum {string}
+             */
+            sliceBy: "field" | "dataset" | "setting";
+            /** Slicesetting */
+            sliceSetting: ("neutralization" | "decay" | "universe") | null;
+            /** Slices */
+            slices: components["schemas"]["SliceRow"][];
+            /** Submitorder */
+            submitOrder: components["schemas"]["SubmitCandidate"][];
+            /** Total */
+            total: number;
+        };
         /** BreakerPlan */
         BreakerPlan: {
             /** Alphaid */
@@ -4427,6 +4554,13 @@ export interface components {
             role: string;
             /** Value */
             value?: unknown;
+        };
+        /** CheckRequest */
+        CheckRequest: {
+            /** Alphaids */
+            alphaIds: string[];
+            /** Threshold */
+            threshold: number;
         };
         /**
          * CheckResult
@@ -5062,6 +5196,13 @@ export interface components {
             rSquared: number | null;
             /** Residualsharpe */
             residualSharpe: number | null;
+        };
+        /** FailureCount */
+        FailureCount: {
+            /** Check */
+            check: string;
+            /** Count */
+            count: number;
         };
         /** FamilyOut */
         FamilyOut: {
@@ -6344,6 +6485,25 @@ export interface components {
             version: number;
             /** Yamltext */
             yamlText: string;
+        };
+        /** NearMiss */
+        NearMiss: {
+            /** Alphaid */
+            alphaId: string;
+            /** Failedcheck */
+            failedCheck: string;
+            /** Field */
+            field: string;
+            /** Limit */
+            limit: number;
+            /** Margin */
+            margin: number;
+            /** Repairkey */
+            repairKey: string;
+            /** Value */
+            value: number;
+            /** Why */
+            why: string;
         };
         /** NetFigures */
         NetFigures: {
@@ -7662,6 +7822,22 @@ export interface components {
             level: "MINIMAL" | "LOW" | "MEDIUM" | "HIGH";
             value: components["schemas"]["Reasoning"];
         };
+        /** RecentAlpha */
+        RecentAlpha: {
+            /** Alphaid */
+            alphaId: string;
+            /** Alphatype */
+            alphaType: string;
+            /**
+             * Createdat
+             * Format: date-time
+             */
+            createdAt: string;
+            /** Id */
+            id: number;
+            /** Pipeline */
+            pipeline: string;
+        };
         /** Recipe */
         Recipe: {
             /** Code */
@@ -8317,6 +8493,19 @@ export interface components {
             /** Universe */
             universe: string | null;
         };
+        /** SliceRow */
+        SliceRow: {
+            /** Key */
+            key: string;
+            /** Mediantestsharpe */
+            medianTestSharpe: number | null;
+            /** Mediantrainsharpe */
+            medianTrainSharpe: number | null;
+            /** N */
+            n: number;
+            /** Passrate */
+            passRate: number | null;
+        };
         /** SourceSettings */
         SourceSettings: {
             /** Decay */
@@ -8354,6 +8543,11 @@ export interface components {
             significantHalf2: boolean;
             /** Stable */
             stable: boolean;
+        };
+        /** Staged */
+        Staged: {
+            /** Alphaid */
+            alphaId: string;
         };
         /** StatsItem */
         StatsItem: {
@@ -8427,6 +8621,55 @@ export interface components {
             sharpe: number | null;
             /** Verdict */
             verdict: string;
+        };
+        /** SubmitCandidate */
+        SubmitCandidate: {
+            /** Alphaid */
+            alphaId: string;
+            /** Bestcorrelation */
+            bestCorrelation: number | null;
+            /** Bestcorrelationwith */
+            bestCorrelationWith: string | null;
+            /** Expression */
+            expression: string;
+            /** Familysize */
+            familySize: number;
+            /** Hascheckdata */
+            hasCheckData: boolean;
+            /** Highoverlap */
+            highOverlap: boolean;
+            /** Trainsharpe */
+            trainSharpe: number | null;
+        };
+        /** SubmitHelperAlphaRow */
+        SubmitHelperAlphaRow: {
+            /** Alphaid */
+            alphaId: string;
+            /** Lastchecked */
+            lastChecked: string | null;
+            /** Prodcorrelation */
+            prodCorrelation: number | null;
+            /** Selfcorrelation */
+            selfCorrelation: number | null;
+            /** Verdict */
+            verdict: string;
+        };
+        /** SubmitHelperResult */
+        SubmitHelperResult: {
+            /** Alphas */
+            alphas: components["schemas"]["SubmitHelperAlphaRow"][];
+            /** Matrix */
+            matrix: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
+            /** Recommended */
+            recommended: string[];
+            /** Summary */
+            summary: string;
+            /** Threshold */
+            threshold: number;
         };
         /** SubmittableAlpha */
         SubmittableAlpha: {
@@ -11745,6 +11988,74 @@ export interface operations {
             };
         };
     };
+    get_breakdown_api_forge_breakdown__task_id__get: {
+        parameters: {
+            query?: {
+                group_by?: "field" | "dataset" | "setting";
+                setting_name?: ("neutralization" | "decay" | "universe") | null;
+                min_n?: number;
+                pool_collision_ceiling?: number | null;
+            };
+            header?: never;
+            path: {
+                task_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Breakdown"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stage_for_repair_api_forge_breakdown__task_id__alphas__alpha_id__stage_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                task_id: number;
+                alpha_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Staged"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     datasets_api_forge_data_datasets_get: {
         parameters: {
             query: {
@@ -13134,6 +13445,90 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    check_api_forge_submit_helper_check_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskStarted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    recent_api_forge_submit_helper_recent_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecentAlpha"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    result_api_forge_submit_helper_result_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmitHelperResult"] | null;
                 };
             };
         };

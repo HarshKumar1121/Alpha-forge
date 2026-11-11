@@ -169,9 +169,15 @@ async def queue_repair(body: RepairRequest, state: State) -> RepairQueued:
     expression, settings = apply_repair(row.expression, row.settings, row.field, rule)
 
     types = load_alpha_types()
-    if row.alpha_type not in types:
+    if row.alpha_type in types:
+        sim_type = types[row.alpha_type].sim_type
+    elif row.sim_type:
+        # Staged from outside a pipeline (Results Breakdown): no Forge alpha type names it,
+        # so the simulation type it already ran under, recorded when it was staged, stands in.
+        sim_type = row.sim_type
+    else:
         raise refuse(422, "unknown_alpha_type", f"No alpha type {row.alpha_type!r}.")
-    request = request_for(expression, settings, types[row.alpha_type].sim_type)
+    request = request_for(expression, settings, sim_type)
 
     governor = state.engine.governor
     if governor is None:

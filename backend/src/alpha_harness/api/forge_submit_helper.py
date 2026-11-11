@@ -76,7 +76,7 @@ class TaskStarted(Out):
     task_id: str
 
 
-class AlphaRow(Out):
+class SubmitHelperAlphaRow(Out):
     alpha_id: str
     self_correlation: float | None
     prod_correlation: float | None
@@ -86,7 +86,7 @@ class AlphaRow(Out):
 
 class SubmitHelperResult(Out):
     threshold: float
-    alphas: list[AlphaRow]
+    alphas: list[SubmitHelperAlphaRow]
     #: Pairwise self-correlation among just the submitted alphas, ``alpha_id -> alpha_id -> value``.
     #: Only pairs BRAIN's own records could identify are present.
     matrix: dict[str, dict[str, float]]
@@ -151,7 +151,7 @@ def _verdict(prod: float | None, threshold: float) -> str:
     return "PASS" if prod < threshold else "FAIL"
 
 
-def _summary(alphas: list[AlphaRow], recommended: list[str]) -> str:
+def _summary(alphas: list[SubmitHelperAlphaRow], recommended: list[str]) -> str:
     total = len(alphas)
     passing = [a for a in alphas if a.verdict == "PASS"]
     npass = len(passing)
@@ -214,7 +214,7 @@ async def _run(
 ) -> SubmitHelperResult:
     now = utcnow()
     wanted = set(alpha_ids)
-    rows: list[AlphaRow] = []
+    rows: list[SubmitHelperAlphaRow] = []
     self_bodies: dict[str, dict[str, Any] | None] = {}
     for n, alpha_id in enumerate(alpha_ids, 1):
         await report(f"Checking {n}/{len(alpha_ids)}: {alpha_id}")
@@ -223,7 +223,7 @@ async def _run(
         self_val = _max_value(self_body) if self_body else None
         prod_val = _max_value(prod_body) if prod_body else None
         rows.append(
-            AlphaRow(
+            SubmitHelperAlphaRow(
                 alpha_id=alpha_id,
                 self_correlation=self_val,
                 prod_correlation=prod_val,

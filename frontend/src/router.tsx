@@ -195,6 +195,14 @@ const forgeBoard = createRoute({
   path: 'board',
   component: lazyRouteComponent(() => import('@/screens/forge/board'), 'BoardScreen'),
 })
+const forgeBreakdown = createRoute({
+  getParentRoute: () => forge,
+  path: 'breakdown/$taskId',
+  component: lazyRouteComponent(
+    () => import('@/screens/forge/results-breakdown'),
+    'ResultsBreakdownScreen',
+  ),
+})
 const forgeSubmitHelper = createRoute({
   getParentRoute: () => forge,
   path: 'submit-helper',
@@ -355,6 +363,7 @@ export const routeTree = root.addChildren([
     forgeStudio,
     forgePipelines,
     forgeBoard,
+    forgeBreakdown,
     forgeSubmitHelper,
     forgeWorkshop,
     forgeFieldSets,

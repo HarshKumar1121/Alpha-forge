@@ -37,6 +37,9 @@ class PipelineAlpha(Base):
     template_id: Mapped[str] = mapped_column(String(120), default="")
     #: ``r1``, ``r2``, ``repair``, ... as the Researcher staged it.
     stage: Mapped[str] = mapped_column(String(32), default="")
+    #: BRAIN's simulation type (``REGULAR``, ``SUPER``, ...), for an alpha staged from outside a
+    #: pipeline (Results Breakdown), where ``alpha_type`` names no Forge alpha type to look it up.
+    sim_type: Mapped[str | None] = mapped_column(String(24), default=None)
     train_sharpe: Mapped[float | None] = mapped_column(Float)
     test_sharpe: Mapped[float | None] = mapped_column(Float)
     train_fitness: Mapped[float | None] = mapped_column(Float)
