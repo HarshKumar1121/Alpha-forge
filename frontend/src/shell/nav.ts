@@ -9,7 +9,6 @@ import {
   GaugeIcon, // forge: Today's icon (the quota gauge)
   GavelIcon, // forge: Workshop's icon (the Hypothesis Court)
   Grid3x3Icon,
-  GripIcon, // forge: Data Nuggets' icon
   LayersIcon,
   LayoutGridIcon,
   LayoutPanelLeftIcon, // forge: Workbench's icon
@@ -148,12 +147,6 @@ export const NAV = [
     group: 'Forge',
     label: 'Field Sets',
     icon: BookmarkIcon,
-  },
-  {
-    to: '/forge/nuggets',
-    group: 'Forge',
-    label: 'Data Nuggets',
-    icon: GripIcon,
   },
   {
     to: '/forge/workbench',

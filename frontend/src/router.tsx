@@ -221,11 +221,6 @@ const forgeFieldSets = createRoute({
   path: 'fieldsets',
   component: lazyRouteComponent(() => import('@/screens/forge/fieldsets'), 'FieldSetsScreen'),
 })
-const forgeNuggets = createRoute({
-  getParentRoute: () => forge,
-  path: 'nuggets',
-  component: lazyRouteComponent(() => import('@/screens/forge/nuggets'), 'NuggetsScreen'),
-})
 const forgeWorkbench = createRoute({
   getParentRoute: () => forge,
   path: 'workbench',
@@ -367,7 +362,6 @@ export const routeTree = root.addChildren([
     forgeSubmitHelper,
     forgeWorkshop,
     forgeFieldSets,
-    forgeNuggets,
     forgeWorkbench,
     forgeDataset,
     forgeAnalytics,

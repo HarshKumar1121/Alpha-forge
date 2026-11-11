@@ -36,6 +36,15 @@ teach the user. Prefer readable code with docstrings that explain the quant reas
   queue repair into the validate lane, submission checklist).
 - **Next:** Phase 7 frontend (Submittable Board screen under `screens/forge/board/`).
   Still deferred: wire/verify the Phase 5 Studio frontend and populate `template_stats`.
+- **Removed:** the standalone Data Nuggets browse/manage screen (`screens/forge/nuggets/index.tsx`,
+  its `/forge/nuggets` route and sidebar entry) — nothing else imported it, and every other
+  consumer (Workbench's "nugget" source mode, Template Studio's bind-to-nugget, the Regression
+  Lab's "fill from nugget") already creates/lists/suggests Nuggets inline via
+  `screens/forge/nuggets/api.ts`, which stays. A re-audit for this cleanup found Field Sets and
+  the `forge/nuggets/*` backend package are NOT orphaned (Pipelines, Template Studio, Workshop,
+  the AI agent, Run Advisor and the Correlation Submit Helper all depend on them) and that no
+  orphaned Gym probe scaffolding exists — the only probe code is the live field-behavior-probes
+  feature — so none of that was touched.
 
 ## Layout
 

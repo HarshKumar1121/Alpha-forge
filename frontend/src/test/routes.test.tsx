@@ -49,7 +49,6 @@ const ROUTES = [
   '/forge/submit-helper',
   '/forge/workshop',
   '/forge/fieldsets',
-  '/forge/nuggets',
   '/forge/workbench',
   '/forge/datasets/analyst4',
   '/forge/analytics',
