@@ -9,14 +9,19 @@
  */
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useSearch } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 import { catalog } from '@/api/catalog'
 import { type Scope, scopeLabel } from '@/api/types'
 import { DASH, fmt } from '@/lib/format'
 import { useDebounced } from '@/lib/use-debounced'
 import { PreflightAdvisor } from '@/screens/forge/advisor/panel'
+import { fieldSets } from '@/screens/forge/data/api'
 import { FieldPicker } from '@/screens/forge/data/field-picker'
+import { nuggets } from '@/screens/forge/nuggets/api'
+import { RegressionLabPanel } from '@/screens/forge/regression/panel'
 import { ForgeScopePicker, useForgeScope } from '@/screens/forge/scope/picker'
+import { AlphaSheet, FitSummary, NuggetCard } from '@/screens/forge/studio/alpha-detail'
 import { type PreviewResponse, type RenderedAlpha, studio } from '@/screens/forge/studio/api'
 import { forgeTemplates, type ScopeTemplate } from '@/screens/forge/templates/api'
 import { templateLab } from '@/screens/research-labs/template/api'
@@ -46,6 +51,9 @@ export interface Candidate {
 }
 
 export function WorkbenchScreen() {
+  // forge: a template/field set/nugget forwarded from the old Template Studio route, or from a
+  // link such as Workshop's "Send to Pipelines instead" sibling — read once, on first mount.
+  const initialLab = useSearch({ from: '/forge/workbench' })
   const [scope, setScope] = useForgeScope()
   const client = useQueryClient()
   const [fieldIds, setFieldIds] = useState<string[]>([])
@@ -119,7 +127,7 @@ export function WorkbenchScreen() {
     <Page>
       <PageHeader
         title="Workbench"
-        description="Pick a market, search and tick the fields you want to work with, bind a template or write an expression by hand, and run the ones worth it."
+        description="Pick a market, search and tick the fields you want to work with, bind a template or write an expression by hand, and run the ones worth it. Free-form, one-off experimentation on the reserve lane — no automatic BRAIN verification on what comes back. For alpha-type-directed batch runs with automatic check/correlation on finalists, use Pipelines."
       />
       <Panel
         title="Market"
@@ -127,6 +135,12 @@ export function WorkbenchScreen() {
       >
         <ForgeScopePicker scope={scope} onChange={setScope} />
       </Panel>
+      <RegressionLabPanel
+        scope={scope}
+        fieldIds={fieldIds}
+        onSurvivors={setFieldIds}
+        onPickSuggestion={setFieldIds}
+      />
       <Panel
         title="Field tray"
         description={`What this tells you: the fields picked so far in ${scopeLabel(scope)}, from an existing field set or a live search of the catalog.`}
@@ -148,6 +162,7 @@ export function WorkbenchScreen() {
       />
       <TemplateLab
         scope={scope}
+        initial={initialLab}
         onAdd={(expression, templateId, alphaFieldIds) =>
           addCandidate({ expression, source: 'template', templateId, fieldIds: alphaFieldIds })
         }
@@ -239,16 +254,67 @@ function ExpressionPanel({
  * selection-first, matching old alpha-harness's Template Lab. Fields stay editable per slot
  * (never locked to a saved set) by previewing against this market's whole field catalog and
  * letting a pinned slot narrow it, the same `choices` mechanism Template Studio uses. */
+type LabSource = 'pool' | 'fieldSet' | 'nugget'
+
+interface LabInitial {
+  t: string | undefined
+  fs: number | undefined
+  n: string | undefined
+}
+
 function TemplateLab({
   scope,
   onAdd,
+  initial,
 }: {
   scope: Scope
   onAdd: (expression: string, templateId: string, fieldIds: string[]) => void
+  /** A template/field set/nugget forwarded from the old Studio route — seeded once, not synced
+   *  on every render, so picking something new here doesn't fight the URL it arrived with. */
+  initial?: LabInitial
 }) {
   const [datasetCategory, setDatasetCategory] = useState<string | null>(null)
-  const [templateId, setTemplateId] = useState<string | null>(null)
+  const [templateId, setTemplateId] = useState<string | null>(() => initial?.t ?? null)
   const [choices, setChoices] = useState<Record<string, string | number>>({})
+  // forge: ported from Template Studio — binding to a saved field set or a Data Nugget, not just
+  // the market's whole field pool, so Studio can redirect here without losing either.
+  const [source, setSource] = useState<LabSource>(() =>
+    initial?.fs != null ? 'fieldSet' : initial?.n ? 'nugget' : 'pool',
+  )
+  const [fieldSetId, setFieldSetId] = useState<number | null>(() => initial?.fs ?? null)
+  const [nuggetId, setNuggetId] = useState<string | null>(() => initial?.n ?? null)
+  const [openIndex, setOpenIndex] = useState<number | null>(null)
+
+  const sets = useQuery({
+    queryKey: ['forge-fieldsets'],
+    queryFn: fieldSets.list,
+    enabled: source === 'fieldSet',
+  })
+  const myNuggets = useQuery({
+    queryKey: ['forge-nuggets', 'list'],
+    queryFn: () => nuggets.list(),
+    enabled: source === 'nugget',
+  })
+  const inScopeSets = (sets.data ?? []).filter(
+    (s) =>
+      s.scope.region === scope.region &&
+      s.scope.delay === scope.delay &&
+      s.scope.universe === scope.universe,
+  )
+  const inScopeNuggets = (myNuggets.data ?? []).filter(
+    (n) =>
+      n.scope.region === scope.region &&
+      n.scope.delay === scope.delay &&
+      n.scope.universe === scope.universe,
+  )
+  useEffect(() => {
+    if (sets.data && fieldSetId != null && !inScopeSets.some((s) => s.id === fieldSetId))
+      setFieldSetId(null)
+  }, [sets.data, fieldSetId, inScopeSets])
+  useEffect(() => {
+    if (myNuggets.data && nuggetId != null && !inScopeNuggets.some((n) => n.nuggetId === nuggetId))
+      setNuggetId(null)
+  }, [myNuggets.data, nuggetId, inScopeNuggets])
 
   const byScope = useQuery({
     queryKey: ['forge-templates', 'by-scope', scope],
@@ -268,34 +334,60 @@ function TemplateLab({
   const template: ScopeTemplate | null = inCategory.find((t) => t.id === templateId) ?? null
 
   useEffect(() => {
-    if (templateId && !inCategory.some((t) => t.id === templateId)) {
+    if (byScope.data && templateId && !inCategory.some((t) => t.id === templateId)) {
       setTemplateId(null)
       setChoices({})
     }
-  }, [inCategory, templateId])
+  }, [byScope.data, inCategory, templateId])
 
   // The field pool a template's slots can draw from, before any single field is picked — the
-  // same 500-field cap scope eligibility was checked against.
+  // same 500-field cap scope eligibility was checked against. Only fetched in 'pool' mode.
   const pool = useQuery({
     queryKey: ['forge-templates-lab', 'catalog', scope],
     queryFn: ({ signal }) => catalog.fields(scope, { limit: 500 }, signal),
+    enabled: source === 'pool',
   })
   const poolIds = pool.data?.results.map((r) => r.field_id) ?? []
 
-  const canPreview = Boolean(templateId) && poolIds.length > 0
+  const canPreview =
+    Boolean(templateId) &&
+    (source === 'pool'
+      ? poolIds.length > 0
+      : source === 'fieldSet'
+        ? fieldSetId != null
+        : nuggetId != null)
   const preview = useQuery({
-    queryKey: ['forge-workbench', 'lab-preview', scope, templateId, poolIds, choices],
+    queryKey: [
+      'forge-workbench',
+      'lab-preview',
+      scope,
+      templateId,
+      source,
+      source === 'pool' ? poolIds : source === 'fieldSet' ? fieldSetId : nuggetId,
+      choices,
+    ],
     queryFn: () =>
-      studio.preview({
-        templateId: templateId as string,
-        fieldIds: poolIds,
-        region: scope.region,
-        universe: scope.universe,
-        delay: scope.delay,
-        instrumentType: scope.instrumentType,
-        choices,
-        limit: 50,
-      }),
+      studio.preview(
+        source === 'fieldSet'
+          ? {
+              templateId: templateId as string,
+              fieldSetId: fieldSetId as number,
+              choices,
+              limit: 50,
+            }
+          : source === 'nugget'
+            ? { templateId: templateId as string, nuggetId: nuggetId as string, choices, limit: 50 }
+            : {
+                templateId: templateId as string,
+                fieldIds: poolIds,
+                region: scope.region,
+                universe: scope.universe,
+                delay: scope.delay,
+                instrumentType: scope.instrumentType,
+                choices,
+                limit: 50,
+              },
+      ),
     enabled: canPreview,
   })
   const p: PreviewResponse | undefined = preview.data
@@ -314,6 +406,53 @@ function TemplateLab({
       description="What this tells you: pick a market and a dataset category first, then only the templates that fit it — swap in whichever real field, window or group you want per slot before running, nothing here is simulated."
       bodyClassName="flex flex-col gap-4 p-4"
     >
+      <Field
+        label="Fields from"
+        hint="The market's whole field pool, or a saved field set / Data Nugget to bind to exactly."
+      >
+        <Segmented
+          label="Fields from"
+          value={source}
+          onChange={(v: LabSource) => setSource(v)}
+          items={[
+            { value: 'pool', label: 'This market' },
+            { value: 'fieldSet', label: 'Field set' },
+            { value: 'nugget', label: 'Nugget' },
+          ]}
+        />
+      </Field>
+
+      {source === 'fieldSet' && (
+        <Field label="Field set" hint="Only field sets saved in the market picked above.">
+          <Select
+            label="Field set"
+            items={inScopeSets.map((s) => ({ value: String(s.id), label: s.name }))}
+            value={fieldSetId == null ? null : String(fieldSetId)}
+            onChange={(v) => setFieldSetId(Number(v))}
+          />
+          {inScopeSets.length === 0 && (
+            <p className="mt-1 text-body-compact text-ink-subtle">
+              No field sets in this market yet — make one in the Data Explorer.
+            </p>
+          )}
+        </Field>
+      )}
+      {source === 'nugget' && (
+        <Field label="Nugget" hint="Only nuggets saved in the market picked above.">
+          <Select
+            label="Nugget"
+            items={inScopeNuggets.map((n) => ({ value: n.nuggetId, label: n.name }))}
+            value={nuggetId}
+            onChange={setNuggetId}
+          />
+          {inScopeNuggets.length === 0 && (
+            <p className="mt-1 text-body-compact text-ink-subtle">
+              No nuggets in this market yet — make one from the Nuggets screen.
+            </p>
+          )}
+        </Field>
+      )}
+
       <Field
         label="Dataset category"
         hint="Templates for this market, grouped by the kind of data they're built for."
@@ -389,6 +528,13 @@ function TemplateLab({
       {preview.isError && <ErrorNotice error={preview.error} title="Could not render this" />}
       {preview.isPending && canPreview && <Skeleton className="h-48" label="Rendering alphas" />}
 
+      {p?.nugget && <NuggetCard nugget={p.nugget} />}
+      {p && p.missingFields.length > 0 && (
+        <Notice tone="info" title="Some of this field source's fields are not in this market">
+          <span className="num">{p.missingFields.join(', ')}</span> — they are skipped.
+        </Notice>
+      )}
+
       {p && templateId && (
         <PreflightAdvisor
           scope={scope}
@@ -419,36 +565,62 @@ function TemplateLab({
           </ul>
         </Notice>
       )}
-      {p && p.notes.length > 0 && (
-        <Notice tone="info" title="What these alphas qualify for">
-          <ul className="ml-4 list-disc">
-            {p.notes.map((n) => (
-              <li key={n}>{n}</li>
-            ))}
-          </ul>
-        </Notice>
+      {p && p.rendered.length > 0 && (
+        <FitSummary counts={p.fitCounts} total={p.rendered.length} notes={p.notes} />
       )}
       {p && p.rendered.length > 0 && templateId && (
         <div className="flex flex-col divide-y divide-hairline rounded-md border border-hairline">
-          {p.rendered.map((alpha) => (
+          {p.rendered.map((alpha, index) => (
             <CandidateRow
               key={alpha.expression}
               alpha={alpha}
               onAdd={() => onAdd(alpha.expression, templateId, alpha.dataFields)}
+              onOpen={() => setOpenIndex(index)}
             />
           ))}
         </div>
       )}
+
+      <AlphaSheet
+        alpha={openIndex == null ? null : (p?.rendered[openIndex] ?? null)}
+        templateId={templateId ?? undefined}
+        fieldSetId={source === 'fieldSet' ? (fieldSetId ?? undefined) : undefined}
+        nuggetId={source === 'nugget' ? (nuggetId ?? undefined) : undefined}
+        nugget={p?.nugget}
+        scope={p?.scope ?? ''}
+        onClose={() => setOpenIndex(null)}
+        {...(openIndex != null && templateId && p?.rendered[openIndex]
+          ? {
+              onAdd: () => {
+                const alpha = p.rendered[openIndex]
+                if (alpha) onAdd(alpha.expression, templateId, alpha.dataFields)
+                setOpenIndex(null)
+              },
+            }
+          : {})}
+      />
     </Panel>
   )
 }
 
-function CandidateRow({ alpha, onAdd }: { alpha: RenderedAlpha; onAdd: () => void }) {
+function CandidateRow({
+  alpha,
+  onAdd,
+  onOpen,
+}: {
+  alpha: RenderedAlpha
+  onAdd: () => void
+  onOpen: () => void
+}) {
   return (
     <div className="flex items-center gap-2 px-3 py-2">
-      <code className="num min-w-0 flex-1 truncate text-body-compact text-ink">
+      <button
+        type="button"
+        onClick={onOpen}
+        className="num min-w-0 flex-1 truncate text-left text-body-compact text-ink hover:underline"
+      >
         {alpha.expression}
-      </code>
+      </button>
       {alpha.fitsAll ? (
         <Badge tone="profit">fits every type</Badge>
       ) : alpha.fits.length > 0 ? (

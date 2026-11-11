@@ -4,13 +4,12 @@ import {
   ChartPieIcon,
   CheckSquareIcon, // forge: Submittable Board's icon
   DatabaseIcon,
-  DumbbellIcon, // forge: Gym Playground's icon
+  DumbbellIcon, // forge: Field Behavior Lab's icon
   FlaskConicalIcon,
   GaugeIcon, // forge: Today's icon (the quota gauge)
   GavelIcon, // forge: Workshop's icon (the Hypothesis Court)
   Grid3x3Icon,
   GripIcon, // forge: Data Nuggets' icon
-  HammerIcon, // forge: Template Studio's icon
   LayersIcon,
   LayoutGridIcon,
   LayoutPanelLeftIcon, // forge: Workbench's icon
@@ -19,6 +18,7 @@ import {
   PencilIcon, // forge: My Templates' icon
   PlayIcon, // forge: Pipelines' icon
   RefreshCwIcon,
+  ShieldCheckIcon, // forge: Correlation Submit Helper's icon
   SparklesIcon,
   TriangleIcon,
   TrophyIcon,
@@ -104,7 +104,7 @@ export const NAV = [
   {
     to: '/forge/gym',
     group: 'Forge',
-    label: 'Gym Playground',
+    label: 'Field Behavior Lab',
     icon: DumbbellIcon,
   },
   {
@@ -120,12 +120,6 @@ export const NAV = [
     icon: PencilIcon,
   },
   {
-    to: '/forge/studio',
-    group: 'Forge',
-    label: 'Template Studio',
-    icon: HammerIcon,
-  },
-  {
     to: '/forge/pipelines',
     group: 'Forge',
     label: 'Pipelines',
@@ -136,6 +130,12 @@ export const NAV = [
     group: 'Forge',
     label: 'Submittable Board',
     icon: CheckSquareIcon,
+  },
+  {
+    to: '/forge/submit-helper',
+    group: 'Forge',
+    label: 'Submit Helper',
+    icon: ShieldCheckIcon,
   },
   {
     to: '/forge/workshop',

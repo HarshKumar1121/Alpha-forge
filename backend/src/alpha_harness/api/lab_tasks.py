@@ -37,6 +37,7 @@ from ..db.models import (
     utcnow,
 )
 from ..engine.slots import POSITIONAL_NOTE
+from ..forge.storage.access import touch_pnl  # forge: storage TTL needs to know this was read
 from ..labs import scheduler, search
 from ..labs.objectives import FAILURE, OBJECTIVES, StudyNotFoundError
 from ..labs.params import (
@@ -686,6 +687,7 @@ async def power_pool_order(body: AlphaIds, state: State) -> SubmissionOrder:
         a: r for a, r in stored.items() if power_pool.is_power_pool(r) and not is_submitted(r)
     }
     grid = await state.alphas.pnl_grid([*candidates, *pool_meta])
+    await touch_pnl(state.db, [*candidates])  # forge: storage TTL must not expire what was read
     pools: dict[str, list[str]] = {}
     for alpha_id, row in pool_meta.items():
         if (region := power_pool.scope_of(row)) is not None:
@@ -885,6 +887,7 @@ async def _power_pool(state: State, alpha_ids: list[str]) -> PowerPoolCorrelatio
     # rest of the sweep is nothing to do with the Power Pool and is counted, not measured.
     candidates = {a: r for a, r in stored.items() if power_pool.is_power_pool(r)}
     grid = await state.alphas.pnl_grid([*candidates, *pool_meta])
+    await touch_pnl(state.db, [*candidates])  # forge: storage TTL must not expire what was read
     has_pnl = set(grid[0])
 
     by_region: dict[str, list[str]] = {}

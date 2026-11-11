@@ -45,6 +45,7 @@ const ROUTES = [
   '/forge/studio',
   '/forge/pipelines',
   '/forge/board',
+  '/forge/submit-helper',
   '/forge/workshop',
   '/forge/fieldsets',
   '/forge/nuggets',
@@ -194,10 +195,23 @@ describe('the Forge data screens', () => {
  * The Template Studio and the templates you write. Both screens render text the backend
  * computed — eligibility reasons, lint problems — so these check that what the API says
  * actually reaches the screen, not just that the route mounts.
+ *
+ * Template Studio was merged into Workbench's Template Lab (forge: one binding UI over the
+ * same `studio.preview()` engine, not two) — `/forge/studio` now only forwards whichever
+ * template/field set/nugget an old link named, onto `/forge/workbench`.
  */
-describe('the Template Studio', () => {
+describe('the old Template Studio route', () => {
+  it('redirects to the Workbench, forwarding the template and field set', async () => {
+    const router = await mount('/forge/studio?t=analyst_revision&fs=1')
+    expect(router.state.location.pathname).toBe('/forge/workbench')
+    expect(screen.getByText('Template Lab')).toBeTruthy()
+    expect(screen.queryByText(CRASHED)).toBeNull()
+  })
+})
+
+describe('the Workbench Template Lab bound to a field set', () => {
   it('shows each rendered alpha and what it qualifies for', async () => {
-    await mount('/forge/studio')
+    await mount('/forge/studio?t=analyst_revision&fs=1')
     expect(screen.getByText('rank(ts_delta(ts_backfill(anl4_eps_mean, 63), 21))')).toBeTruthy()
     // The fit summary counts each type separately: both fit regular and Power Pool, and
     // only one is a single-dataset ATOM alpha.
@@ -211,7 +225,7 @@ describe('the Template Studio', () => {
   })
 
   it('says why an alpha misses a type', async () => {
-    await mount('/forge/studio')
+    await mount('/forge/studio?t=analyst_revision&fs=1')
     const rows = screen.getAllByRole('button')
     const second = rows.find((r) =>
       r.textContent?.includes('rank(ts_delta(ts_backfill(anl4_rev_mean, 63), 63))'),
@@ -228,7 +242,7 @@ describe('the Template Studio', () => {
   })
 
   it('drafts a Power Pool description for an eligible alpha', async () => {
-    await mount('/forge/studio')
+    await mount('/forge/studio?t=analyst_revision&fs=1')
     const rows = screen.getAllByRole('button')
     const first = rows.find((r) =>
       r.textContent?.includes('rank(ts_delta(ts_backfill(anl4_eps_mean, 63), 21))'),
@@ -459,6 +473,58 @@ describe('the Workbench screen', () => {
     await waitFor(() =>
       expect(screen.getByText('rank(ts_delta(ts_backfill(anl4_rev_mean, 63), 63))')).toBeTruthy(),
     )
+    expect(screen.queryByText(CRASHED)).toBeNull()
+  })
+
+  it('Regression Lab screens the tray and sends survivors back to the field tray', async () => {
+    await mount('/forge/workbench')
+    expect(screen.getByText('Regression Lab')).toBeTruthy()
+
+    // Put two fields in the tray, same mechanism the field-search test above uses.
+    fireEvent.click(screen.getByRole('radio', { name: 'Search fields' }))
+    fireEvent.change(screen.getByLabelText('Search field catalog'), {
+      target: { value: 'anl4' },
+    })
+    await waitFor(() => expect(screen.getByText('anl4_eps_mean')).toBeTruthy())
+    for (const id of ['anl4_eps_mean', 'anl4_rev_mean']) {
+      const row = screen.getByText(id).closest('[role="row"]') as HTMLElement
+      fireEvent.click(within(row).getByRole('checkbox'))
+    }
+    await waitFor(() => expect(screen.getByText('2 in tray')).toBeTruthy())
+
+    // Pick a Gym synthetic target (no catalog field lookup needed) and run.
+    fireEvent.click(screen.getByRole('radio', { name: 'Gym synthetic' }))
+    fireEvent.change(screen.getByPlaceholderText('gym_template_id'), {
+      target: { value: 'gym_template_1' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Run regression' }))
+
+    await waitFor(() => expect(screen.getByText(/These 2 fields together explain/)).toBeTruthy())
+
+    // Sending survivors reuses the Field tray's own `setFieldIds`: the tray count reflects the
+    // single kept field, same as `FieldPicker`'s own `onChange` would.
+    fireEvent.click(screen.getByRole('button', { name: 'Send surviving fields to Template Lab' }))
+    await waitFor(() => expect(screen.getByText('1 in tray')).toBeTruthy())
+    expect(screen.queryByText(CRASHED)).toBeNull()
+  })
+
+  it('Regression Lab loads a suggested combination straight into the field tray', async () => {
+    await mount('/forge/workbench')
+    await waitFor(() => expect(screen.getByText('0 in tray')).toBeTruthy())
+
+    await waitFor(() => expect(screen.getByText('Regression Lab')).toBeTruthy())
+    await waitFor(() => {
+      expect(
+        screen
+          .getAllByRole('button')
+          .some((b) => /Analyst estimate dispersion set/.test(b.textContent ?? '')),
+      ).toBe(true)
+    })
+    const suggestion = screen
+      .getAllByRole('button')
+      .find((b) => /Analyst estimate dispersion set/.test(b.textContent ?? '')) as HTMLElement
+    fireEvent.click(suggestion)
+    await waitFor(() => expect(screen.getByText('2 in tray')).toBeTruthy())
     expect(screen.queryByText(CRASHED)).toBeNull()
   })
 })

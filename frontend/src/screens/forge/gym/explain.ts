@@ -51,6 +51,31 @@ export const CHECK_EXPLAIN: Record<string, string> = {
     'Effects that live only in small, illiquid stocks fail here.',
 }
 
+/** A field's archetype (from a probe, or from the Gym's local statistics), in plain language:
+ * what it means and which template shape tends to fit. */
+export const ARCHETYPE_EXPLAIN: Record<string, string> = {
+  slow:
+    'Changes rarely — think quarterly fundamentals or infrequent analyst revisions. Templates ' +
+    'that compare the LEVEL or react to an update event tend to fit; smoothing (decay) rarely ' +
+    'helps a field that barely moves.',
+  medium:
+    'Drifts over days to weeks. Templates built on the CHANGE, or on deviation from recent ' +
+    'history, tend to fit better than the raw level.',
+  persistent:
+    'Updates daily, but a stock that ranks high today usually still ranks high next week. ' +
+    'Compare it to the stock’s OWN history (ts_rank, ts_zscore) rather than its level alone.',
+  fast:
+    'Noisy day to day, so the raw signal churns the book. Smooth it first (ts_mean, decay) or ' +
+    'it will trade a lot for little edge.',
+}
+
+/** The 3 cheap probes, in plain language: what each one is asking about the field. */
+export const ANGLE_EXPLAIN: Record<string, string> = {
+  level: 'Does where the field sits, cross-sectionally, carry information? rank(field).',
+  change: 'Does a RECENT CHANGE in the field carry information? rank(ts_delta(field, 21)).',
+  history: 'Does deviation from the field’s OWN PAST matter? ts_rank(field, 252).',
+}
+
 /** One line under each chart: what a researcher reads from it. */
 export const CHART_CAPTION = {
   pnl:

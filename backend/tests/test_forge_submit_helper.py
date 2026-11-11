@@ -120,8 +120,8 @@ async def test_recent_lists_pipeline_alphas_newest_first(
 )
 async def test_second_check_within_the_hour_reuses_the_cache(
     client: httpx2.AsyncClient,
-    harness: Harness,
-    bodies: Bodies,  # noqa: F811, ARG001
+    harness: Harness,  # noqa: F811
+    bodies: Bodies,  # noqa: ARG001
 ) -> None:
     res = await client.post(
         "/api/forge/submit-helper/check", json={"alphaIds": ["A1"], "threshold": 0.7}
@@ -152,8 +152,8 @@ async def test_second_check_within_the_hour_reuses_the_cache(
 )
 async def test_verdict_pass_fail_against_threshold(
     client: httpx2.AsyncClient,
-    harness: Harness,
-    bodies: Bodies,  # noqa: F811, ARG001
+    harness: Harness,  # noqa: F811
+    bodies: Bodies,  # noqa: ARG001
 ) -> None:
     res = await client.post(
         "/api/forge/submit-helper/check", json={"alphaIds": ["A1", "A2"], "threshold": 0.7}
@@ -181,8 +181,8 @@ async def test_verdict_pass_fail_against_threshold(
 )
 async def test_independent_set_drops_one_of_a_correlated_pair(
     client: httpx2.AsyncClient,
-    harness: Harness,
-    bodies: Bodies,  # noqa: F811, ARG001
+    harness: Harness,  # noqa: F811
+    bodies: Bodies,  # noqa: ARG001
 ) -> None:
     # A1 and A2 are mutually correlated above 0.5; A3 is independent of both. All three pass
     # the (generous) threshold, so the recommendation should drop exactly one of A1/A2.

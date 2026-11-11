@@ -23,6 +23,7 @@ from ..forge.nuggets.models import Nugget, NuggetVersion
 from ..forge.nuggets.service import NuggetDraft, resolved_treatment, snapshot, validate_draft
 from ..forge.nuggets.suggest import PairingSuggestion, suggest_pairings
 from ..forge.research.field_profile import FieldProfile, profile_field
+from ..forge.storage.access import touch_pnl
 from ..schemas import Out
 from .deps import State, refuse
 
@@ -486,6 +487,7 @@ async def nugget_correlation(
     pnl_rows = await state.alphas.pnl_series(alpha_id)
     if not pnl_rows:
         raise refuse(404, "no_pnl", f"No synced PnL for alpha {alpha_id!r} yet.")
+    await touch_pnl(state.db, [alpha_id])
     candidate = an.to_series([(r["date"], r["pnl"]) for r in pnl_rows])
 
     pool_rows = await state.alphas.submitted_members()

@@ -1616,6 +1616,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/forge/probe/field": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Probe Field
+         * @description Run the 3 cheap behaviour probes on a real field and read off its archetype.
+         *
+         *     Cheap, not free: unlike the Gym, this reaches BRAIN, so it spends 1-3 simulations from the
+         *     ``explore`` lane before you spend real quota building templates on this field.
+         */
+        post: operations["probe_field_api_forge_probe_field_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/forge/quota": {
         parameters: {
             query?: never;
@@ -1650,6 +1673,75 @@ export interface paths {
          * @description Would a plan of ``simulations`` fit in ``lane`` today? What would be trimmed?
          */
         post: operations["estimate_api_forge_quota_estimate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/regression/prescreen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Prescreen
+         * @description Which candidate pairs already look like the same measure twice, before anyone pays for
+         *     a simulation. Zero lane spend.
+         */
+        post: operations["prescreen_api_forge_regression_prescreen_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/regression/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Regression
+         * @description Fetch each candidate field's series (and the target's) and run the OLS/VIF/stability
+         *     screen over however many fields the ``explore`` lane admitted.
+         *
+         *     A partially-admitted request still returns a regression over however many fields were
+         *     admitted; the rest are listed in ``dropped``, the same "admitted vs asked" shape
+         *     ``forge_probe`` already uses.
+         */
+        post: operations["run_regression_api_forge_regression_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/regression/suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Suggestions
+         * @description Known combinations to try first: your own saved Data Nuggets in this scope with 2-8
+         *     fields, one click away from loading straight into the field tray, grouped by whichever
+         *     dataset category most of their fields belong to. Zero lane spend — catalog metadata and the
+         *     Nugget table only, nothing simulated.
+         */
+        get: operations["suggestions_api_forge_regression_suggestions_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4674,6 +4766,13 @@ export interface components {
             /** Value Score */
             value_score: number | null;
         };
+        /** DateRange */
+        DateRange: {
+            /** End */
+            end: string;
+            /** Start */
+            start: string;
+        };
         /** DayGroup */
         DayGroup: {
             /**
@@ -4772,6 +4871,15 @@ export interface components {
         DropResult: {
             /** Dropped */
             dropped: number;
+        };
+        /** DuplicatePairOut */
+        DuplicatePairOut: {
+            /** Fielda */
+            fieldA: string;
+            /** Fieldb */
+            fieldB: string;
+            /** Reason */
+            reason: string;
         };
         /** EligibilityOut */
         EligibilityOut: {
@@ -5120,29 +5228,6 @@ export interface components {
             /** Total */
             total: number;
         };
-        /** FieldProfileOut */
-        FieldProfileOut: {
-            /** Cadence */
-            cadence: string;
-            /** Category */
-            category: string;
-            /** Coverage */
-            coverage: number | null;
-            /** Datasetid */
-            datasetId: string | null;
-            /** Datasetname */
-            datasetName: string | null;
-            /** Datecoverage */
-            dateCoverage: number | null;
-            /** Description */
-            description: string | null;
-            /** Fieldid */
-            fieldId: string;
-            /** Fieldtype */
-            fieldType: string;
-            /** Needsaggregation */
-            needsAggregation: boolean;
-        };
         /** FieldSearchRequest */
         FieldSearchRequest: {
             /** Crowdingthreshold */
@@ -5274,6 +5359,31 @@ export interface components {
             field: string;
             /** Problem */
             problem: string;
+        };
+        /** FieldStatOut */
+        FieldStatOut: {
+            /** Cihigh */
+            ciHigh: number;
+            /** Cilow */
+            ciLow: number;
+            /** Coef */
+            coef: number;
+            /** Fieldid */
+            fieldId: string;
+            /** Pvalue */
+            pValue: number;
+            profile: components["schemas"]["alpha_harness__api__forge_regression__FieldProfileOut"] | null;
+            /** Se */
+            se: number;
+            stability: components["schemas"]["StabilityOut"] | null;
+            /** Standalonecorr */
+            standaloneCorr: number;
+            /** Tstat */
+            tStat: number;
+            /** Vif */
+            vif: number;
+            /** Vifflag */
+            vifFlag: boolean;
         };
         /** FieldTypeCount */
         FieldTypeCount: {
@@ -6275,7 +6385,7 @@ export interface components {
             /** Fieldids */
             fieldIds: string[];
             /** Fields */
-            fields: components["schemas"]["FieldProfileOut"][];
+            fields: components["schemas"]["alpha_harness__api__forge_nuggets__FieldProfileOut"][];
             /** Id */
             id: number;
             /** Name */
@@ -7010,6 +7120,16 @@ export interface components {
             /** Universe */
             universe: string;
         };
+        /** PrescreenOut */
+        PrescreenOut: {
+            /** Duplicatepairs */
+            duplicatePairs: components["schemas"]["DuplicatePairOut"][];
+        };
+        /** PrescreenRequest */
+        PrescreenRequest: {
+            /** Fieldids */
+            fieldIds: string[];
+        };
         /** Preview */
         Preview: {
             fields: components["schemas"]["FieldCounts"];
@@ -7051,6 +7171,49 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** ProbeAngle */
+        ProbeAngle: {
+            /** Alphaid */
+            alphaId: string | null;
+            /** Error */
+            error: string | null;
+            /** Expression */
+            expression: string;
+            /** Name */
+            name: string;
+            /** Trainsharpe */
+            trainSharpe: number | null;
+            /** Turnover */
+            turnover: number | null;
+        };
+        /** ProbeRequest */
+        ProbeRequest: {
+            /** Fieldid */
+            fieldId: string;
+        };
+        /** ProbeResult */
+        ProbeResult: {
+            /** Admitted */
+            admitted: number;
+            /** Angles */
+            angles: components["schemas"]["ProbeAngle"][];
+            /** Archetype */
+            archetype: string;
+            /** Asked */
+            asked: number;
+            /** Bestangle */
+            bestAngle: string;
+            /** Fieldid */
+            fieldId: string;
+            /** Lane */
+            lane: string;
+            /** Levelturnover */
+            levelTurnover: number | null;
+            /** Notes */
+            notes: string[];
+            /** Sign */
+            sign: number;
+        };
         /** ProfileRequest */
         ProfileRequest: {
             /** Fieldids */
@@ -7060,7 +7223,7 @@ export interface components {
         /** ProfileResponse */
         ProfileResponse: {
             /** Fields */
-            fields: components["schemas"]["FieldProfileOut"][];
+            fields: components["schemas"]["alpha_harness__api__forge_nuggets__FieldProfileOut"][];
             /** Missing */
             missing: string[];
         };
@@ -7506,6 +7669,15 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** RecommendationOut */
+        RecommendationOut: {
+            /** Drop */
+            drop: string[];
+            /** Keep */
+            keep: string[];
+            /** Reason */
+            reason: string;
+        };
         /** RecordLesson */
         RecordLesson: {
             /** Tags */
@@ -7544,6 +7716,63 @@ export interface components {
             total: number;
             /** Universes */
             universes: string[];
+        };
+        /** RegressionRunOut */
+        RegressionRunOut: {
+            /** Adjrsquared */
+            adjRSquared: number;
+            /** Admitted */
+            admitted: number;
+            /** Asked */
+            asked: number;
+            /** Corrmatrix */
+            corrMatrix: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
+            /** Dropped */
+            dropped: string[];
+            /** Duplicatepairs */
+            duplicatePairs: components["schemas"]["DuplicatePairOut"][];
+            /** Fields */
+            fields: components["schemas"]["FieldStatOut"][];
+            /** Lane */
+            lane: string;
+            /** Nobs */
+            nObs: number;
+            /** Plainsummary */
+            plainSummary: string;
+            /** Rsquared */
+            rSquared: number;
+            recommendation: components["schemas"]["RecommendationOut"];
+            /** Redundancygroups */
+            redundancyGroups: string[][];
+            /** Residualstderror */
+            residualStdError: number;
+            winner: components["schemas"]["WinnerOut"];
+        };
+        /** RegressionRunRequest */
+        RegressionRunRequest: {
+            dateRange?: components["schemas"]["DateRange"] | null;
+            /** Fieldids */
+            fieldIds: string[];
+            scope: components["schemas"]["RegressionScope"];
+            target: components["schemas"]["TargetSpec"];
+        };
+        /** RegressionScope */
+        RegressionScope: {
+            /** Delay */
+            delay: number;
+            /**
+             * Instrumenttype
+             * @default EQUITY
+             */
+            instrumentType: string;
+            /** Region */
+            region: string;
+            /** Universe */
+            universe: string;
         };
         /** RejectedCandidate */
         RejectedCandidate: {
@@ -8113,6 +8342,19 @@ export interface components {
             /** Universe */
             universe: string | null;
         };
+        /** StabilityOut */
+        StabilityOut: {
+            /** Signhalf1 */
+            signHalf1: number;
+            /** Signhalf2 */
+            signHalf2: number;
+            /** Significanthalf1 */
+            significantHalf1: boolean;
+            /** Significanthalf2 */
+            significantHalf2: boolean;
+            /** Stable */
+            stable: boolean;
+        };
         /** StatsItem */
         StatsItem: {
             /**
@@ -8259,11 +8501,22 @@ export interface components {
         /** SuggestResponse */
         SuggestResponse: {
             /** Fields */
-            fields: components["schemas"]["FieldProfileOut"][];
+            fields: components["schemas"]["alpha_harness__api__forge_nuggets__FieldProfileOut"][];
             /** Missing */
             missing: string[];
             /** Suggestions */
             suggestions: components["schemas"]["PairingSuggestionOut"][];
+        };
+        /** SuggestedSetOut */
+        SuggestedSetOut: {
+            /** Category */
+            category: string;
+            /** Fieldids */
+            fieldIds: string[];
+            /** Label */
+            label: string;
+            /** Source */
+            source: string;
         };
         /** SuperPlan */
         SuperPlan: {
@@ -8440,6 +8693,16 @@ export interface components {
          * @enum {string}
          */
         SyncStatus: "RUNNING" | "COMPLETE" | "FAILED" | "CANCELLED";
+        /** TargetSpec */
+        TargetSpec: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "vault" | "gym" | "field";
+            /** Ref */
+            ref: string;
+        };
         /**
          * TaskAlpha
          * @description A submittable Alpha, with the task that found it.
@@ -9185,6 +9448,15 @@ export interface components {
             test: components["schemas"]["PortfolioStats"] | null;
             train: components["schemas"]["PortfolioStats"] | null;
         };
+        /** WinnerOut */
+        WinnerOut: {
+            /** Fieldid */
+            fieldId: string | null;
+            /** Message */
+            message: string;
+            /** Tstat */
+            tStat: number | null;
+        };
         /** WorkflowStarted */
         WorkflowStarted: {
             /** Taskid */
@@ -9360,6 +9632,29 @@ export interface components {
             /** Count */
             count: number;
         };
+        /** FieldProfileOut */
+        alpha_harness__api__forge_nuggets__FieldProfileOut: {
+            /** Cadence */
+            cadence: string;
+            /** Category */
+            category: string;
+            /** Coverage */
+            coverage: number | null;
+            /** Datasetid */
+            datasetId: string | null;
+            /** Datasetname */
+            datasetName: string | null;
+            /** Datecoverage */
+            dateCoverage: number | null;
+            /** Description */
+            description: string | null;
+            /** Fieldid */
+            fieldId: string;
+            /** Fieldtype */
+            fieldType: string;
+            /** Needsaggregation */
+            needsAggregation: boolean;
+        };
         /** RunRequest */
         alpha_harness__api__forge_pipelines__RunRequest: {
             /** Budget */
@@ -9415,6 +9710,25 @@ export interface components {
             status: string;
             /** Taskid */
             taskId: string;
+        };
+        /** FieldProfileOut */
+        alpha_harness__api__forge_regression__FieldProfileOut: {
+            /** Alphacount */
+            alphaCount: number | null;
+            /** Category */
+            category: string | null;
+            /** Coverage */
+            coverage: number | null;
+            /** Crowding */
+            crowding: number | null;
+            /** Datecoverage */
+            dateCoverage: number | null;
+            /** Fieldtype */
+            fieldType: string | null;
+            /** Usercount */
+            userCount: number | null;
+            /** Valuescore */
+            valueScore: number | null;
         };
         /** PreviewRequest */
         alpha_harness__api__forge_studio__PreviewRequest: {
@@ -12225,6 +12539,46 @@ export interface operations {
             };
         };
     };
+    probe_field_api_forge_probe_field_post: {
+        parameters: {
+            query: {
+                /** @description e.g. USA, EUR, GLB */
+                region: string;
+                delay: number;
+                /** @description e.g. TOP3000 */
+                universe: string;
+                instrumentType?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProbeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProbeResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     quota_today_api_forge_quota_get: {
         parameters: {
             query?: never;
@@ -12265,6 +12619,115 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["QuotaEstimate"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    prescreen_api_forge_regression_prescreen_post: {
+        parameters: {
+            query: {
+                /** @description e.g. USA, EUR, GLB */
+                region: string;
+                delay: number;
+                /** @description e.g. TOP3000 */
+                universe: string;
+                instrumentType?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PrescreenRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrescreenOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_regression_api_forge_regression_run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegressionRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegressionRunOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    suggestions_api_forge_regression_suggestions_get: {
+        parameters: {
+            query: {
+                /** @description e.g. USA, EUR, GLB */
+                region: string;
+                delay: number;
+                /** @description e.g. TOP3000 */
+                universe: string;
+                instrumentType?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuggestedSetOut"][];
                 };
             };
             /** @description Validation Error */

@@ -40,8 +40,11 @@ from .api import (
     forge_gym,  # forge: Gym Playground route; no router auto-discovery seam exists
     forge_nuggets,  # forge: Data Nuggets (profile, suggest, CRUD, correlation); same seam
     forge_pipelines,  # forge: Pipelines screen (plan preview, real run); same missing seam
+    forge_probe,  # forge: probe a real field's behaviour (explore lane); same missing seam
     forge_quota,  # forge: Quota Governor / Today route; same missing seam
+    forge_regression,  # forge: Regression Lab (field screening before template binding); same seam
     forge_studio,  # forge: Template Studio (binding, eligibility, my templates); same seam
+    forge_submit_helper,  # forge: Correlation Submit Helper (deadline-day PC check); same seam
     forge_templates,  # forge: Template Library route; same missing seam
     forge_workbench,  # forge: Workbench field tray (market bar, data panel); same missing seam
     forge_workshop,  # forge: Hypothesis Workshop (evidence, Court trials); same missing seam
@@ -210,7 +213,10 @@ def create_app() -> FastAPI:
     app.include_router(forge_nuggets.router)  # forge: Data Nuggets (offline except correlation)
     app.include_router(forge_studio.router)  # forge: Template Studio (offline, spends nothing)
     app.include_router(forge_pipelines.router)  # forge: Pipelines (preview free, run spends quota)
+    app.include_router(forge_probe.router)  # forge: probe a real field (spends explore lane)
+    app.include_router(forge_regression.router)  # forge: Regression Lab (spends explore lane)
     app.include_router(forge_board.router)  # forge: Submittable Board (repairs spend validate lane)
+    app.include_router(forge_submit_helper.router)  # forge: Submit Helper (read-only)
     app.include_router(forge_analytics.router)  # forge: tear-sheet analytics (read-only)
     app.include_router(forge_advisor.router)  # forge: Run Advisor (read-only, spends nothing)
     app.include_router(forge_agent.router)  # forge: agent tools/memory (approve route spends)

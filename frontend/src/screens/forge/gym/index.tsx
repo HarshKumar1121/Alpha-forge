@@ -13,9 +13,21 @@ import { clamp, truncationOf } from '@/screens/research-labs/simulation-settings
 import { TemplateEditor } from '@/screens/research-labs/template/editor'
 import type { OperatorDoc } from '@/screens/research-labs/template/fast-expression'
 import { MOD } from '@/shell/desktop'
-import { Button, Empty, ErrorNotice, Field, Input, Kbd, Page, PageHeader, Panel } from '@/ui/kit'
+import {
+  Button,
+  Empty,
+  ErrorNotice,
+  Field,
+  Input,
+  Kbd,
+  Page,
+  PageHeader,
+  Panel,
+  Segmented,
+} from '@/ui/kit'
 import { Select } from '@/ui/overlay'
 import { forgeGym, type GymRequest } from './api'
+import { ProbeFieldPanel } from './probe-panel'
 import { TearSheet } from './tear-sheet'
 
 type Neutralization = GymRequest['neutralization']
@@ -39,6 +51,7 @@ const ALT_FIELDS = /^alt_\d+$/
 export function GymPlaygroundScreen() {
   // Seeded from ?expr= (the Template Library's "Try on Gym"); yours to edit from then on.
   const { expr } = useSearch({ from: '/forge/gym' })
+  const [mode, setMode] = useState<'expression' | 'probe'>('expression')
   const [expression, setExpression] = useState(expr ?? '')
   const [decay, setDecay] = useState('0')
   const [truncation, setTruncation] = useState(String(DEFAULT_TRUNCATION))
@@ -94,113 +107,142 @@ export function GymPlaygroundScreen() {
   return (
     <Page>
       <PageHeader
-        title="Gym Playground"
+        title="Field Behavior Lab"
         description="Run an expression on the Gym: a synthetic market of 400 stocks over ten years, with real effects and pure noise planted in it. Free — nothing here reaches BRAIN or spends a simulation."
       />
 
-      <Panel
-        title="Expression"
-        description="Fast Expression, as on BRAIN, with the Gym's own fields and operators."
-        actions={
-          <Button variant="primary" onClick={submit} disabled={!ready} loading={run.isPending}>
-            <PlayIcon className="size-3.5" aria-hidden />
-            Run
-            <Kbd>{MOD}↵</Kbd>
-          </Button>
-        }
-      >
-        <div className="flex flex-col gap-4" onKeyDownCapture={onKeyDownCapture}>
-          <TemplateEditor
-            value={expression}
-            label="Expression"
-            reference={reference}
-            presets={{}}
-            variables={{}}
-            infos={new Map()}
-            problems={[]}
-            onChange={setExpression}
-          />
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-            <Field label="Decay" hint="Average the signal over this many days.">
-              <Input
-                type="number"
-                min={0}
-                max={MAX_DECAY}
-                step={1}
-                value={decay}
-                onChange={(e) => setDecay(e.target.value)}
-              />
-            </Field>
-            <Field label="Neutralization" hint="Bet within these groups, not on them.">
-              <Select
-                label="Neutralization"
-                value={neutralization}
-                onChange={setNeutralization}
-                items={NEUTRALIZATIONS.map((value) => ({
-                  value,
-                  label: neutralizationLabel(value),
-                }))}
-              />
-            </Field>
-            <Field label="Universe" hint="Scaled to the Gym's 400 stocks.">
-              <Select
-                label="Universe"
-                mono
-                value={universe}
-                onChange={setUniverse}
-                items={UNIVERSES.map((value) => ({ value, label: value }))}
-              />
-            </Field>
-            <Field
-              label="Truncation"
-              hint="Most of the book one stock may hold."
-              error={truncationValue === null ? 'A number from 0 to 1.' : undefined}
-            >
-              <Input
-                type="number"
-                min={0}
-                max={1}
-                step={0.01}
-                value={truncation}
-                aria-invalid={truncationValue === null}
-                onChange={(e) => setTruncation(e.target.value)}
-              />
-            </Field>
-            <Field label="Test years" hint="The last years, held out from research.">
-              <Input
-                type="number"
-                min={0}
-                max={MAX_TEST_PERIOD_YEARS}
-                step={1}
-                value={testYears}
-                onChange={(e) => setTestYears(e.target.value)}
-              />
-            </Field>
-          </div>
-          {run.isError && (
-            <ErrorNotice error={run.error} title="The Gym could not run this expression" />
-          )}
-        </div>
+      <Panel title="Why use this">
+        <p className="text-pretty text-body-compact text-ink-subtle">
+          The Gym is not a stand-in for real research: its Sharpes and fitness are on synthetic data
+          and prove nothing about BRAIN. What it IS for: learning cheaply, before you touch real
+          quota. Write an expression here to learn how an operator or template shape behaves, with
+          instant, free feedback. Or probe a real field (right) to learn its archetype — is it slow,
+          medium, persistent or fast-moving, how much of the universe does it cover, does it need a
+          decay — for a few simulations instead of guessing with dozens.
+        </p>
       </Panel>
 
-      {run.data ? (
-        <TearSheet sheet={run.data} />
+      <Segmented
+        label="Gym mode"
+        value={mode}
+        onChange={setMode}
+        items={[
+          { value: 'expression', label: 'Write an expression' },
+          { value: 'probe', label: "Probe a field's behaviour" },
+        ]}
+      />
+
+      {mode === 'probe' ? (
+        <ProbeFieldPanel />
       ) : (
-        <Panel>
-          <Empty
-            icon={<DumbbellIcon />}
-            title={run.isPending ? 'Running on the Gym…' : 'Write an expression, then press Run'}
+        <>
+          <Panel
+            title="Expression"
+            description="Fast Expression, as on BRAIN, with the Gym's own fields and operators."
+            actions={
+              <Button variant="primary" onClick={submit} disabled={!ready} loading={run.isPending}>
+                <PlayIcon className="size-3.5" aria-hidden />
+                Run
+                <Kbd>{MOD}↵</Kbd>
+              </Button>
+            }
           >
-            {run.isPending ? (
-              'The first run builds the market, which takes a few seconds.'
-            ) : (
-              <Start
-                onPick={setExpression}
-                fields={catalog.data?.fields.filter((f) => !ALT_FIELDS.test(f.name)) ?? []}
+            <div className="flex flex-col gap-4" onKeyDownCapture={onKeyDownCapture}>
+              <TemplateEditor
+                value={expression}
+                label="Expression"
+                reference={reference}
+                presets={{}}
+                variables={{}}
+                infos={new Map()}
+                problems={[]}
+                onChange={setExpression}
               />
-            )}
-          </Empty>
-        </Panel>
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+                <Field label="Decay" hint="Average the signal over this many days.">
+                  <Input
+                    type="number"
+                    min={0}
+                    max={MAX_DECAY}
+                    step={1}
+                    value={decay}
+                    onChange={(e) => setDecay(e.target.value)}
+                  />
+                </Field>
+                <Field label="Neutralization" hint="Bet within these groups, not on them.">
+                  <Select
+                    label="Neutralization"
+                    value={neutralization}
+                    onChange={setNeutralization}
+                    items={NEUTRALIZATIONS.map((value) => ({
+                      value,
+                      label: neutralizationLabel(value),
+                    }))}
+                  />
+                </Field>
+                <Field label="Universe" hint="Scaled to the Gym's 400 stocks.">
+                  <Select
+                    label="Universe"
+                    mono
+                    value={universe}
+                    onChange={setUniverse}
+                    items={UNIVERSES.map((value) => ({ value, label: value }))}
+                  />
+                </Field>
+                <Field
+                  label="Truncation"
+                  hint="Most of the book one stock may hold."
+                  error={truncationValue === null ? 'A number from 0 to 1.' : undefined}
+                >
+                  <Input
+                    type="number"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={truncation}
+                    aria-invalid={truncationValue === null}
+                    onChange={(e) => setTruncation(e.target.value)}
+                  />
+                </Field>
+                <Field label="Test years" hint="The last years, held out from research.">
+                  <Input
+                    type="number"
+                    min={0}
+                    max={MAX_TEST_PERIOD_YEARS}
+                    step={1}
+                    value={testYears}
+                    onChange={(e) => setTestYears(e.target.value)}
+                  />
+                </Field>
+              </div>
+              {run.isError && (
+                <ErrorNotice error={run.error} title="The Gym could not run this expression" />
+              )}
+            </div>
+          </Panel>
+
+          {run.data ? (
+            <TearSheet sheet={run.data} />
+          ) : (
+            <Panel>
+              <Empty
+                icon={<DumbbellIcon />}
+                title={
+                  run.isPending ? 'Running on the Gym…' : 'Write an expression, then press Run'
+                }
+              >
+                {run.isPending ? (
+                  'The first run builds the market, which takes a few seconds.'
+                ) : (
+                  <Start
+                    onPick={setExpression}
+                    fields={catalog.data?.fields.filter((f) => !ALT_FIELDS.test(f.name)) ?? []}
+                  />
+                )}
+              </Empty>
+            </Panel>
+          )}
+        </>
       )}
     </Page>
   )

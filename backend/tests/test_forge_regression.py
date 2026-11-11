@@ -327,7 +327,7 @@ class FakeQueries:
 
     async def fields_by_id(
         self,
-        scope: Any,
+        _scope: Any,
         field_ids: list[str],
         *,
         whole_datasets: bool = False,  # noqa: ARG002

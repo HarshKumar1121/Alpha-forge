@@ -291,6 +291,88 @@ export const FIXTURES: Record<string, unknown> = {
   // --- Forge ---------------------------------------------------------------
   '/api/forge/scopes': SCOPE_TREE,
   '/api/forge/workbench/tray': { fieldIds: [] },
+  '/api/forge/regression/prescreen': { duplicatePairs: [] },
+  '/api/forge/regression/run': {
+    lane: 'explore',
+    admitted: 2,
+    asked: 2,
+    dropped: [],
+    nObs: 980,
+    rSquared: 0.42,
+    adjRSquared: 0.39,
+    residualStdError: 0.011,
+    fields: [
+      {
+        fieldId: 'anl4_eps_mean',
+        coef: 0.031,
+        se: 0.006,
+        tStat: 5.17,
+        pValue: 0.0001,
+        ciLow: 0.019,
+        ciHigh: 0.043,
+        standaloneCorr: 0.28,
+        vif: 1.8,
+        vifFlag: false,
+        stability: {
+          signHalf1: 1,
+          signHalf2: 1,
+          significantHalf1: true,
+          significantHalf2: true,
+          stable: true,
+        },
+        profile: null,
+      },
+      {
+        fieldId: 'anl4_rev_mean',
+        coef: 0.002,
+        se: 0.01,
+        tStat: 0.2,
+        pValue: 0.61,
+        ciLow: -0.02,
+        ciHigh: 0.03,
+        standaloneCorr: 0.05,
+        vif: 1.2,
+        vifFlag: false,
+        stability: {
+          signHalf1: 1,
+          signHalf2: -1,
+          significantHalf1: false,
+          significantHalf2: false,
+          stable: false,
+        },
+        profile: null,
+      },
+    ],
+    corrMatrix: {
+      anl4_eps_mean: { anl4_eps_mean: 1, anl4_rev_mean: 0.1 },
+      anl4_rev_mean: { anl4_eps_mean: 0.1, anl4_rev_mean: 1 },
+    },
+    duplicatePairs: [],
+    plainSummary:
+      "These 2 fields together explain 42% of the target's movement (39% once adjusted). " +
+      '1 of your 2 candidates adds nothing once the other is accounted for: anl4_rev_mean ' +
+      'never clears significance in either half of the date range.',
+    recommendation: {
+      keep: ['anl4_eps_mean'],
+      drop: ['anl4_rev_mean'],
+      reason: 'Keep anl4_eps_mean — independent, stable signal. Drop anl4_rev_mean (p=0.61).',
+    },
+    winner: {
+      fieldId: 'anl4_eps_mean',
+      tStat: 5.17,
+      message:
+        'anl4_eps_mean is your strongest independent signal here (t=+5.2, stable across both halves).',
+    },
+    redundancyGroups: [],
+  },
+  '/api/forge/regression/suggestions': [
+    {
+      label: 'Analyst estimate dispersion set',
+      category: 'quality_profitability',
+      fieldIds: ['anl4_eps_mean', 'anl4_rev_mean'],
+      source: 'nugget',
+    },
+  ],
   '/api/forge/workbench/runs': [
     {
       taskId: 'workbench-task-1',
@@ -861,6 +943,40 @@ export const FIXTURES: Record<string, unknown> = {
     lane: 'validate',
     laneRemaining: 50,
   },
+  // --- Submit Helper -------------------------------------------------------
+  '/api/forge/submit-helper/recent': [
+    {
+      id: 1,
+      alphaId: 'ALPHA1',
+      pipeline: 'regular',
+      alphaType: 'regular',
+      createdAt: '2026-11-01T12:00:00Z',
+    },
+  ],
+  '/api/forge/submit-helper/check': { taskId: 'submit-helper-check-1' },
+  '/api/forge/submit-helper/result': {
+    threshold: 0.7,
+    alphas: [
+      {
+        alphaId: 'ALPHA1',
+        selfCorrelation: 0.2,
+        prodCorrelation: 0.3,
+        lastChecked: '2026-11-01T12:00:00Z',
+        verdict: 'PASS',
+      },
+      {
+        alphaId: 'ALPHA2',
+        selfCorrelation: 0.6,
+        prodCorrelation: 0.8,
+        lastChecked: '2026-11-01T12:00:00Z',
+        verdict: 'FAIL',
+      },
+    ],
+    matrix: { ALPHA1: { ALPHA2: 0.6 } },
+    recommended: ['ALPHA1'],
+    summary: '1 of 2 alphas pass PC < threshold.',
+  },
+
   // --- Workshop and the Agent -------------------------------------------------
   '/api/forge/agent/hypotheses': [
     {

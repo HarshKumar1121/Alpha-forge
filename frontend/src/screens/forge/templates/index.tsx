@@ -6,11 +6,13 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useSearch } from '@tanstack/react-router'
 import { DatabaseIcon, DumbbellIcon, LibraryIcon } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import type { Scope } from '@/api/types'
 import { cn } from '@/lib/cn'
 import { fmt } from '@/lib/format' // forge: for the per-template statistics line
 import { fieldSets } from '@/screens/forge/data/api'
 import { ColumnHint } from '@/screens/forge/data/extras'
+import { ForgeScopePicker, useForgeScope } from '@/screens/forge/scope/picker'
 import { type RenderedAlpha, studio } from '@/screens/forge/studio/api'
 import { TemplateEditor } from '@/screens/research-labs/template/editor'
 import { InfoButton, InfoSection } from '@/ui/info'
@@ -49,6 +51,9 @@ export function TemplateLibraryScreen() {
   const { t: selected } = useSearch({ from: '/forge/templates' })
   const navigate = useNavigate({ from: '/forge/templates' })
   const select = (id: string) => navigate({ search: { t: id } })
+  // forge: the market "Bind to field set" offers field sets from — a reference library is not
+  // itself scoped, but binding and Try on Gym need one, so it is picked here, once, up top.
+  const [scope, setScope] = useForgeScope()
 
   const [families, setFamilies] = useState<string[]>([])
   const [complexities, setComplexities] = useState<string[]>([])
@@ -86,6 +91,13 @@ export function TemplateLibraryScreen() {
         }
         description="Economic ideas written once with typed slots, filled with fields that behave the right way. Browsing is free; Try on Gym runs one on the synthetic market, also free."
       />
+
+      <Panel
+        title="Market"
+        description="What this tells you: which market Bind to field set and Try on Gym act in — the library itself is the same everywhere."
+      >
+        <ForgeScopePicker scope={scope} onChange={setScope} />
+      </Panel>
 
       {list.data && list.data.errors.length > 0 && (
         <Notice tone="warn" title={`${list.data.errors.length} template entries did not load`}>
@@ -179,7 +191,7 @@ export function TemplateLibraryScreen() {
         </Panel>
 
         {current ? (
-          <TemplateDetailPanel id={current} />
+          <TemplateDetailPanel id={current} scope={scope} />
         ) : (
           <Panel title="Template">
             <Empty title="Pick a template" icon={<LibraryIcon />}>
@@ -259,7 +271,7 @@ function TemplateStatsLine({ stats }: { stats: TemplateSummary['stats'] }) {
   )
 }
 
-function TemplateDetailPanel({ id }: { id: string }) {
+function TemplateDetailPanel({ id, scope }: { id: string; scope: Scope }) {
   const detail = useQuery({
     queryKey: ['forge-templates', 'detail', id],
     queryFn: () => forgeTemplates.get(id),
@@ -289,7 +301,7 @@ function TemplateDetailPanel({ id }: { id: string }) {
       }
       actions={
         <span className="flex items-center gap-2">
-          <BindToFieldSet d={d} />
+          <BindToFieldSet d={d} scope={scope} />
           <TryOnGym d={d} />
         </span>
       }
@@ -463,7 +475,7 @@ const head = (text: string, hint: string) => <ColumnHint text={text} hint={hint}
  * Binds this template to a real field set and previews what it actually renders — eligibility
  * decided by `brain/platform.py` and the alpha-type YAMLs, not a guess. Nothing here simulates.
  */
-function BindToFieldSet({ d }: { d: TemplateDetail }) {
+function BindToFieldSet({ d, scope }: { d: TemplateDetail; scope: Scope }) {
   const [open, setOpen] = useState(false)
   const [fieldSetId, setFieldSetId] = useState<number | null>(null)
 
@@ -472,6 +484,18 @@ function BindToFieldSet({ d }: { d: TemplateDetail }) {
     queryFn: fieldSets.list,
     enabled: open,
   })
+  // forge: only the market picked above, so the dropdown matches the chip rather than listing
+  // every field set the account has saved in every other market too.
+  const inScope = (sets.data ?? []).filter(
+    (s) =>
+      s.scope.region === scope.region &&
+      s.scope.delay === scope.delay &&
+      s.scope.universe === scope.universe,
+  )
+  useEffect(() => {
+    if (fieldSetId != null && !inScope.some((s) => s.id === fieldSetId)) setFieldSetId(null)
+  }, [fieldSetId, inScope])
+
   const preview = useQuery({
     queryKey: ['forge-studio', 'preview', d.id, fieldSetId],
     queryFn: () =>
@@ -550,22 +574,23 @@ function BindToFieldSet({ d }: { d: TemplateDetail }) {
         description={`See the real alphas ${d.name} renders on a field set, and which alpha types each one qualifies for. Free: nothing here is simulated.`}
       >
         <div className="flex flex-col gap-4">
-          <Field label="Field set" hint="Its market decides which fields and groups exist.">
+          <Field label="Field set" hint="Only field sets saved in the market picked above.">
             <Select
               label="Field set"
-              items={(sets.data ?? []).map((s) => ({
+              items={inScope.map((s) => ({
                 value: String(s.id),
-                label: `${s.name} — ${s.scope.region} D${s.scope.delay} ${s.scope.universe}`,
+                label: s.name,
               }))}
               value={fieldSetId == null ? null : String(fieldSetId)}
               onChange={(value) => setFieldSetId(Number(value))}
             />
           </Field>
 
-          {sets.data?.length === 0 && (
-            <Empty title="No field sets yet">
-              Make one in the Data Explorer: narrow a market to the fields behind an idea, tick
-              them, and choose "Save as field set".
+          {inScope.length === 0 && (
+            <Empty title="No field sets in this market yet">
+              {(sets.data?.length ?? 0) > 0
+                ? 'You have field sets, but none in the market picked above — pick a different market, or make one in the Data Explorer.'
+                : 'Make one in the Data Explorer: narrow a market to the fields behind an idea, tick them, and choose "Save as field set".'}
             </Empty>
           )}
 

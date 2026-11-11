@@ -10,12 +10,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { errorMessage } from '@/api/http'
+import type { Scope } from '@/api/types'
 import { fmt } from '@/lib/format'
 import { agent, type Hypothesis } from '@/screens/forge/agent/api'
 import { AgentPanel } from '@/screens/forge/agent/panel'
 import { type FieldSetOut, fieldSets } from '@/screens/forge/data/api'
 import { FieldPicker } from '@/screens/forge/data/field-picker'
 import { pipelines } from '@/screens/forge/pipelines/api'
+import { ForgeScopePicker, useForgeScope } from '@/screens/forge/scope/picker'
 import { TemplatePicker } from '@/screens/forge/templates/template-picker'
 import {
   Badge,
@@ -52,6 +54,7 @@ const STATUS_TONE: Record<TrialOut['status'], Tone> = {
 
 export function WorkshopScreen() {
   const queryClient = useQueryClient()
+  const [scope, setScope] = useForgeScope()
 
   const hypotheses = useQuery({
     queryKey: ['forge-workshop', 'hypotheses'],
@@ -76,12 +79,19 @@ export function WorkshopScreen() {
     <Page>
       <PageHeader
         title="Workshop"
-        description="Write an idea, challenge it against your own history, put it on trial in the Hypothesis Court, then promote what survives. Nothing here submits an alpha — that stays a manual step on the BRAIN website."
+        description="Write a hypothesis, get challenged by evidence from your own history, then promote a survivor into the Template Lab/Workbench to run it for real. Nothing here submits an alpha — that stays a manual step on the BRAIN website."
       />
 
+      <Panel
+        title="Market"
+        description="What this tells you: which market the field and template pickers below search in."
+      >
+        <ForgeScopePicker scope={scope} onChange={setScope} />
+      </Panel>
+
       <IdeaForm
+        scope={scope}
         pipelineNames={pipelinesQuery.data?.map((p) => p.name) ?? []}
-        fieldSetList={fieldSetsQuery.data ?? []}
         pending={proposeHypothesis.isPending}
         error={proposeHypothesis.isError ? proposeHypothesis.error : null}
         onSubmit={(body) => proposeHypothesis.mutate(body)}
@@ -125,14 +135,14 @@ export function WorkshopScreen() {
 }
 
 function IdeaForm({
+  scope,
   pipelineNames,
-  fieldSetList,
   pending,
   error,
   onSubmit,
 }: {
+  scope: Scope
   pipelineNames: string[]
-  fieldSetList: FieldSetOut[]
   pending: boolean
   error: unknown
   onSubmit: (body: {
@@ -151,13 +161,8 @@ function IdeaForm({
   const [expectedSign, setExpectedSign] = useState<'+' | '-'>('+')
   const [horizon, setHorizon] = useState('')
   const [pipeline, setPipeline] = useState('')
-  const [marketFieldSetId, setMarketFieldSetId] = useState<number | null>(null)
   const [fields, setFields] = useState<string[]>([])
   const [templateId, setTemplateId] = useState<string | null>(null)
-
-  // The field/template pickers need a market (region/universe/delay) to search in — borrowed
-  // from whichever field set sets the context, the same way `TrialSetup` below scopes a trial.
-  const marketSet = fieldSetList.find((fs) => fs.id === marketFieldSetId) ?? fieldSetList[0] ?? null
 
   const canSubmit = title.trim() !== '' && mechanism.trim() !== ''
 
@@ -239,42 +244,13 @@ function IdeaForm({
             )}
           </Field>
         </div>
-        {fieldSetList.length > 1 && (
-          <Field label="Market" hint="Which field set's scope to search fields in.">
-            <Select
-              label="Market"
-              className="w-72"
-              value={marketSet ? String(marketSet.id) : null}
-              onChange={(v) => {
-                setMarketFieldSetId(Number(v))
-                setFields([])
-                setTemplateId(null)
-              }}
-              items={fieldSetList.map((fs) => ({ value: String(fs.id), label: fs.name }))}
-              disabled={pending}
-            />
-          </Field>
-        )}
-        {marketSet ? (
-          <>
-            <FieldPicker
-              scope={marketSet.scope}
-              selected={fields}
-              onChange={(ids) => setFields(ids)}
-            />
-            <TemplatePicker
-              scope={marketSet.scope}
-              fieldIds={fields}
-              value={templateId}
-              onChange={setTemplateId}
-            />
-          </>
-        ) : (
-          <Empty title="Save a field set first">
-            The field and template pickers search a market's real fields — save one from the Data
-            Explorer, then come back to write this idea.
-          </Empty>
-        )}
+        <FieldPicker scope={scope} selected={fields} onChange={(ids) => setFields(ids)} />
+        <TemplatePicker
+          scope={scope}
+          fieldIds={fields}
+          value={templateId}
+          onChange={setTemplateId}
+        />
         {error != null && <ErrorNotice error={error} title="Could not save the idea" />}
         <Button
           type="submit"

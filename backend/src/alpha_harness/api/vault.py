@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from ..brain.filters import AlphaQuery
 from ..brain.platform import INSTRUMENT_TYPE, PLATFORM_ALPHA_URL
+from ..forge.storage.access import touch_pnl  # forge: storage TTL needs to know this was read
 from ..schemas import Out
 from ..tools import portfolio
 from ..vault import yields
@@ -324,6 +325,7 @@ async def alpha_pnl(alpha_id: str, state: State) -> AlphaPnl:
         except Exception as exc:  # noqa: BLE001
             problem = f"Could not download the daily PnL: {exc}"
     rows = await state.alphas.pnl_series(alpha_id)
+    await touch_pnl(state.db, [alpha_id])  # forge: storage TTL must not expire what was just read
     # Stored rows are daily PnL; the chart wants the running total, every day with its date.
     values = [round(total, 2) for total in itertools.accumulate(float(r["pnl"]) for r in rows)]
     return AlphaPnl(

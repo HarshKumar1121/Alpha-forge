@@ -157,16 +157,20 @@ const forgeTemplates = createRoute({
   component: lazyRouteComponent(() => import('@/screens/forge/templates'), 'TemplateLibraryScreen'),
 })
 
+// forge: Template Studio merged into Workbench's Template Lab (same `studio.preview()` engine,
+// one UI instead of two) — this route only forwards whichever template/field set/nugget an old
+// link named, so nothing bookmarked or linked from Workshop breaks.
 const forgeStudio = createRoute({
   getParentRoute: () => forge,
   path: 'studio',
-  // Which template, on which field set or nugget: the whole of the screen's state.
   validateSearch: (search: Record<string, unknown>) => ({
     t: typeof search['t'] === 'string' ? search['t'] : undefined,
     fs: typeof search['fs'] === 'number' ? search['fs'] : undefined,
     n: typeof search['n'] === 'string' ? search['n'] : undefined,
   }),
-  component: lazyRouteComponent(() => import('@/screens/forge/studio'), 'TemplateStudioScreen'),
+  beforeLoad: ({ search }) => {
+    throw redirect({ to: '/forge/workbench', search: { t: search.t, fs: search.fs, n: search.n } })
+  },
 })
 const forgeMyTemplates = createRoute({
   getParentRoute: () => forge,
@@ -191,6 +195,14 @@ const forgeBoard = createRoute({
   path: 'board',
   component: lazyRouteComponent(() => import('@/screens/forge/board'), 'BoardScreen'),
 })
+const forgeSubmitHelper = createRoute({
+  getParentRoute: () => forge,
+  path: 'submit-helper',
+  component: lazyRouteComponent(
+    () => import('@/screens/forge/submit-helper'),
+    'SubmitHelperScreen',
+  ),
+})
 const forgeWorkshop = createRoute({
   getParentRoute: () => forge,
   path: 'workshop',
@@ -209,6 +221,13 @@ const forgeNuggets = createRoute({
 const forgeWorkbench = createRoute({
   getParentRoute: () => forge,
   path: 'workbench',
+  // forge: a template/field set/nugget to preselect in the Template Lab below — what a redirect
+  // from the old Template Studio route, or a link such as Workshop's, forwards.
+  validateSearch: (search: Record<string, unknown>) => ({
+    t: typeof search['t'] === 'string' ? search['t'] : undefined,
+    fs: typeof search['fs'] === 'number' ? search['fs'] : undefined,
+    n: typeof search['n'] === 'string' ? search['n'] : undefined,
+  }),
   component: lazyRouteComponent(() => import('@/screens/forge/workbench'), 'WorkbenchScreen'),
 })
 const forgeAnalytics = createRoute({
@@ -336,6 +355,7 @@ export const routeTree = root.addChildren([
     forgeStudio,
     forgePipelines,
     forgeBoard,
+    forgeSubmitHelper,
     forgeWorkshop,
     forgeFieldSets,
     forgeNuggets,

@@ -132,7 +132,7 @@ export function PipelinesScreen() {
     <Page>
       <PageHeader
         title="Pipelines"
-        description="Cross a pipeline's templates with a field set, see what it would cost before anything runs, then approve it. A run spends real BRAIN simulations through the Quota Governor — nothing here ever submits an alpha; that stays a manual step on the BRAIN website."
+        description="Cross a pipeline's templates with a field set, see what it would cost before anything runs, then approve it. A run spends real BRAIN simulations through the Quota Governor — nothing here ever submits an alpha; that stays a manual step on the BRAIN website. The real factories: each pipeline is alpha-type-directed, with its own lane and automatic BRAIN check/correlation on finalists. For free-form one-off experimentation instead, use Workbench."
       />
 
       <Setup

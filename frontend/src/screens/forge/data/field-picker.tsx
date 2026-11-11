@@ -9,7 +9,9 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { catalog, type DataFieldRow, type FieldFilter } from '@/api/catalog'
 import type { Scope } from '@/api/types'
+import { fmt } from '@/lib/format'
 import { useDebounced } from '@/lib/use-debounced'
+import { forgeFieldColumns, useFieldExtras } from '@/screens/forge/data/extras'
 import { SaveFieldSetDialog } from '@/screens/forge/fieldsets/save-dialog'
 import { Button, Chips, ErrorNotice, Field, Input, Segmented } from '@/ui/kit'
 import { Select } from '@/ui/overlay'
@@ -19,6 +21,9 @@ import { fieldSets } from './api'
 const LIMIT = 50
 const TYPES = ['MATRIX', 'VECTOR', 'GROUP']
 
+// Lets a caller judge data quality before running anything against a field: same metadata
+// BRAIN's own Data Explorer shows (frontend/src/screens/data/fields.tsx), plus crowding below.
+// value_score is dataset-level only (DatasetRow) — BRAIN has no per-field value score to show.
 const COLUMNS: Column<DataFieldRow>[] = [
   {
     key: 'dataset_id',
@@ -43,11 +48,49 @@ const COLUMNS: Column<DataFieldRow>[] = [
     ),
   },
   {
+    key: 'category_id',
+    header: 'Category',
+    width: 'minmax(84px,1fr)',
+    cell: (r) => (
+      <span className="truncate text-ink-muted" title={r.category_name ?? undefined}>
+        {r.category_name ?? '—'}
+      </span>
+    ),
+  },
+  {
     key: 'field_type',
     header: 'Type',
     width: 'minmax(60px,0.5fr)',
     align: 'right',
     cell: (r) => <span className="num text-ink-subtle">{r.field_type ?? '—'}</span>,
+  },
+  {
+    key: 'coverage',
+    header: 'Coverage',
+    width: 'minmax(76px,0.6fr)',
+    align: 'right',
+    cell: (r) => fmt.pct(r.coverage),
+  },
+  {
+    key: 'date_coverage',
+    header: 'Date Coverage',
+    width: 'minmax(76px,0.6fr)',
+    align: 'right',
+    cell: (r) => fmt.pct(r.date_coverage),
+  },
+  {
+    key: 'user_count',
+    header: 'Users',
+    width: 'minmax(64px,0.4fr)',
+    align: 'right',
+    cell: (r) => fmt.int(r.user_count),
+  },
+  {
+    key: 'alpha_count',
+    header: 'Alphas',
+    width: 'minmax(76px,0.4fr)',
+    align: 'right',
+    cell: (r) => fmt.int(r.alpha_count),
   },
 ]
 
@@ -103,6 +146,8 @@ export function FieldPicker({
     queryFn: ({ signal }) => catalog.fields(scope, filter, signal),
     enabled: mode === 'search',
   })
+  const extras = useFieldExtras(scope, query.data?.results)
+  const columns = [...COLUMNS, ...forgeFieldColumns(extras)]
 
   const ticked = new Set(selected)
   const toggle = (ids: string[], on: boolean) => {
@@ -169,7 +214,7 @@ export function FieldPicker({
             <DataTable
               label="Fields"
               rows={query.data?.results ?? []}
-              columns={COLUMNS}
+              columns={columns}
               rowKey={(r) => r.field_id}
               selected={ticked}
               onSelect={toggle}
