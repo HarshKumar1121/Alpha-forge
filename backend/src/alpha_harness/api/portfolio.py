@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from ..brain.platform import REGION_AGNOSTIC_CLASS, TRADING_DAYS
 from ..brain.settings_schema import chosen_labels
+from ..forge.storage.access import touch_pnl  # forge: storage TTL needs to know this was read
 from ..labs.fastexpr import ParseError, data_fields, parse
 from ..schemas import Out
 from ..tools import portfolio, power_pool
@@ -312,6 +313,7 @@ async def members(
     rows = await state.alphas.submitted_members()
     ids = [str(r["alpha_id"]) for r in rows]
     series = await state.alphas.series(ids)
+    await touch_pnl(state.db, ids)  # forge: storage TTL must not expire what was just read
     meta = await state.alphas.by_ids(ids)
     # Laid out once for everything below: it was each one's slowest step.
     with_series = [a for a in dict.fromkeys(ids) if series.get(a)]
@@ -323,7 +325,9 @@ async def members(
         # is read again, as a frame has no column for it.
         current = {a for a, row in meta.items() if _pnl_version(row) == SERIES_VERSION}
         framed_ids = set(with_series)
-        extra = await state.alphas.pnl_grid([a for a in current if a not in framed_ids])
+        extra_ids = [a for a in current if a not in framed_ids]
+        extra = await state.alphas.pnl_grid(extra_ids)
+        await touch_pnl(state.db, extra_ids)  # forge: storage TTL must not expire what was read
         grid = await asyncio.to_thread(portfolio.framed_grid, with_series, framed, current, extra)
     else:
         # Net of cost, the grid is the frame cut to the days BRAIN exported: measured, the
@@ -457,6 +461,7 @@ async def compute(body: PortfolioRequest, state: State) -> PortfolioResult:
     """These Alphas combined at equal weight: stats, yearly rows, partitions, correlations."""
     ids = list(dict.fromkeys(body.alpha_ids))
     series = await state.alphas.series(ids)
+    await touch_pnl(state.db, ids)  # forge: storage TTL must not expire what was just read
     missing = [a for a in ids if a not in series]
     meta = await state.alphas.by_ids(ids)
     found = await asyncio.to_thread(portfolio.compute, series, meta, ids, body.cost_bps)
