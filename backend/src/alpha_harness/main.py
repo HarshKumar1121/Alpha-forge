@@ -70,6 +70,7 @@ from .api import (
 from .api.auth import Session
 from .api.deps import install_exception_handlers
 from .api.update import stop_server
+from .forge.hosting import BasicAccessGate, access_password, allowed_hosts  # forge: Railway hosting
 from .schemas import Out
 from .state import AppState
 
@@ -157,7 +158,8 @@ def create_app() -> FastAPI:
 
     # DNS rebinding: a page whose hostname resolves to 127.0.0.1 is "same-origin" to the
     # browser, so the header checks below pass. Its Host header still names that hostname.
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1"])
+    # forge: AH_ALLOWED_HOSTS adds the Railway domain to the allow-list.
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts())
 
     @app.middleware("http")
     async def require_client_header(request: Request, call_next: Any) -> Any:
@@ -253,6 +255,8 @@ def create_app() -> FastAPI:
 
     # Last, so every API and socket route matches first.
     app.mount("/", SinglePageApp(directory=WEB, html=True, check_dir=False), name="web")
+    # forge: outermost, so an unsigned request gets a 401 before any other check runs.
+    app.add_middleware(BasicAccessGate, password=access_password())
     return app
 
 
