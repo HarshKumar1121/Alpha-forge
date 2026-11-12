@@ -55,6 +55,7 @@ export const TOOL_TABS = [
   { tab: 'settings-sampler', label: 'Settings Sampler', to: '/tools/settings-sampler' },
   { tab: 'correlation-breaker', label: 'Correlation Breaker', to: '/tools/correlation-breaker' },
   { tab: 'fields-sampler', label: 'Fields Sampler', to: '/tools/fields-sampler' },
+  { tab: 'osmosis', label: 'Osmosis Allocator', to: '/tools/osmosis' }, // forge: Part B plan screen
 ] as const
 
 /** `group` heads a run of items in the sidebar; empty sits above every heading. An item's

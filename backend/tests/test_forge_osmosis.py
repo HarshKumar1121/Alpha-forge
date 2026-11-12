@@ -13,8 +13,7 @@ import pandas as pd
 import pytest
 
 from alpha_harness.brain.platform import IGNORED_CHECKS
-from alpha_harness.forge.osmosis import eligibility as elig
-from alpha_harness.forge.osmosis import plan as plan_mod
+from alpha_harness.forge.osmosis import scope as scope_mod
 from alpha_harness.forge.osmosis.eligibility import OsmosisStatus, osmosis_status
 from alpha_harness.forge.osmosis.plan import build_plan, plan_all, to_csv
 from alpha_harness.forge.osmosis.points import bound_weights, to_points
@@ -121,15 +120,6 @@ def test_gate_is_separate_from_the_vault_verdict() -> None:
     ]
     assert "FAIL" not in gating_results(checks)
     assert not osmosis_status(checks).eligible
-
-
-def test_eligible_ids_keeps_order() -> None:
-    statuses = {
-        "b": osmosis_status([{"name": "OSMOSIS_ALLOCATION", "result": "PASS"}]),
-        "a": osmosis_status([{"name": "OSMOSIS_ALLOCATION", "result": "WARNING"}]),
-        "c": osmosis_status([{"name": "OSMOSIS_ALLOCATION", "result": "PASS"}]),
-    }
-    assert elig.eligible_ids(statuses) == ["b", "c"]
 
 
 # --- settings ---------------------------------------------------------------------------
@@ -419,7 +409,7 @@ def _scope_pnl(n_alphas: int, n_days: int = 700, seed: int = 14) -> pd.DataFrame
 
 def test_plan_sums_to_100000_and_respects_caps() -> None:
     pnl = _scope_pnl(12)
-    plan = build_plan(pnl, statuses_for(list(pnl.columns)), "USA", 1, small_settings())
+    plan = build_plan(pnl, "USA", 1, small_settings())
     assert plan.blocked is None
     assert plan.points is not None
     assert int(plan.points.sum()) == 100_000
@@ -428,29 +418,21 @@ def test_plan_sums_to_100000_and_respects_caps() -> None:
     assert plan.decision
 
 
-def test_plan_is_blocked_below_the_eligibility_minimum_and_says_how_many_are_missing() -> None:
-    pnl = _scope_pnl(12)
-    statuses = statuses_for(list(pnl.columns)[:5])  # only five eligible
-    statuses.update(statuses_for(list(pnl.columns)[5:], result="WARNING"))
-    plan = build_plan(pnl, statuses, "USA", 1, small_settings())
-    assert plan.blocked is not None
-    assert "5 eligible" in plan.blocked and "need 10" in plan.blocked
+def test_plan_is_blocked_only_when_too_few_alphas_can_fill_the_cap() -> None:
+    """The Osmosis check is no longer a gate: three candidates are blocked by the cap alone."""
+    pnl = _scope_pnl(3)
+    plan = build_plan(pnl, "USA", 1, small_settings())
+    assert plan.blocked is not None and "Too few alphas" in plan.blocked
     assert plan.points is None
 
 
-def test_plan_is_blocked_when_history_is_too_short() -> None:
+def test_short_history_plans_without_a_validated_label() -> None:
+    """Too little history for walk-forward is not a block: the plan ships HRP, unvalidated."""
     pnl = _scope_pnl(12, n_days=120)  # train 200 + test 60 do not fit
-    plan = build_plan(pnl, statuses_for(list(pnl.columns)), "USA", 1, small_settings())
-    assert plan.blocked is not None and "Not enough history" in plan.blocked
-
-
-def test_plan_is_blocked_when_too_few_folds_can_be_scored() -> None:
-    """One fold is 126 days of evidence. It must not produce a verdict on its own."""
-    pnl = _scope_pnl(12, n_days=300)  # train 200 + test 60 + 3 * step 60 = 440 days for 4 folds
-    plan = build_plan(pnl, statuses_for(list(pnl.columns)), "USA", 1, small_settings())
-    assert plan.blocked is not None
-    assert "Only 1 walk-forward fold" in plan.blocked and "need 4" in plan.blocked
-    assert "440 days" in plan.blocked and plan.points is None
+    plan = build_plan(pnl, "USA", 1, small_settings())
+    assert plan.blocked is None and plan.folds == 0
+    assert plan.points is not None and int(plan.points.sum()) == 100_000
+    assert plan.method == "hrp"
 
 
 def test_skipped_folds_are_counted_and_named_in_the_decision() -> None:
@@ -460,9 +442,8 @@ def test_skipped_folds_are_counted_and_named_in_the_decision() -> None:
     pnl.iloc[:60, :11] = np.nan
     walk = run_walkforward(pnl, small_settings())
     assert walk.skipped_folds == 1 and walk.folds == 7
-    plan = build_plan(pnl, statuses_for(list(pnl.columns)), "USA", 1, small_settings())
+    plan = build_plan(pnl, "USA", 1, small_settings())
     assert plan.blocked is None and plan.skipped_folds == 1
-    assert "1 fold(s) skipped" in plan.decision
 
 
 def test_scopes_on_different_calendars_keep_their_own_folds() -> None:
@@ -474,10 +455,9 @@ def test_scopes_on_different_calendars_keep_their_own_folds() -> None:
     eur_on_usa_calendar.iloc[-400:-300] = np.nan  # same days, kept on the shared calendar
     pnl = pd.concat([usa, eur_on_usa_calendar], axis=1)
     scope_of = dict.fromkeys(usa.columns, ("USA", 1)) | dict.fromkeys(eur_clean.columns, ("EUR", 1))
-    statuses = statuses_for(list(pnl.columns))
     settings = small_settings()
-    eur_plan = {p.label: p for p in plan_all(pnl, statuses, scope_of, settings)}["EUR D1"]
-    reference = build_plan(eur_closed, statuses, "EUR", 1, settings)
+    eur_plan = {p.label: p for p in plan_all(pnl, scope_of, settings)}["EUR D1"]
+    reference = build_plan(eur_closed, "EUR", 1, settings)
     assert eur_plan.blocked is None and eur_plan.folds == reference.folds
     assert eur_plan.skipped_folds == reference.skipped_folds == 0
     assert eur_plan.points is not None and reference.points is not None
@@ -487,7 +467,7 @@ def test_scopes_on_different_calendars_keep_their_own_folds() -> None:
 def test_fallback_weighting_is_labelled_in_the_csv(monkeypatch: pytest.MonkeyPatch) -> None:
     """When the solver has no answer, the plan ships equal weight. The CSV must say so, not
     report the judged method as if its weights had been used."""
-    real_allocate = plan_mod.allocate
+    real_allocate = scope_mod.allocate
 
     def solver_fails(method: str, train: pd.DataFrame, settings: Settings) -> Allocation:
         allocation = real_allocate(method, train, settings)  # type: ignore[arg-type]
@@ -496,13 +476,13 @@ def test_fallback_weighting_is_labelled_in_the_csv(monkeypatch: pytest.MonkeyPat
         return Allocation(allocation.weights, fallback=True)
 
     forced = Judgement("hrp", "forced for this test", ())
-    monkeypatch.setattr(plan_mod, "judge", lambda _walk, _settings: forced)
-    monkeypatch.setattr(plan_mod, "allocate", solver_fails)
+    monkeypatch.setattr(scope_mod, "_JUDGED", {})  # the walk is cached: judge it afresh
+    monkeypatch.setattr(scope_mod, "judge", lambda _walk, _settings: forced)
+    monkeypatch.setattr(scope_mod, "allocate", solver_fails)
     pnl = _scope_pnl(12)
     statuses = statuses_for(list(pnl.columns))
-    plan = build_plan(pnl, statuses, "USA", 1, small_settings())
+    plan = build_plan(pnl, "USA", 1, small_settings())
     assert plan.fallback and plan.method == "equal_weight"
-    assert "found no solution" in plan.decision
     text = to_csv([plan], statuses, generated_at="g", data_through="d")
     assert "equal_weight (fallback)" in text and ",hrp," not in text
 
@@ -521,7 +501,7 @@ def test_plan_all_splits_scopes_and_csv_has_no_payment_field() -> None:
     scope_of = dict.fromkeys(usa.columns, ("USA", 1)) | dict.fromkeys(eur.columns, ("EUR", 1))
     statuses = statuses_for(list(pnl.columns))
     settings = small_settings()
-    plans = plan_all(pnl, statuses, scope_of, settings)
+    plans = plan_all(pnl, scope_of, settings)
     assert [p.label for p in plans] == ["EUR D1", "USA D1"]
     for p in plans:
         assert p.blocked is None and p.points is not None

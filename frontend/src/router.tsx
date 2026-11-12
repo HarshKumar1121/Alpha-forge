@@ -132,6 +132,13 @@ const fieldsSampler = createRoute({
   ),
 })
 
+// forge: the Osmosis Allocator plan, listed under Tools; its screen lives in screens/forge/osmosis.
+const osmosisAllocator = createRoute({
+  getParentRoute: () => tools,
+  path: 'osmosis',
+  component: lazyRouteComponent(() => import('@/screens/forge/osmosis'), 'OsmosisScreen'),
+})
+
 // forge: the Forge section's routes; screens live in screens/forge/. No route-registry seam exists.
 const forge = createRoute({ getParentRoute: () => root, path: '/forge' })
 const forgeToday = createRoute({
@@ -358,7 +365,13 @@ export const routeTree = root.addChildren([
   matrix,
   data,
   labs.addChildren([labsIndex, searchLab, templateLab, evolutionLab, powerPoolLab, superAlphaLab]),
-  tools.addChildren([toolsIndex, settingsSampler, correlationBreaker, fieldsSampler]),
+  tools.addChildren([
+    toolsIndex,
+    settingsSampler,
+    correlationBreaker,
+    fieldsSampler,
+    osmosisAllocator, // forge: Osmosis Allocator (read-only plan)
+  ]),
   forge.addChildren([
     forgeToday,
     forgeGym,

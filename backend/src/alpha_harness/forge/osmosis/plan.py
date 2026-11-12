@@ -3,17 +3,15 @@
 A scope is one (region, delay) pair. Alphas from different scopes trade different universes on
 different calendars, so each scope is planned alone and sums to its own 100,000 points.
 
-For each scope the steps are:
+Every submitted Alpha with stored PnL is a candidate. The Osmosis check is shown with each Alpha
+but never gates it (see :mod:`scope`). The steps for each scope are in :func:`scope.analyse_scope`:
+the window, the greedy ranking, the recommended N, the walk-forward method, and the points.
 
-1. Keep the eligible Alphas (:mod:`eligibility`). Fewer than ``min_eligible`` blocks the scope,
-   and the plan says how many are missing rather than planning a smaller set.
-2. Walk forward over the eligible history (:mod:`walkforward`) and judge the methods.
-3. Refit the winning method on the most recent training window, using only Alphas complete over
-   that window, and round the weights to points (:mod:`points`).
-
-Nothing here calls BRAIN or spends a simulation. The inputs are PnL already stored locally, and
-the outputs are a plan and a CSV the user enters on BRAIN's site by hand (hard rule 1).
-The plan reports combination statistics only. It never estimates a payment.
+This module turns that analysis into the plan that ``/plan`` and ``/plan.csv`` return, with each
+scope's default N and method. Nothing here calls BRAIN or spends a simulation. The inputs are PnL
+and figures already stored locally, and the outputs are a plan and a CSV the user enters on
+BRAIN's site by hand (hard rule 1). The plan reports combination statistics only. It never
+estimates a payment.
 """
 
 import csv
@@ -21,23 +19,21 @@ import io
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from .eligibility import OsmosisStatus, eligible_ids
-from .points import to_points
-from .selection import greedy_select, min_combination_size
-from .walkforward import Judgement, combo_stats, judge, run_walkforward
-from .weights import allocate
+from .scope import ScopeAnalysis, analyse_scope
+from .walkforward import Judgement, WalkForward, combo_stats
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     import pandas as pd
 
+    from .eligibility import OsmosisStatus
     from .settings import Settings
 
 
 @dataclass(frozen=True)
 class MethodRow:
-    """One method's out-of-sample figures, as shown beside the plan."""
+    """One weighting method's out-of-sample figures, from the walk-forward."""
 
     method: str
     sharpe: float
@@ -48,10 +44,11 @@ class MethodRow:
 
 @dataclass
 class ScopePlan:
-    """The plan for one scope. ``blocked`` is set instead of ``points`` when no plan is made."""
+    """One scope's plan. ``blocked`` is set instead of ``points`` when there is no plan."""
 
     region: str
     delay: int
+    #: Candidates with stored PnL in this scope (all of them, not only the chosen N).
     eligible_count: int
     blocked: str | None = None
     selected: list[str] = field(default_factory=list)
@@ -60,143 +57,103 @@ class ScopePlan:
     judgement: Judgement | None = None
     points: pd.Series | None = None
     weights: pd.Series | None = None
-    #: True when the solver had no answer on the latest window and equal weight was used.
+    #: True when the solver had no answer and the plan ships equal weight.
     fallback: bool = False
     folds: int = 0
-    #: Folds that could not be scored because fewer than two Alphas had full training data.
     skipped_folds: int = 0
     methods: list[MethodRow] = field(default_factory=list)
+    #: Each selected Alpha's largest absolute correlation with another selected Alpha.
+    max_abs_correlation: dict[str, float] = field(default_factory=dict)
 
     @property
     def label(self) -> str:
         return f"{self.region} D{self.delay}"
 
 
-def _blocked(region: str, delay: int, eligible: int, reason: str) -> ScopePlan:
-    return ScopePlan(region=region, delay=delay, eligible_count=eligible, blocked=reason)
+def method_rows(walk: WalkForward, settings: Settings) -> list[MethodRow]:
+    """Every method's out-of-sample figures from one walk-forward, equal weight included."""
+    rows: list[MethodRow] = []
+    for method, series in walk.oos.items():
+        stats = combo_stats(series, settings)
+        rows.append(
+            MethodRow(
+                method=method,
+                sharpe=stats["sharpe"],
+                max_drawdown=stats["max_drawdown"],
+                turnover=walk.turnover[method],
+                fold_win_rate=walk.fold_win_rate[method],
+            )
+        )
+    return rows
+
+
+def plan_from(analysis: ScopeAnalysis, settings: Settings) -> ScopePlan:
+    """The plan for one analysed scope: its default allocation, or the reason there is none."""
+    plan = ScopePlan(
+        region=analysis.region,
+        delay=analysis.delay,
+        eligible_count=analysis.alpha_count,
+        blocked=analysis.blocked,
+    )
+    if analysis.walk is not None:
+        plan.folds = analysis.folds
+        plan.skipped_folds = analysis.skipped_folds
+        plan.methods = method_rows(analysis.walk, settings)
+    if analysis.blocked is not None:
+        return plan
+    plan.selected = analysis.chosen
+    plan.method = analysis.method
+    plan.decision = analysis.decision
+    plan.judgement = analysis.judgement
+    plan.points = analysis.points
+    plan.weights = analysis.weights
+    plan.fallback = analysis.fallback
+    plan.max_abs_correlation = analysis.max_abs_correlation
+    return plan
 
 
 def build_plan(
     pnl: pd.DataFrame,
-    statuses: Mapping[str, OsmosisStatus],
     region: str,
     delay: int,
     settings: Settings,
+    turnover: Mapping[str, float] | None = None,
 ) -> ScopePlan:
     """The plan for one scope. ``pnl`` has a column per Alpha in this scope, rows are days."""
-    eligible = [a for a in eligible_ids(statuses) if a in pnl.columns]
-    count = len(eligible)
-    if count < settings.min_eligible:
-        missing = settings.min_eligible - count
-        return _blocked(
-            region,
-            delay,
-            count,
-            f"{count} eligible Alphas; need {settings.min_eligible}. "
-            f"{missing} more must pass the Osmosis check.",
-        )
-
-    pnl_e = pnl[eligible]
-    walk = run_walkforward(pnl_e, settings)
-    if walk.folds == 0:
-        return _blocked(
-            region,
-            delay,
-            count,
-            f"Not enough history: need {settings.train_days + settings.test_days} days "
-            f"of PnL, have {len(pnl_e.index)}.",
-        )
-    if walk.folds < settings.min_folds:
-        # One or two folds are too few to tell a real edge from luck, so no verdict is given.
-        needed = settings.train_days + settings.test_days + (settings.min_folds - 1) * settings.step
-        return _blocked(
-            region,
-            delay,
-            count,
-            f"Only {walk.folds} walk-forward fold(s) could be scored; need {settings.min_folds}. "
-            f"That takes about {needed} days of PnL; have {len(pnl_e.index)}.",
-        )
-
-    judgement = judge(walk, settings)
-    tail = pnl_e.iloc[-settings.train_days :]
-    complete = [c for c in tail.columns if tail[c].notna().all()]
-    chosen = greedy_select(tail[complete], settings) if complete else []
-    if len(chosen) < min_combination_size(settings):
-        return _blocked(
-            region,
-            delay,
-            count,
-            f"Only {len(chosen)} Alphas could form a combination over the latest "
-            f"{settings.train_days} days; the cap needs at least "
-            f"{min_combination_size(settings)}.",
-        )
-
-    allocation = allocate(judgement.winner, tail[chosen], settings)
-    # The weights actually shipped, which differ from the judged winner when the solver fails.
-    method = "equal_weight" if allocation.fallback else judgement.winner
-    notes = [judgement.reason]
-    if walk.skipped_folds:
-        notes.append(
-            f"{walk.skipped_folds} fold(s) skipped: fewer than 2 Alphas could be selected "
-            "on their training window."
-        )
-    if allocation.fallback:
-        notes.append(
-            f"{judgement.winner} found no solution on the latest window, so the plan uses "
-            "equal weight."
-        )
-    points = to_points(allocation.weights, settings.total_points, settings.floor, settings.cap)
-    rows: list[MethodRow] = []
-    for m, series in walk.oos.items():
-        stats = combo_stats(series, settings)
-        rows.append(
-            MethodRow(
-                method=m,
-                sharpe=stats["sharpe"],
-                max_drawdown=stats["max_drawdown"],
-                turnover=walk.turnover[m],
-                fold_win_rate=walk.fold_win_rate[m],
-            )
-        )
-    return ScopePlan(
-        region=region,
-        delay=delay,
-        eligible_count=count,
-        selected=chosen,
-        method=method,
-        decision=" ".join(notes),
-        judgement=judgement,
-        points=points,
-        weights=allocation.weights,
-        fallback=allocation.fallback,
-        folds=walk.folds,
-        skipped_folds=walk.skipped_folds,
-        methods=rows,
-    )
+    analysis = analyse_scope(pnl, region, delay, settings, turnover or {})
+    return plan_from(analysis, settings)
 
 
-def plan_all(
-    pnl: pd.DataFrame,
-    statuses: Mapping[str, OsmosisStatus],
-    scope_of: Mapping[str, tuple[str, int]],
-    settings: Settings,
-) -> list[ScopePlan]:
-    """One plan per scope. ``scope_of`` maps each Alpha ID to its ``(region, delay)``.
+def scope_frames(
+    pnl: pd.DataFrame, scope_of: Mapping[str, tuple[str, int]]
+) -> dict[tuple[str, int], pd.DataFrame]:
+    """Each scope's PnL frame: its own columns, and only its own trading days.
 
-    Alphas with no scope entry are left out; the caller sees them in ``statuses`` but not here.
+    A day that only another scope traded is all-NaN here and would otherwise count as a gap in
+    this scope's history.
     """
     by_scope: dict[tuple[str, int], list[str]] = {}
     for alpha_id in pnl.columns:
         key = scope_of.get(alpha_id)
         if key is not None:
             by_scope.setdefault(key, []).append(alpha_id)
-    plans = []
-    for (region, delay), alphas in sorted(by_scope.items()):
-        # Each scope keeps only its own trading days. A day that only another scope traded is
-        # all-NaN here and would otherwise count as a gap in this scope's history.
-        scope_pnl = pnl[alphas].dropna(how="all")
-        plans.append(build_plan(scope_pnl, statuses, region, delay, settings))
-    return plans
+    return {key: pnl[alphas].dropna(how="all") for key, alphas in sorted(by_scope.items())}
+
+
+def plan_all(
+    pnl: pd.DataFrame,
+    scope_of: Mapping[str, tuple[str, int]],
+    settings: Settings,
+    turnover: Mapping[str, float] | None = None,
+) -> list[ScopePlan]:
+    """One plan per scope. ``scope_of`` maps each Alpha ID to its ``(region, delay)``.
+
+    Alphas with no scope entry are left out.
+    """
+    return [
+        build_plan(frame, region, delay, settings, turnover)
+        for (region, delay), frame in scope_frames(pnl, scope_of).items()
+    ]
 
 
 CSV_COLUMNS = (

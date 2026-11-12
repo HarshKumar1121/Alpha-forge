@@ -1550,6 +1550,87 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/forge/osmosis/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Osmosis Plan
+         * @description Every scope's default plan: blocked reasons, the points, and the method comparison.
+         */
+        get: operations["osmosis_plan_api_forge_osmosis_plan_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/osmosis/plan.csv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Osmosis Plan Csv
+         * @description The same points as a CSV, one row per Alpha, for typing into BRAIN by hand.
+         */
+        get: operations["osmosis_plan_csv_api_forge_osmosis_plan_csv_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/osmosis/scope": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Osmosis Scope
+         * @description One scope in full. ``n`` and ``method`` are optional; omit them for the recommendation and
+         *     the default method. Read-only: nothing here calls BRAIN.
+         */
+        get: operations["osmosis_scope_api_forge_osmosis_scope_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/osmosis/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Osmosis Summary
+         * @description Every scope at a glance: its alpha count, recommended N, method and combined Sharpe.
+         */
+        get: operations["osmosis_summary_api_forge_osmosis_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/forge/pipelines": {
         parameters: {
             query?: never;
@@ -6805,6 +6886,306 @@ export interface components {
             maxSimulations: number;
             /** Vector */
             vector: string[];
+        };
+        /** OsmosisBetsPoint */
+        OsmosisBetsPoint: {
+            /** Effectivebets */
+            effectiveBets: number;
+            /** Gain */
+            gain: number | null;
+            /** N */
+            n: number;
+        };
+        /** OsmosisChartPoint */
+        OsmosisChartPoint: {
+            /** Allocation */
+            allocation: number;
+            /** Date */
+            date: string;
+            /** Equal */
+            equal: number;
+        };
+        /** OsmosisCombined */
+        OsmosisCombined: {
+            allocation: components["schemas"]["OsmosisStats"];
+            equal: components["schemas"]["OsmosisStats"];
+        };
+        /** OsmosisCurvePoint */
+        OsmosisCurvePoint: {
+            /** Combinedsharpe */
+            combinedSharpe: number | null;
+            /** Marginalsharpe */
+            marginalSharpe: number | null;
+            /** N */
+            n: number;
+        };
+        /** OsmosisExcluded */
+        OsmosisExcluded: {
+            /** Alphaid */
+            alphaId: string;
+            /** Correlatedwith */
+            correlatedWith: string | null;
+            /** Correlation */
+            correlation: number | null;
+            /** Detail */
+            detail: string;
+            /** Reason */
+            reason: string;
+        };
+        /** OsmosisMethod */
+        OsmosisMethod: {
+            /** Cihigh */
+            ciHigh: number | null;
+            /** Cilow */
+            ciLow: number | null;
+            /** Foldwinrate */
+            foldWinRate: number | null;
+            /** Gain */
+            gain: number | null;
+            /** Isplan */
+            isPlan: boolean;
+            /** Maxdrawdown */
+            maxDrawdown: number | null;
+            /** Method */
+            method: string;
+            /** Passedholdout */
+            passedHoldout: boolean | null;
+            /** Sharpe */
+            sharpe: number | null;
+            /** Turnover */
+            turnover: number | null;
+        };
+        /** OsmosisPlan */
+        OsmosisPlan: {
+            /** Datathrough */
+            dataThrough: string | null;
+            /** Generatedat */
+            generatedAt: string;
+            /** Scopes */
+            scopes: components["schemas"]["OsmosisScope"][];
+            settings: components["schemas"]["OsmosisSettings"];
+        };
+        /** OsmosisPoint */
+        OsmosisPoint: {
+            /** Alphaid */
+            alphaId: string;
+            /** Maxabscorrelation */
+            maxAbsCorrelation: number | null;
+            /** Osmosisstatus */
+            osmosisStatus: string;
+            /** Points */
+            points: number;
+            /** Weight */
+            weight: number;
+        };
+        /** OsmosisRow */
+        OsmosisRow: {
+            /** Alphaid */
+            alphaId: string;
+            /** Classifications */
+            classifications: string[];
+            /** Drawdown */
+            drawdown: number | null;
+            /** Fitness */
+            fitness: number | null;
+            /** Maxabscorrelation */
+            maxAbsCorrelation: number | null;
+            /** Osmosisstatus */
+            osmosisStatus: string;
+            /** Points */
+            points: number;
+            /** Prodcorrelation */
+            prodCorrelation: number | null;
+            /** Rank */
+            rank: number;
+            /** Sharpe */
+            sharpe: number | null;
+            /** Turnover */
+            turnover: number | null;
+            /** Universe */
+            universe: string | null;
+            /** Weight */
+            weight: number;
+        };
+        /** OsmosisScope */
+        OsmosisScope: {
+            /** Blocked */
+            blocked: string | null;
+            /** Decision */
+            decision: string;
+            /** Delay */
+            delay: number;
+            /** Eligiblecount */
+            eligibleCount: number;
+            /** Fallback */
+            fallback: boolean;
+            /** Folds */
+            folds: number;
+            /** Method */
+            method: string | null;
+            /** Methods */
+            methods: components["schemas"]["OsmosisMethod"][];
+            /** Points */
+            points: components["schemas"]["OsmosisPoint"][];
+            /** Region */
+            region: string;
+            /** Skippedfolds */
+            skippedFolds: number;
+        };
+        /** OsmosisScopeView */
+        OsmosisScopeView: {
+            /** Alphacount */
+            alphaCount: number;
+            /** Banner */
+            banner: string | null;
+            /** Belowminimum */
+            belowMinimum: boolean;
+            /** Betscurve */
+            betsCurve: components["schemas"]["OsmosisBetsPoint"][];
+            /** Blocked */
+            blocked: string | null;
+            /** Chart */
+            chart: components["schemas"]["OsmosisChartPoint"][];
+            combined: components["schemas"]["OsmosisCombined"] | null;
+            /** Curve */
+            curve: components["schemas"]["OsmosisCurvePoint"][];
+            /** Datathrough */
+            dataThrough: string | null;
+            /** Decision */
+            decision: string;
+            /** Defaultmethod */
+            defaultMethod: string;
+            /** Delay */
+            delay: number;
+            /** Excluded */
+            excluded: components["schemas"]["OsmosisExcluded"][];
+            /** Fallback */
+            fallback: boolean;
+            /** Folds */
+            folds: number;
+            /** Generatedat */
+            generatedAt: string;
+            /** Havedays */
+            haveDays: number;
+            /** Method */
+            method: string | null;
+            /** Methods */
+            methods: components["schemas"]["OsmosisMethod"][];
+            /** Mineligible */
+            minEligible: number;
+            /** N */
+            n: number;
+            /** Nmax */
+            nMax: number;
+            /** Nmin */
+            nMin: number;
+            /** Needdays */
+            needDays: number;
+            /** Rankedbeyondn */
+            rankedBeyondN: number;
+            /** Recommendedn */
+            recommendedN: number;
+            /** Region */
+            region: string;
+            /** Requestedmethod */
+            requestedMethod: string;
+            /** Rows */
+            rows: components["schemas"]["OsmosisRow"][];
+            /** Skippedfolds */
+            skippedFolds: number;
+            /** Totalpoints */
+            totalPoints: number;
+            /** Validated */
+            validated: boolean;
+            /** Warnings */
+            warnings: string[];
+            why: components["schemas"]["OsmosisWhy"];
+            /** Windowdays */
+            windowDays: number;
+        };
+        /** OsmosisSettings */
+        OsmosisSettings: {
+            /** Holdoutfolds */
+            holdoutFolds: number;
+            /** Mineligible */
+            minEligible: number;
+            /** Minfolds */
+            minFolds: number;
+            /** Step */
+            step: number;
+            /** Testdays */
+            testDays: number;
+            /** Traindays */
+            trainDays: number;
+        };
+        /** OsmosisStats */
+        OsmosisStats: {
+            /** Maxdrawdown */
+            maxDrawdown: number | null;
+            /** Sharpe */
+            sharpe: number | null;
+            /** Turnover */
+            turnover: number | null;
+        };
+        /** OsmosisSummary */
+        OsmosisSummary: {
+            /** Datathrough */
+            dataThrough: string | null;
+            /** Generatedat */
+            generatedAt: string;
+            /** Mineligible */
+            minEligible: number;
+            /** Parentsexcluded */
+            parentsExcluded: string[];
+            /** Scopes */
+            scopes: components["schemas"]["OsmosisSummaryRow"][];
+        };
+        /** OsmosisSummaryRow */
+        OsmosisSummaryRow: {
+            /** Alphacount */
+            alphaCount: number;
+            /** Banner */
+            banner: string | null;
+            /** Belowminimum */
+            belowMinimum: boolean;
+            /** Blocked */
+            blocked: string | null;
+            /** Combinedsharpe */
+            combinedSharpe: number | null;
+            /** Defaultmethod */
+            defaultMethod: string;
+            /** Delay */
+            delay: number;
+            /** Method */
+            method: string | null;
+            /** N */
+            n: number;
+            /** Recommendedn */
+            recommendedN: number;
+            /** Region */
+            region: string;
+            /** Validated */
+            validated: boolean;
+        };
+        /**
+         * OsmosisWhy
+         * @description The "Why this allocation" panel, one sentence per field.
+         */
+        OsmosisWhy: {
+            /** Correlationexclusions */
+            correlationExclusions: number;
+            /** Decayline */
+            decayLine: string;
+            /** Evidenceline */
+            evidenceLine: string;
+            /** Method */
+            method: string | null;
+            /** Methodline */
+            methodLine: string;
+            /** Sizeline */
+            sizeLine: string;
+            /** Validated */
+            validated: boolean;
         };
         /**
          * OutlineRequest
@@ -12809,6 +13190,100 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    osmosis_plan_api_forge_osmosis_plan_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OsmosisPlan"];
+                };
+            };
+        };
+    };
+    osmosis_plan_csv_api_forge_osmosis_plan_csv_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    osmosis_scope_api_forge_osmosis_scope_get: {
+        parameters: {
+            query: {
+                region: string;
+                delay: number;
+                n?: number | null;
+                method?: ("equal_weight" | "inverse_volatility" | "min_variance" | "hrp" | "max_sharpe" | "equal_risk_contribution") | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OsmosisScopeView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    osmosis_summary_api_forge_osmosis_summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OsmosisSummary"];
                 };
             };
         };

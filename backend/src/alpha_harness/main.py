@@ -71,6 +71,7 @@ from .api.auth import Session
 from .api.deps import install_exception_handlers
 from .api.update import stop_server
 from .forge.hosting import BasicAccessGate, access_password, allowed_hosts  # forge: Railway hosting
+from .forge.osmosis.api import router as osmosis_router  # forge: Osmosis Allocator (read-only)
 from .schemas import Out
 from .state import AppState
 
@@ -226,6 +227,7 @@ def create_app() -> FastAPI:
     app.include_router(forge_agent.router)  # forge: agent tools/memory (approve route spends)
     app.include_router(forge_workshop.router)  # forge: Workshop (trial spends validate lane)
     app.include_router(forge_workbench.router)  # forge: Workbench tray (local SQLite only)
+    app.include_router(osmosis_router)  # forge: Osmosis Allocator plan and CSV (read-only)
     app.include_router(ws.router)
 
     @app.get("/api/health", tags=["meta"])

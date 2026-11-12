@@ -39,6 +39,7 @@ const ROUTES = [
   '/tools/settings-sampler',
   '/tools/correlation-breaker',
   '/tools/fields-sampler',
+  '/tools/osmosis', // forge: Osmosis Allocator
   '/forge/today',
   '/forge/gym',
   '/forge/templates',

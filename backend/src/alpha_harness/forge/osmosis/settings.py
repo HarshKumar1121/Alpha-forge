@@ -29,6 +29,9 @@ class Settings:
     #: Extra Sharpe a candidate must add, beyond the best so far, to be kept once the
     #: combination has reached its minimum size.
     min_sharpe_gain: float = 0.0
+    #: Recommended N is the smallest size after which one more Alpha raises the effective number
+    #: of independent bets by less than this share (see :mod:`effective_bets`).
+    bets_min_gain: float = 0.05
     #: Training window, in trading days (504 is about two years).
     train_days: int = 504
     #: Out-of-sample window scored after each training window, in trading days.
@@ -93,6 +96,8 @@ def _validate(s: Settings) -> None:
             f"so the selection folds are not empty; got min_folds={s.min_folds}, "
             f"holdout_folds={s.holdout_folds}"
         )
+    if s.bets_min_gain < 0:
+        raise ValueError(f"bets_min_gain must be >= 0, got {s.bets_min_gain}")
     if not 0 <= s.mean_shrink <= 1:
         raise ValueError(f"mean_shrink must be in [0, 1], got {s.mean_shrink}")
     if s.bootstrap_samples < 100 or s.bootstrap_block < 1:

@@ -1,17 +1,17 @@
 """Which submitted Alphas may enter Osmosis: the eligibility gate.
 
-An Alpha is eligible only when its stored submission checks carry ``OSMOSIS_ALLOCATION`` with
-result ``PASS``. Every other outcome is ineligible, each with a plain reason:
+This reads an Alpha's stored ``OSMOSIS_ALLOCATION`` result and says what it is, for the screen
+to show beside the Alpha. It never gates: an Alpha with no stored result is a candidate like any
+other, marked "not checked". The outcomes, each with a plain reason:
 
 - ``WARNING`` means BRAIN did not generate the Daily Osmosis Rank (``messages.ts``). It is the
   label BRAIN gives many checked Alphas, so it is not read as a pass (design decision Q1).
 - ``PENDING`` means BRAIN has not judged it yet; run Check Submission and wait.
-- A missing entry means nobody has checked this Alpha since its results were stored.
+- A missing entry means BRAIN has not returned the check for this Alpha (shown as "Not checked").
 
 This is deliberately separate from the vault's submittable verdict. ``OSMOSIS_ALLOCATION`` is in
-``IGNORED_CHECKS`` (``brain/platform.py``), so the verdict never sees it: reusing
-``gating_results`` here would call an Alpha eligible while BRAIN says its rank failed. A test
-pins that difference.
+``IGNORED_CHECKS`` (``brain/platform.py``), so the verdict never sees it. A test pins that
+difference.
 """
 
 from collections.abc import Mapping, Sequence
@@ -70,8 +70,3 @@ def osmosis_status(checks: Sequence[Any] | None) -> OsmosisStatus:
             "warning", result, "BRAIN did not generate the Daily Osmosis Rank for this Alpha."
         )
     return OsmosisStatus("unknown", result, f"Unrecognised Osmosis result: {result}.")
-
-
-def eligible_ids(statuses: Mapping[str, OsmosisStatus]) -> list[str]:
-    """The Alpha IDs whose standing is eligible, in the order given."""
-    return [alpha_id for alpha_id, s in statuses.items() if s.eligible]

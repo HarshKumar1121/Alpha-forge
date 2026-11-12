@@ -24,6 +24,7 @@ can hold 100% of the points.
 """
 
 import math
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -59,39 +60,66 @@ def min_combination_size(settings: Settings) -> int:
     return math.ceil(1.0 / settings.cap - 1e-12)
 
 
+@dataclass(frozen=True)
+class Pick:
+    """One step of greedy selection, in the order the Alphas were picked (the ranking).
+
+    ``combined_sharpe`` is the equal-weight combination's Sharpe once this Alpha is in.
+    ``marginal_sharpe`` is how much that step added over the step before (over zero for the
+    first pick): the Alpha's marginal contribution, the number the ranking shows.
+    """
+
+    alpha: str
+    combined_sharpe: float
+    marginal_sharpe: float
+
+
+def greedy_trace(train: pd.DataFrame, settings: Settings) -> list[Pick]:
+    """The greedy picks on ``train`` (columns are Alpha IDs, rows are days), in pick order.
+
+    This is :func:`greedy_select` with its steps kept, so the ranking and the selection can
+    never disagree: :func:`greedy_select` is just the names of these picks.
+
+    The inner loop works on a numpy array, not a frame per candidate: a ranking of 100 Alphas
+    over 2,500 days took seconds that way and well under one second this way. The arithmetic is
+    the same as :func:`combo` followed by :func:`sharpe`.
+    """
+    cols = [str(c) for c in train.columns]
+    if not cols:
+        return []
+    values = train.to_numpy(dtype=float)
+    corr = train.corr().to_numpy()
+    floor_size = min_combination_size(settings)
+    picks: list[Pick] = []
+    chosen: list[int] = []
+    best_so_far = -math.inf
+    while len(chosen) < settings.max_selected:
+        best: int | None = None
+        best_sh = -math.inf
+        for j in range(len(cols)):
+            if j in chosen:
+                continue
+            # ``not (x <= cap)`` also rejects NaN, which a constant series produces.
+            if any(not (abs(float(corr[j, s])) <= settings.corr_cap) for s in chosen):
+                continue
+            sh = sharpe(values[:, [*chosen, j]].mean(axis=1), settings.periods_per_year)
+            if math.isfinite(sh) and sh > best_sh:
+                best, best_sh = j, sh
+        if best is None:
+            break
+        if len(chosen) >= floor_size and not (best_sh > best_so_far + settings.min_sharpe_gain):
+            break
+        previous = best_so_far if picks else 0.0
+        picks.append(Pick(cols[best], best_sh, best_sh - previous))
+        chosen.append(best)
+        best_so_far = best_sh
+    return picks
+
+
 def greedy_select(train: pd.DataFrame, settings: Settings) -> list[str]:
     """The Alphas chosen on ``train`` (columns are Alpha IDs, rows are days).
 
     Returns fewer than :func:`min_combination_size` Alphas only when the correlation cap leaves
     no other candidate; the caller reports that as a blocked scope.
     """
-    cols = [str(c) for c in train.columns]
-    if not cols:
-        return []
-    corr = train.corr().to_numpy()
-    position = {c: i for i, c in enumerate(train.columns)}
-    floor_size = min_combination_size(settings)
-    chosen: list[str] = []
-    best_so_far = -math.inf
-    while len(chosen) < settings.max_selected:
-        best: str | None = None
-        best_sh = -math.inf
-        for candidate in cols:
-            if candidate in chosen:
-                continue
-            # ``not (x <= cap)`` also rejects NaN, which a constant series produces.
-            if any(
-                not (abs(float(corr[position[candidate], position[s]])) <= settings.corr_cap)
-                for s in chosen
-            ):
-                continue
-            sh = sharpe(combo(train[[*chosen, candidate]]).to_numpy(), settings.periods_per_year)
-            if math.isfinite(sh) and sh > best_sh:
-                best, best_sh = candidate, sh
-        if best is None:
-            break
-        if len(chosen) >= floor_size and not (best_sh > best_so_far + settings.min_sharpe_gain):
-            break
-        chosen.append(best)
-        best_so_far = best_sh
-    return chosen
+    return [pick.alpha for pick in greedy_trace(train, settings)]

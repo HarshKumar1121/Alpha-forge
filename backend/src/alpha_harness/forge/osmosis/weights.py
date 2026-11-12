@@ -9,6 +9,9 @@ that sum to 1, then clipped to the per-Alpha cap and floor (:func:`points.bound_
 - ``hrp``: hierarchical risk parity (López de Prado, 2016). Clusters Alphas by correlation and
   splits risk down the tree. It uses no expected returns, so it cannot be fooled by a noisy one.
 - ``max_sharpe``: the mix with the highest Sharpe, with means shrunk toward the group mean.
+- ``equal_risk_contribution``: each Alpha contributes the same share of the combination's
+  variance (Maillard, Roncalli & Teiletche, 2010). Unlike inverse volatility it sees
+  correlation: two near-copies of one Alpha share one slot of risk, not two.
 
 Why equal weight is the baseline to beat. Expected returns are estimated from a few years of
 daily PnL, and that estimate is very noisy. An Alpha with true annual Sharpe 1.0, observed over
@@ -35,7 +38,14 @@ from .points import bound_weights
 if TYPE_CHECKING:
     from .settings import Settings
 
-Method = Literal["equal_weight", "inverse_volatility", "min_variance", "hrp", "max_sharpe"]
+Method = Literal[
+    "equal_weight",
+    "inverse_volatility",
+    "min_variance",
+    "hrp",
+    "max_sharpe",
+    "equal_risk_contribution",
+]
 #: Equal weight first: it is the baseline the others must beat.
 METHODS: tuple[Method, ...] = (
     "equal_weight",
@@ -43,7 +53,11 @@ METHODS: tuple[Method, ...] = (
     "min_variance",
     "hrp",
     "max_sharpe",
+    "equal_risk_contribution",
 )
+
+#: How close each Alpha's risk share must be to 1/N for the solver's answer to count.
+ERC_TOLERANCE = 1e-4
 
 
 @dataclass(frozen=True)
@@ -148,6 +162,50 @@ def _min_variance(cov: np.ndarray) -> np.ndarray | None:
     return res.x if res.success else None
 
 
+def risk_shares(weights: np.ndarray, cov: np.ndarray) -> np.ndarray:
+    """Each Alpha's share of the combination's variance, summing to 1.
+
+    Alpha ``i`` contributes ``w_i (Sigma w)_i`` to the variance ``w' Sigma w``. These shares are
+    what "risk contribution" means: a 50% share is half the combination's risk, whatever the
+    Alpha's own volatility.
+    """
+    contributions = weights * (cov @ weights)
+    return contributions / contributions.sum()
+
+
+def _equal_risk_contribution(cov: np.ndarray) -> np.ndarray | None:
+    """The long-only mix where every Alpha carries the same share of risk, or ``None``.
+
+    Solved as a least-squares problem: find weights that make every pair of risk shares equal.
+    The start point is inverse volatility, which is exact when the Alphas are uncorrelated and a
+    good guess otherwise. A solver that stops early, or a solution whose shares miss 1/N by more
+    than :data:`ERC_TOLERANCE`, returns ``None`` so the caller falls back to equal weight.
+    """
+    p = cov.shape[0]
+    start = 1.0 / np.sqrt(np.diag(cov))
+    start = start / start.sum()
+
+    def pairwise_gap(w: np.ndarray) -> float:
+        shares = risk_shares(w, cov)
+        return float(((shares[:, None] - shares[None, :]) ** 2).sum())
+
+    res = minimize(
+        pairwise_gap,
+        start,
+        bounds=[(1e-9, 1.0)] * p,
+        constraints=({"type": "eq", "fun": lambda w: float(w.sum()) - 1.0},),
+        method="SLSQP",
+        options={"maxiter": 500, "ftol": 1e-14},
+    )
+    if not res.success:
+        return None
+    solved = np.clip(res.x, 0.0, None)
+    solved = solved / solved.sum()
+    if np.max(np.abs(risk_shares(solved, cov) - 1.0 / p)) > ERC_TOLERANCE:
+        return None
+    return solved
+
+
 def _max_sharpe(cov: np.ndarray, train: np.ndarray, settings: Settings) -> np.ndarray | None:
     """The long-only mix with the highest Sharpe, using shrunk means.
 
@@ -212,6 +270,10 @@ def allocate(method: Method, train: pd.DataFrame, settings: Settings) -> Allocat
             raw = _hrp(cov)
         elif method == "min_variance":
             solved = _min_variance(cov)
+            fallback = solved is None
+            raw = equal if solved is None else np.clip(solved, 0.0, None)
+        elif method == "equal_risk_contribution":
+            solved = _equal_risk_contribution(cov)
             fallback = solved is None
             raw = equal if solved is None else np.clip(solved, 0.0, None)
         else:
