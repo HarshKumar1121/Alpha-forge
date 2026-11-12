@@ -36,6 +36,8 @@ teach the user. Prefer readable code with docstrings that explain the quant reas
   queue repair into the validate lane, submission checklist).
 - **Next:** Phase 7 frontend (Submittable Board screen under `screens/forge/board/`).
   Still deferred: wire/verify the Phase 5 Studio frontend and populate `template_stats`.
+  Known v1 limitation (deferred): Select's State D stopgap line for a pool with fewer
+  distinct fields than template slots (`pairing_problem()` returns null there, so the card shows the generic stopgap).
 - **Removed:** the standalone Data Nuggets browse/manage screen (`screens/forge/nuggets/index.tsx`,
   its `/forge/nuggets` route and sidebar entry) — nothing else imported it, and every other
   consumer (Workbench's "nugget" source mode, Template Studio's bind-to-nugget, the Regression

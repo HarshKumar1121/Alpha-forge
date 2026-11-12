@@ -157,20 +157,29 @@ const forgeTemplates = createRoute({
   component: lazyRouteComponent(() => import('@/screens/forge/templates'), 'TemplateLibraryScreen'),
 })
 
-// forge: Template Studio merged into Workbench's Template Lab (same `studio.preview()` engine,
-// one UI instead of two) — this route only forwards whichever template/field set/nugget an old
-// link named, so nothing bookmarked or linked from Workshop breaks.
+// forge: Template Studio's old links now land on Select (the Select screen, docs/forge/
+// SELECTION_WORKFLOW.md §4): it forwards the template (`t`) and field set (`fs`) an old link
+// named, so that link opens Select with the same pool and template preselected.
 const forgeStudio = createRoute({
   getParentRoute: () => forge,
   path: 'studio',
   validateSearch: (search: Record<string, unknown>) => ({
     t: typeof search['t'] === 'string' ? search['t'] : undefined,
     fs: typeof search['fs'] === 'number' ? search['fs'] : undefined,
-    n: typeof search['n'] === 'string' ? search['n'] : undefined,
   }),
   beforeLoad: ({ search }) => {
-    throw redirect({ to: '/forge/workbench', search: { t: search.t, fs: search.fs, n: search.n } })
+    throw redirect({ to: '/forge/select', search: { t: search.t, fs: search.fs } })
   },
+})
+// forge: Select, the field-first way into Template Lab (docs/forge/SELECTION_WORKFLOW.md §3).
+const forgeSelect = createRoute({
+  getParentRoute: () => forge,
+  path: 'select',
+  validateSearch: (search: Record<string, unknown>) => ({
+    t: typeof search['t'] === 'string' ? search['t'] : undefined,
+    fs: typeof search['fs'] === 'number' ? search['fs'] : undefined,
+  }),
+  component: lazyRouteComponent(() => import('@/screens/forge/select'), 'SelectScreen'),
 })
 const forgeMyTemplates = createRoute({
   getParentRoute: () => forge,
@@ -356,6 +365,7 @@ export const routeTree = root.addChildren([
     forgeTemplates,
     forgeMyTemplates,
     forgeStudio,
+    forgeSelect, // forge: Select
     forgePipelines,
     forgeBoard,
     forgeBreakdown,

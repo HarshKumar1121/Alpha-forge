@@ -2126,13 +2126,34 @@ export interface paths {
          * Compatible Templates
          * @description Which templates these fields could bind to, right now — free and offline.
          *
-         *     Builds a transient (never-persisted) field set the same way pipelines' inline-fields
-         *     preview does, resolves it against the real catalog so each field's dataset is known (the
-         *     same-dataset/semantic-pairing rules in :func:`~..forge.research.templates.bindings` need
-         *     that), then keeps only the templates :func:`~..forge.research.templates.fits_fields` says
-         *     these fields can actually fill.
+         *     Keeps only the templates :func:`~..forge.research.templates.fits_fields` says these fields
+         *     can actually fill.
          */
         post: operations["compatible_templates_api_forge_templates_compatible_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forge/templates/fit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fit Templates
+         * @description Every template, read against these fields: which slots they could fill and why not.
+         *
+         *     Unlike ``/compatible``, nothing is dropped — a template that does not fit comes back with
+         *     the problem line for each slot, so the Select screen can show why rather than hide it.
+         *     Built-ins and your own templates are both checked; your own are read from the database.
+         */
+        post: operations["fit_templates_api_forge_templates_fit_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5612,6 +5633,85 @@ export interface components {
             note: string;
             /** Samplesize */
             sampleSize: number;
+        };
+        /** FitSlot */
+        FitSlot: {
+            /** Aggregate */
+            aggregate?: string | null;
+            /** Archetype */
+            archetype?: string[];
+            /** Candidates */
+            candidates?: string[];
+            /** Kind */
+            kind: string;
+            /** Name */
+            name: string;
+            /** Problem */
+            problem?: string | null;
+            /** Type */
+            type?: string | null;
+            /** Values */
+            values?: (number | string)[];
+        };
+        /** FitTemplate */
+        FitTemplate: {
+            /** Angle */
+            angle: string;
+            /** Category */
+            category: string;
+            /** Complexity */
+            complexity: string;
+            /** Datasetcategory */
+            datasetCategory: string;
+            /** Expr */
+            expr: string;
+            /** Fits */
+            fits: boolean;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Note */
+            note?: string | null;
+            /** Pairingproblem */
+            pairingProblem?: string | null;
+            /** Rationale */
+            rationale: string;
+            /** Slots */
+            slots: components["schemas"]["FitSlot"][];
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "builtin" | "user";
+        };
+        /** FitTemplates */
+        FitTemplates: {
+            /** Errors */
+            errors: string[];
+            /** Missing */
+            missing: string[];
+            /** Templates */
+            templates: components["schemas"]["FitTemplate"][];
+        };
+        /**
+         * FitTemplatesRequest
+         * @description A Select pool: the same picked fields, capped at the 50 that the pairing check takes.
+         */
+        FitTemplatesRequest: {
+            /** Delay */
+            delay: number;
+            /** Fieldids */
+            fieldIds: string[];
+            /**
+             * Instrumenttype
+             * @default EQUITY
+             */
+            instrumentType: string;
+            /** Region */
+            region: string;
+            /** Universe */
+            universe: string;
         };
         /** ForgeDataset */
         ForgeDataset: {
@@ -13608,6 +13708,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CompatibleTemplates"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fit_templates_api_forge_templates_fit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FitTemplatesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FitTemplates"];
                 };
             };
             /** @description Validation Error */

@@ -1,7 +1,20 @@
 # Selection Workflow — audit and design
 
-Status: **proposed, not built.** No code exists against this doc. Every file/line reference
-below was read on 2026-11-12; nothing is assumed from older reports.
+Status: **Select built** (PR 1: `POST /api/forge/templates/fit` and its pairing reasons; PR 2:
+the `/forge/select` screen, its nav entry, and the `/forge/studio` redirect retarget). Every
+file/line reference below was read on 2026-11-12; nothing is assumed from older reports.
+
+Built differences from this spec, so the doc does not claim more than the code does:
+- Market bar uses the shared Forge scope (`useForgeScope`), not its own `alpha-forge-select` key,
+  and also shows instrument type (`ForgeScopePicker`). Changing the market clears the pool.
+- Field table and pool are `FieldPicker` (search, crowding, my pass-rate per field, Load field
+  set, Save as set). The dataset and category pass-rate columns (§3.2) and the Load nugget
+  button (§3.3) are not built yet.
+- Pairing line uses `POST /api/forge/nuggets/suggest` (advisory, §3.3).
+- Candidate cards show counts per slot, not dataset names: the fit response carries field ids
+  only. Dataset ids are looked up through `catalog.fields` on hand-off, for the variables.
+- Nav: Select replaces the Workbench entry. The Workbench route stays until open question 3 (§8)
+  is decided.
 
 ## 0. Verdict
 
@@ -386,8 +399,9 @@ unchanged.
 - `screens/forge/select/{index.tsx, api.ts, field-table.tsx, pool.tsx, template-cards.tsx}`.
 - Route `/forge/select` in `router.tsx`; nav entry replacing Workbench's (`nav.ts:152`).
 - Retarget the `/forge/studio` redirect (`router.tsx:172`) to `/forge/select` carrying
-  `t` (template id) and `fs` (field set id) so "Bind to field set" in Template Library opens
-  Select with that pool and template preselected.
+  `t` (template id) and `fs` (field set id), so an old `/forge/studio` link opens Select with
+  that pool and template preselected. (Template Library's "Bind to field set" is a preview
+  sheet on the page, not a link, so it is unchanged.)
 - Tests: `src/test/routes.test.tsx` route entry, component tests with `api-mock.ts`.
 
 Touches ≈ 10 files.
@@ -423,7 +437,8 @@ Touches ≈ 10 files.
   its `tasks-bridge.ts` projection until old runs are no longer wanted, then drop both.
 - **Template Studio API** — unchanged; still used by Template Library's bind sheet.
 - **Template Library** (`/forge/templates`) — unchanged; it is the read-only reference.
-  Its "Bind to field set" now lands on Select (redirect retarget above).
+  Its "Bind to field set" is an in-page preview sheet and stays as it is; Select is reached
+  from the nav, and old `/forge/studio` links forward to it.
 - **Old Pipelines** — unchanged by this doc; it is the batch factory, a different job.
 - **Template Lab** — unchanged, and now the only place a template is edited or run from a pick.
 

@@ -11,7 +11,6 @@ import {
   Grid3x3Icon,
   LayersIcon,
   LayoutGridIcon,
-  LayoutPanelLeftIcon, // forge: Workbench's icon
   LibraryIcon, // forge: Template Library's icon
   ListChecksIcon,
   PencilIcon, // forge: My Templates' icon
@@ -148,11 +147,13 @@ export const NAV = [
     label: 'Field Sets',
     icon: BookmarkIcon,
   },
+  // forge: Select replaces Workbench in the nav; the Workbench route stays until its removal
+  // (docs/forge/SELECTION_WORKFLOW.md §6, open question 3).
   {
-    to: '/forge/workbench',
+    to: '/forge/select',
     group: 'Forge',
-    label: 'Workbench',
-    icon: LayoutPanelLeftIcon,
+    label: 'Select',
+    icon: ListChecksIcon,
   },
   {
     to: '/forge/analytics',

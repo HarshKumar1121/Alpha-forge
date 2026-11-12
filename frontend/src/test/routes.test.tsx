@@ -17,6 +17,7 @@ import { type AnyRoute, createMemoryHistory, RouterProvider } from '@tanstack/re
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createAppRouter, routeTree } from '@/router'
+import { useTemplateLab } from '@/screens/research-labs/template/state'
 import { NAV } from '@/shell/nav'
 import { installApiMock } from './api-mock'
 
@@ -43,6 +44,7 @@ const ROUTES = [
   '/forge/templates',
   '/forge/my-templates',
   '/forge/studio',
+  '/forge/select',
   '/forge/pipelines',
   '/forge/board',
   '/forge/breakdown/1',
@@ -201,17 +203,19 @@ describe('the Forge data screens', () => {
  * template/field set/nugget an old link named, onto `/forge/workbench`.
  */
 describe('the old Template Studio route', () => {
-  it('redirects to the Workbench, forwarding the template and field set', async () => {
+  // forge: Select is the field-first entry now, so the old link forwards there.
+  it('redirects to Select, forwarding the template and field set', async () => {
     const router = await mount('/forge/studio?t=analyst_revision&fs=1')
-    expect(router.state.location.pathname).toBe('/forge/workbench')
-    expect(screen.getByText('Template Lab')).toBeTruthy()
+    expect(router.state.location.pathname).toBe('/forge/select')
+    expect(router.state.location.search).toEqual({ t: 'analyst_revision', fs: 1 })
+    expect(screen.getByText('Templates your pool can fill')).toBeTruthy()
     expect(screen.queryByText(CRASHED)).toBeNull()
   })
 })
 
 describe('the Workbench Template Lab bound to a field set', () => {
   it('shows each rendered alpha and what it qualifies for', async () => {
-    await mount('/forge/studio?t=analyst_revision&fs=1')
+    await mount('/forge/workbench?t=analyst_revision&fs=1')
     expect(screen.getByText('rank(ts_delta(ts_backfill(anl4_eps_mean, 63), 21))')).toBeTruthy()
     // The fit summary counts each type separately: both fit regular and Power Pool, and
     // only one is a single-dataset ATOM alpha.
@@ -225,7 +229,7 @@ describe('the Workbench Template Lab bound to a field set', () => {
   })
 
   it('says why an alpha misses a type', async () => {
-    await mount('/forge/studio?t=analyst_revision&fs=1')
+    await mount('/forge/workbench?t=analyst_revision&fs=1')
     const rows = screen.getAllByRole('button')
     const second = rows.find((r) =>
       r.textContent?.includes('rank(ts_delta(ts_backfill(anl4_rev_mean, 63), 63))'),
@@ -242,7 +246,7 @@ describe('the Workbench Template Lab bound to a field set', () => {
   })
 
   it('drafts a Power Pool description for an eligible alpha', async () => {
-    await mount('/forge/studio?t=analyst_revision&fs=1')
+    await mount('/forge/workbench?t=analyst_revision&fs=1')
     const rows = screen.getAllByRole('button')
     const first = rows.find((r) =>
       r.textContent?.includes('rank(ts_delta(ts_backfill(anl4_eps_mean, 63), 21))'),
@@ -622,5 +626,45 @@ describe('the list above stays honest', () => {
     ])
     const broken = links.filter((to) => !registered.has(to))
     expect(broken, `sidebar links with no matching route: ${broken.join(', ')}`).toEqual([])
+  })
+})
+
+/**
+ * Select, the field-first screen. Its pool read is the `/templates/fit` fixture, which holds one
+ * template per fit state, so each group and its claim is on screen to check.
+ */
+describe('the Select screen', () => {
+  it('groups templates by what the pool can fill, and says why the rest do not', async () => {
+    await mount('/forge/select?fs=1')
+    expect(screen.getByText('Revision against peers')).toBeTruthy()
+    expect(screen.getByText('Disagreement among analysts')).toBeTruthy()
+    expect(screen.getByText('Flow of a vector field')).toBeTruthy()
+    expect(screen.getAllByText(/Needs matching fields/).length).toBeGreaterThan(0)
+    // State D's line is the pairing reason itself, not the generic stopgap.
+    expect(
+      screen.getByText(
+        'none of your fields has one of these words in its id (average/avg/mean), as slot Y needs',
+      ),
+    ).toBeTruthy()
+    expect(screen.queryByText(/no combination of your fields/)).toBeNull()
+    expect(screen.getByText(/field close is MATRIX; this slot needs a VECTOR field/)).toBeTruthy()
+    expect(screen.queryByText(CRASHED)).toBeNull()
+  })
+
+  it('hands the chosen template and its fields to Template Lab', async () => {
+    window.confirm = vi.fn(() => true)
+    useTemplateLab.setState({ dirty: false })
+    const router = await mount('/forge/select?t=analyst_revision&fs=1')
+    await act(async () => {
+      screen.getByRole('button', { name: 'Open in Template Lab →' }).click()
+    })
+    await waitFor(() => expect(router.state.location.pathname).toBe('/labs/template'))
+    const lab = useTemplateLab.getState()
+    expect(lab.text).toBe('rank(ts_delta($X, $W))')
+    expect(Object.keys(lab.variables).sort()).toEqual(['W', 'X'])
+    expect(lab.variables['W']).toEqual({ kind: 'values', values: '21, 63' })
+    expect(lab.universes).toHaveLength(1)
+    expect(lab.dirty).toBe(true)
+    expect(screen.queryByText(CRASHED)).toBeNull()
   })
 })
