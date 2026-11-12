@@ -40,6 +40,7 @@ the typed-slot format.
 """
 
 import itertools
+import math
 import re
 from dataclasses import dataclass, replace
 from functools import cache
@@ -659,6 +660,146 @@ def fits_fields(t: Template, fields: Sequence[FieldInfo]) -> bool:
     if not t.field_slots:
         return True
     return bool(bindings(t, fields, require_archetype=False))
+
+
+#: Permutations :func:`bindings` may walk for one template before the fit check declines to
+#: walk. Built-in templates have at most two field slots, so this only bites on user templates
+#: with many; the walk is over the whole pool, one tuple per ordered choice of slot fields.
+FIT_WALK_BUDGET = 200_000
+
+
+@dataclass(frozen=True, slots=True)
+class SlotFit:
+    """How one field slot reads against a pool: which fields could fill it alone, and why none
+    could when none can."""
+
+    candidates: tuple[str, ...]
+    problem: str | None
+
+
+def slot_fit(slot: FieldSlot, fields: Sequence[FieldInfo]) -> SlotFit:
+    """Which pool fields could fill ``slot`` on their own, ignoring dataset pairing.
+
+    The archetype rule is relaxed with ``require_archetype=False``, as :func:`fits_fields` is:
+    a field set of real BRAIN fields is not profiled until the Real-Price Lab runs.
+    """
+    reasons: list[str] = []
+    candidates: list[str] = []
+    for f in fields:
+        problem = field_problem(slot, f, require_archetype=False)
+        if problem is None:
+            candidates.append(f.id)
+        else:
+            reasons.append(problem)
+    if candidates:
+        return SlotFit(candidates=tuple(candidates), problem=None)
+    return SlotFit(candidates=(), problem=reasons[0] if reasons else "the pool has no fields")
+
+
+def fits_pool(t: Template, fields: Sequence[FieldInfo]) -> tuple[bool, str | None]:
+    """Whether the pool can fill every field slot of ``t`` together, and a note when it
+    cannot say.
+
+    Only walks :func:`bindings` once every slot has a candidate, and declines when the walk
+    would exceed :data:`FIT_WALK_BUDGET` — the note then says so rather than reporting a
+    misleading "does not fit".
+    """
+    if not t.field_slots:
+        return True, None
+    if any(not slot_fit(t.field_slot(n), fields).candidates for n in t.field_slots):
+        return False, None
+    if math.perm(len(fields), len(t.field_slots)) > FIT_WALK_BUDGET:
+        return False, (
+            f"{len(t.field_slots)} field slots over {len(fields)} fields is too many "
+            "combinations to check here; use fewer fields or fewer slots"
+        )
+    return bool(bindings(t, fields, require_archetype=False)), None
+
+
+def _hint_pairing_problem(
+    t: Template, name: str, other_name: str, mine: Sequence[FieldInfo], theirs: Sequence[FieldInfo]
+) -> str | None:
+    """Why no candidate of ``name`` pairs with a candidate of ``other_name`` by the statistic
+    their hints name (mean/std, estimate/actual, ...), or None when some pair does or no
+    hint pair applies.
+
+    Mirrors :func:`semantic_problem` pair by pair, so the reason agrees with what
+    :func:`bindings` would reject. The per-side checks come first because they are the
+    plainest true statement: if no candidate of a slot even names its half of the pair,
+    say that, rather than a stem mismatch between two fields the slot could never take.
+    """
+    slot, other_slot = t.field_slot(name), t.field_slot(other_name)
+    side_self = _semantic_side(_tokens(slot.hint))
+    side_other = _semantic_side(_tokens(other_slot.hint))
+    if side_self is None or side_other is None or not is_semantic_pair(side_self, side_other):
+        return None
+    if any(semantic_problem(t, name, f, {other_name: g}) is None for f in mine for g in theirs):
+        return None
+    label_self, label_other = "/".join(sorted(side_self)), "/".join(sorted(side_other))
+    if not any(_tokens(f.id) & side_self for f in mine):
+        return (
+            f"none of your fields has one of these words in its id ({label_self}), "
+            f"as slot {name} needs"
+        )
+    if not any(_tokens(g.id) & side_other for g in theirs):
+        return (
+            f"none of your fields has one of these words in its id ({label_other}), "
+            f"as slot {other_name} needs"
+        )
+    return (
+        f"no {label_self} field and {label_other} field in your pool share a name stem "
+        f"(slots {name}/{other_name} pair fields by what they measure, not just dataset)"
+    )
+
+
+def pairing_problem(t: Template, candidates: Mapping[str, Sequence[FieldInfo]]) -> str | None:
+    """Why the pool cannot pair the template's ``same_dataset_as`` slots, judged from each
+    slot's candidates alone, or None when no pair is blocked.
+
+    ``candidates`` maps each field slot to the pool fields that could fill it on their own
+    (what :func:`slot_fit` returns). Two kinds of pair are checked, in slot order, and the
+    first blocked one's message is returned:
+
+    - *dataset*: a pair is blocked only when both sides have candidates and no candidate of
+      one shares a dataset with any candidate of the other. Two messages, because they make
+      different claims:
+
+      - *none share one*: every candidate on both sides records its dataset, and none match.
+        The fields really come from different datasets.
+      - *dataset unknown*: some candidate has no dataset id, so a match cannot be confirmed.
+        Saying "they differ" here would be false, so this is its own message.
+
+    - *hint* (statistic pairing): when both slots' hints name opposite halves of a known
+      statistic pair (mean/std, ...), some candidate pair must also agree on the statistic
+      and its name stem (see :func:`semantic_problem`). The same rule :func:`bindings`
+      enforces, so the reason here matches the walk's rejection.
+
+    A pair with an empty side is left to that slot's own problem line. The pool-size gap
+    (fewer distinct fields than slots) is not covered here; that is a known v1 limitation.
+    """
+    for name in t.field_slots:
+        other_name = t.field_slot(name).same_dataset_as
+        if other_name is None:
+            continue
+        mine = candidates.get(name, ())
+        theirs = candidates.get(other_name, ())
+        if not mine or not theirs:
+            continue
+        mine_known = {f.dataset for f in mine if f.dataset}
+        theirs_known = {f.dataset for f in theirs if f.dataset}
+        if not mine_known & theirs_known:
+            if all(f.dataset for f in mine) and all(f.dataset for f in theirs):
+                return (
+                    f"{other_name} and {name} must come from the same dataset — none of your "
+                    "candidate pairs for these two slots share one"
+                )
+            return (
+                f"{other_name} and {name} must come from the same dataset, but your fields "
+                "don't record which dataset they come from, so the match can't be confirmed"
+            )
+        if problem := _hint_pairing_problem(t, name, other_name, mine, theirs):
+            return problem
+    return None
 
 
 type Choice = Param | Sequence[Param]

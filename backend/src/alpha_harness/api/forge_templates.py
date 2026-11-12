@@ -22,17 +22,22 @@ from ..forge.expr import analyse
 from ..forge.local.template_fill import Unavailable, gym_example
 from ..forge.research.binding import field_infos
 from ..forge.research.templates import (
+    FieldInfo,
     FieldSlot,
     GroupSlot,
     Template,
+    WindowSlot,
     example,
     fits,
     fits_fields,
+    fits_pool,
     get,
     load_library,
+    pairing_problem,  # forge: Select pairing reason (State D)
+    slot_fit,
 )
 from ..forge.studio.models import TemplateStats, UserTemplate
-from ..forge.studio.user_templates import TemplateTextError
+from ..forge.studio.user_templates import TemplateTextError, builtin_ids, merged
 from ..forge.studio.user_templates import parse as parse_user
 from ..schemas import Out
 from .deps import State, refuse
@@ -317,15 +322,15 @@ async def list_templates(state: State) -> ForgeTemplateList:
     return await asyncio.to_thread(_list, mine, stats)
 
 
-@router.post("/compatible")
-async def compatible_templates(body: CompatibleFieldsRequest, state: State) -> CompatibleTemplates:
-    """Which templates these fields could bind to, right now — free and offline.
+async def _picked_fields(
+    body: CompatibleFieldsRequest, state: State
+) -> tuple[list[FieldInfo], list[str]]:
+    """The picked fields as template candidates, and the ids the catalog does not have.
 
     Builds a transient (never-persisted) field set the same way pipelines' inline-fields
-    preview does, resolves it against the real catalog so each field's dataset is known (the
-    same-dataset/semantic-pairing rules in :func:`~..forge.research.templates.bindings` need
-    that), then keeps only the templates :func:`~..forge.research.templates.fits_fields` says
-    these fields can actually fill.
+    preview does, and resolves it against the real catalog so each field's dataset is known
+    (the same-dataset/semantic-pairing rules in :func:`~..forge.research.templates.bindings`
+    need that).
     """
     transient = FieldSet(
         name="(fields picked on this screen)",
@@ -338,7 +343,17 @@ async def compatible_templates(body: CompatibleFieldsRequest, state: State) -> C
         filter=None,
     )
     resolved = await resolve(transient, state.queries)
-    fields = field_infos(resolved["fields"])
+    return field_infos(resolved["fields"]), resolved["missing"]
+
+
+@router.post("/compatible")
+async def compatible_templates(body: CompatibleFieldsRequest, state: State) -> CompatibleTemplates:
+    """Which templates these fields could bind to, right now — free and offline.
+
+    Keeps only the templates :func:`~..forge.research.templates.fits_fields` says these fields
+    can actually fill.
+    """
+    fields, _ = await _picked_fields(body, state)
     return CompatibleTemplates(
         templates=[
             CompatibleTemplate(id=t.id, name=t.name, category=t.category, complexity=t.complexity)
@@ -346,6 +361,124 @@ async def compatible_templates(body: CompatibleFieldsRequest, state: State) -> C
             if fits_fields(t, fields)
         ]
     )
+
+
+class FitTemplatesRequest(CompatibleFieldsRequest):
+    """A Select pool: the same picked fields, capped at the 50 that the pairing check takes."""
+
+    field_ids: list[str] = Field(min_length=1, max_length=50)
+
+
+class FitSlot(Out):
+    name: str
+    #: ``field`` | ``window`` | ``group``
+    kind: str
+    type: str | None = None
+    archetype: list[str] = Field(default_factory=list)
+    aggregate: str | None = None
+    values: list[int | str] = Field(default_factory=list)
+    #: Pool fields that could fill this field slot on their own; empty for window/group slots.
+    candidates: list[str] = Field(default_factory=list)
+    #: Why no pool field can fill this slot, when none can.
+    problem: str | None = None
+
+
+class FitTemplate(Out):
+    id: str
+    name: str
+    source: Literal["builtin", "user"]
+    category: str
+    dataset_category: str
+    complexity: str
+    angle: str
+    rationale: str
+    expr: str
+    fits: bool
+    #: Set when ``fits`` is False because the check was declined, not because it failed.
+    note: str | None = None
+    #: Set when the pool cannot pair this template's slots, judged from each slot's candidates
+    #: alone: a same-dataset slot pair whose datasets differ or are unknown, or a hint pair
+    #: (mean/std, ...) that no candidate pair satisfies. Names the reason; null otherwise.
+    pairing_problem: str | None = None
+    slots: list[FitSlot]
+
+
+class FitTemplates(Out):
+    templates: list[FitTemplate]
+    #: Picked ids the catalog does not have for this market.
+    missing: list[str]
+    #: Your own templates that no longer parse, with the reason.
+    errors: list[str]
+
+
+def _fit_template(
+    t: Template, fields: Sequence[FieldInfo], source: Literal["builtin", "user"]
+) -> FitTemplate:
+    slots: list[FitSlot] = []
+    by_id = {f.id: f for f in fields}
+    candidates: dict[str, list[FieldInfo]] = {}
+    for name, slot in t.slots.items():
+        if isinstance(slot, FieldSlot):
+            sf = slot_fit(slot, fields)
+            candidates[name] = [by_id[i] for i in sf.candidates]
+            slots.append(
+                FitSlot(
+                    name=name,
+                    kind="field",
+                    type=slot.type,
+                    archetype=list(slot.archetype),
+                    aggregate=slot.aggregate,
+                    candidates=list(sf.candidates),
+                    problem=sf.problem,
+                )
+            )
+        elif isinstance(slot, WindowSlot):
+            slots.append(FitSlot(name=name, kind="window", values=list(slot.values)))
+        else:
+            slots.append(FitSlot(name=name, kind="group", values=list(slot.values)))
+    fits_ok, note = fits_pool(t, fields)
+    pairing = None if fits_ok else pairing_problem(t, candidates)  # forge: State D reason
+    return FitTemplate(
+        id=t.id,
+        name=t.name,
+        source=source,
+        category=t.category,
+        dataset_category=t.category.split("/", 1)[0],
+        complexity=t.complexity,
+        angle=t.angle,
+        rationale=t.rationale,
+        expr=t.expr,
+        fits=fits_ok,
+        note=note,
+        pairing_problem=pairing,
+        slots=slots,
+    )
+
+
+@router.post("/fit")
+async def fit_templates(body: FitTemplatesRequest, state: State) -> FitTemplates:
+    """Every template, read against these fields: which slots they could fill and why not.
+
+    Unlike ``/compatible``, nothing is dropped — a template that does not fit comes back with
+    the problem line for each slot, so the Select screen can show why rather than hide it.
+    Built-ins and your own templates are both checked; your own are read from the database.
+    """
+    fields, missing = await _picked_fields(body, state)
+    async with state.db.session() as session:
+        mine = [
+            (r.template_id, r.yaml_text)
+            for r in (
+                await session.scalars(select(UserTemplate).order_by(UserTemplate.template_id))
+            ).all()
+        ]
+    templates, errors = merged(mine)
+    builtin = builtin_ids()
+    fitted = await asyncio.to_thread(
+        lambda: [
+            _fit_template(t, fields, "builtin" if t.id in builtin else "user") for t in templates
+        ]
+    )
+    return FitTemplates(templates=fitted, missing=missing, errors=errors)
 
 
 @router.get("/by-scope")
