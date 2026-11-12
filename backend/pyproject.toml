@@ -26,6 +26,7 @@ dependencies = [
     "pydantic>=2.13.5",
     # forge: Forge reads config/forge/*.yaml directly; was only transitive via optuna.
     "pyyaml>=6",
+    "scipy>=1.18.1",
     "sqlalchemy[asyncio]>=2.0.54",
     "structlog>=26.1.0",
     "tzdata>=2026.4",
