@@ -170,7 +170,11 @@ Rolling folds over the stored history, per scope:
   `step` (default 126). Each fold: select (section 6), fit each method on the training
   window, then **score each method on the following test window**, with weights held fixed
   across that window.
-- Concatenate every fold's out-of-sample daily returns into one OOS series per method.
+- Concatenate every fold's out-of-sample daily returns into one OOS series per method, then
+  split it by fold into two parts:
+  - **selection folds** (the earlier folds): the only days used to choose a method;
+  - **holdout folds** (the most recent `holdout_folds`, default 2): the only days used to
+    check the chosen method. They are never used to choose.
 - Report, per method:
   - **OOS combo Sharpe** (annualised, √252, on the concatenated OOS series);
   - **max drawdown** on cumulative combo PnL (in the series' own unit);
@@ -178,11 +182,27 @@ Rolling folds over the stored history, per scope:
     allocations, averaged over folds;
   - the fraction of folds where the method beat EW.
 - Correlation between selected Alphas is shown alongside, for context.
+- A scope needs `min_folds` scored folds (default 4) before any verdict. With fewer, the scope
+  is blocked and the plan says how much more history is needed (section 16).
 
-**A method wins only if it beats equal weight out of sample.** Concretely: the difference
-in OOS Sharpe (method minus EW) must have a 95% paired stationary-bootstrap confidence
-interval whose lower bound is above zero. Otherwise **EW is the plan**, and the screen says
-so in one line ("No method beat equal weight out of sample; using equal weight.").
+**Two-stage decision (choose, then check).** Each stage uses different days, so the holdout
+cannot pick the winner:
+
+1. **Choose on the selection folds.** Each method's Sharpe gap over EW is measured on the
+   earlier folds only. The method with the largest positive gap is the candidate. No
+   confidence interval is used at this step.
+2. **Check on the holdout folds alone.** The candidate's Sharpe gap over EW must have a 95%
+   paired stationary-bootstrap confidence interval whose lower bound is above zero, computed
+   on the holdout days only. This is one test, so it needs no multiple-comparison correction.
+   If it passes, the candidate is the plan. Otherwise **EW is the plan**.
+
+If no method leads EW on the selection folds, EW is the plan without a check. The screen says
+which case happened, in one line ("No method beat equal weight on the earlier folds; using
+equal weight." or "X led on the earlier folds, but its gain did not hold on the holdout; using
+equal weight.").
+
+The intervals shown for the other methods are for context. They are measured on the holdout,
+they decide nothing, and they are not corrected for the comparisons.
 
 Ties and near-ties go to EW. It is the simplest method, and it has the fewest ways to fail
 on data we have not seen.
@@ -317,3 +337,31 @@ Decisions made while building Part A that the design above did not spell out:
   the vault, touch PnL storage, or call BRAIN. Those reads (and `touch_pnl`) belong to Part B.
 - **Tests** enforce, on the source: no module in the package imports a BRAIN endpoint, client
   or simulator, and the selection never sees its own test window.
+
+**Fix pass after review (items 1, 2, 4, 8, 9, 11).** A skeptical review of Part A found that
+the original fold rules and winner choice were not sound. The fixes:
+
+- **Item 1, winner choice:** the method is chosen on the selection folds and checked on the
+  holdout folds only (section 8). Before, the same out-of-sample days both chose the winner
+  and tested it, and four methods were tested with no correction.
+- **Item 2, minimum folds:** `min_folds` (default 4) blocks a scope that scores fewer folds.
+  One fold is 126 days of evidence, so it cannot produce a verdict.
+- **Item 4, survivorship:** fold membership is decided on the training window only. Before, an
+  Alpha was dropped from a fold if it had a missing day inside that fold's test window, which
+  kept only the Alphas that kept reporting. Now a chosen Alpha's missing test days count as zero
+  PnL with weights held fixed, and `filled_test_days` reports how many there were.
+- **Item 8, calendars:** each scope drops the days on which no Alpha of that scope traded before
+  it is planned. Before, a day only another scope traded became an all-NaN gap here.
+- **Item 9, skipped folds:** folds with fewer than two usable Alphas are counted in
+  `skipped_folds` and named in the plan's decision text.
+- **Item 11, fallback label:** when the solver has no answer on the latest window, the plan
+  ships equal weight, and the CSV method column reads `equal_weight (fallback)`.
+
+Note: the "Fold membership" bullet above describes the pre-fix rule (training and test
+availability). Item 4 supersedes it.
+
+**History needed before any plan.** With the defaults (`train_days` 504, `test_days` 126,
+`step` 126, `min_folds` 4), a scope needs `504 + 126 + (4 − 1) × 126 = 1,008` trading days of
+PnL, about four years at 252 days a year. The `holdout_folds` setting does not add history,
+because the holdout is inside the scored folds. Each Alpha must also have PnL on every training
+day of a fold to be used there, so Alphas that began later count for fewer folds.

@@ -60,8 +60,11 @@ class ScopePlan:
     judgement: Judgement | None = None
     points: pd.Series | None = None
     weights: pd.Series | None = None
+    #: True when the solver had no answer on the latest window and equal weight was used.
     fallback: bool = False
     folds: int = 0
+    #: Folds that could not be scored because fewer than two Alphas had full training data.
+    skipped_folds: int = 0
     methods: list[MethodRow] = field(default_factory=list)
 
     @property
@@ -103,6 +106,16 @@ def build_plan(
             f"Not enough history: need {settings.train_days + settings.test_days} days "
             f"of PnL, have {len(pnl_e.index)}.",
         )
+    if walk.folds < settings.min_folds:
+        # One or two folds are too few to tell a real edge from luck, so no verdict is given.
+        needed = settings.train_days + settings.test_days + (settings.min_folds - 1) * settings.step
+        return _blocked(
+            region,
+            delay,
+            count,
+            f"Only {walk.folds} walk-forward fold(s) could be scored; need {settings.min_folds}. "
+            f"That takes about {needed} days of PnL; have {len(pnl_e.index)}.",
+        )
 
     judgement = judge(walk, settings)
     tail = pnl_e.iloc[-settings.train_days :]
@@ -119,6 +132,19 @@ def build_plan(
         )
 
     allocation = allocate(judgement.winner, tail[chosen], settings)
+    # The weights actually shipped, which differ from the judged winner when the solver fails.
+    method = "equal_weight" if allocation.fallback else judgement.winner
+    notes = [judgement.reason]
+    if walk.skipped_folds:
+        notes.append(
+            f"{walk.skipped_folds} fold(s) skipped: fewer than 2 Alphas could be selected "
+            "on their training window."
+        )
+    if allocation.fallback:
+        notes.append(
+            f"{judgement.winner} found no solution on the latest window, so the plan uses "
+            "equal weight."
+        )
     points = to_points(allocation.weights, settings.total_points, settings.floor, settings.cap)
     rows: list[MethodRow] = []
     for m, series in walk.oos.items():
@@ -137,13 +163,14 @@ def build_plan(
         delay=delay,
         eligible_count=count,
         selected=chosen,
-        method=judgement.winner,
-        decision=judgement.reason,
+        method=method,
+        decision=" ".join(notes),
         judgement=judgement,
         points=points,
         weights=allocation.weights,
         fallback=allocation.fallback,
         folds=walk.folds,
+        skipped_folds=walk.skipped_folds,
         methods=rows,
     )
 
@@ -165,7 +192,10 @@ def plan_all(
             by_scope.setdefault(key, []).append(alpha_id)
     plans = []
     for (region, delay), alphas in sorted(by_scope.items()):
-        plans.append(build_plan(pnl[alphas], statuses, region, delay, settings))
+        # Each scope keeps only its own trading days. A day that only another scope traded is
+        # all-NaN here and would otherwise count as a gap in this scope's history.
+        scope_pnl = pnl[alphas].dropna(how="all")
+        plans.append(build_plan(scope_pnl, statuses, region, delay, settings))
     return plans
 
 
@@ -199,6 +229,8 @@ def to_csv(
     for plan in plans:
         if plan.blocked or plan.points is None or plan.weights is None:
             continue
+        # A fallback is written into the method column, so 1/N never reads as a chosen method.
+        method = f"{plan.method} (fallback)" if plan.fallback else (plan.method or "")
         for alpha_id, pts, weight in zip(
             plan.points.index, plan.points.to_numpy(), plan.weights.to_numpy(), strict=True
         ):
@@ -212,7 +244,7 @@ def to_csv(
                     name,
                     int(pts),
                     f"{float(weight):.6f}",
-                    plan.method,
+                    method,
                     statuses[name].status,
                 ]
             )

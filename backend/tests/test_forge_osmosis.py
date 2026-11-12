@@ -14,19 +14,21 @@ import pytest
 
 from alpha_harness.brain.platform import IGNORED_CHECKS
 from alpha_harness.forge.osmosis import eligibility as elig
+from alpha_harness.forge.osmosis import plan as plan_mod
 from alpha_harness.forge.osmosis.eligibility import OsmosisStatus, osmosis_status
 from alpha_harness.forge.osmosis.plan import build_plan, plan_all, to_csv
 from alpha_harness.forge.osmosis.points import bound_weights, to_points
 from alpha_harness.forge.osmosis.selection import greedy_select, min_combination_size, sharpe
 from alpha_harness.forge.osmosis.settings import Settings, from_mapping, load_settings
 from alpha_harness.forge.osmosis.walkforward import (
+    Judgement,
     WalkForward,
     fold_spans,
     judge,
     run_walkforward,
     stationary_bootstrap_indices,
 )
-from alpha_harness.forge.osmosis.weights import METHODS, allocate, ledoit_wolf_cov
+from alpha_harness.forge.osmosis.weights import METHODS, Allocation, allocate, ledoit_wolf_cov
 from alpha_harness.vault.yields import gating_results
 
 REPO = Path(__file__).resolve().parents[2]
@@ -305,6 +307,31 @@ def test_selection_does_not_look_at_its_own_test_window() -> None:
     assert before.selections[0] == after.selections[0]
 
 
+def test_a_chosen_alpha_with_missing_test_days_is_counted_not_dropped() -> None:
+    """Missing test-window data must not decide membership (that would keep only the Alphas that
+    kept reporting). The missing day counts as zero and is reported in filled_test_days."""
+    pnl = synthetic_pnl(700, [0.4, 0.3, 0.2, 0.1, 0.0, -0.1], [1.0] * 6, rho=0.2, seed=9)
+    settings = small_settings(cap=0.25, max_selected=4)
+    before = run_walkforward(pnl, settings)
+    last = fold_spans(len(pnl.index), settings)[-1]
+    spoiled = pnl.copy()
+    # One test day missing for every Alpha. Only the last fold's test window contains this row,
+    # so the other folds' training windows are unchanged.
+    spoiled.iloc[last.test.start + 10] = np.nan
+    after = run_walkforward(spoiled, settings)
+    assert after.selections == before.selections
+    assert after.skipped_folds == before.skipped_folds == 0
+    assert after.filled_test_days == len(before.selections[-1])
+
+
+def test_missing_training_data_removes_an_alpha_from_the_fold() -> None:
+    pnl = synthetic_pnl(700, [0.4, 0.3, 0.2, 0.1, 0.0, -0.1], [1.0] * 6, rho=0.2, seed=9)
+    holed = pnl.copy()
+    holed.iloc[0:60, 0] = np.nan  # A0 has no training data in fold 0
+    walk = run_walkforward(holed, small_settings(cap=0.25, max_selected=4))
+    assert "A0" not in walk.selections[0]
+
+
 def test_overlapping_windows_are_not_double_counted() -> None:
     pnl = synthetic_pnl(500, [0.2, 0.1, 0.0, 0.3, 0.1], [1.0] * 5, rho=0.1, seed=10)
     walk = run_walkforward(pnl, small_settings(step=30, cap=0.5))  # step < test window
@@ -320,26 +347,63 @@ def test_stationary_bootstrap_keeps_blocks_contiguous() -> None:
     assert 1 - 1 / mean_block - 0.02 < contiguous < 1 - 1 / mean_block + 0.02
 
 
+def _walk_from(select: dict[str, pd.Series], holdout: dict[str, pd.Series]) -> WalkForward:
+    """A WalkForward whose earlier days and holdout days are given directly, two holdout folds."""
+    oos = {m: pd.concat([select[m], holdout[m]]) for m in METHODS}
+    return WalkForward(
+        folds=4,
+        oos=oos,
+        turnover=dict.fromkeys(METHODS, 0.0),
+        holdout_folds=2,
+        oos_select=select,
+        oos_holdout=holdout,
+    )
+
+
 def test_judge_picks_a_method_that_clearly_beats_equal_weight() -> None:
     rng = np.random.default_rng(12)
-    index = pd.RangeIndex(800)
-    equal = pd.Series(rng.normal(0, 1, 800), index=index)
-    oos = {m: equal.copy() for m in METHODS}
-    oos["hrp"] = equal + 0.6  # a real, steady edge over equal weight
-    walk = WalkForward(folds=4, oos=oos, turnover=dict.fromkeys(METHODS, 0.0))
-    verdict = judge(walk, small_settings())
+    early = pd.Series(rng.normal(0, 1, 500), index=pd.RangeIndex(500))
+    late = pd.Series(rng.normal(0, 1, 250), index=pd.RangeIndex(500, 750))
+    select = {m: early.copy() for m in METHODS}
+    holdout = {m: late.copy() for m in METHODS}
+    select["hrp"] = early + 0.6  # a real, steady edge on the earlier folds...
+    holdout["hrp"] = late + 0.6  # ...that also holds on the holdout
+    verdict = judge(_walk_from(select, holdout), small_settings())
     assert verdict.winner == "hrp"
-    assert "beat equal weight" in verdict.reason
+    assert "beat equal weight on the holdout" in verdict.reason
 
 
 def test_judge_falls_back_to_equal_weight_when_nothing_beats_it() -> None:
     rng = np.random.default_rng(13)
-    index = pd.RangeIndex(500)
-    oos = {m: pd.Series(rng.normal(0, 1, 500), index=index) for m in METHODS}
-    walk = WalkForward(folds=4, oos=oos, turnover=dict.fromkeys(METHODS, 0.0))
-    verdict = judge(walk, small_settings())
+    select = {m: pd.Series(rng.normal(0, 1, 500)) for m in METHODS}
+    holdout = {m: pd.Series(rng.normal(0, 1, 250)) for m in METHODS}
+    verdict = judge(_walk_from(select, holdout), small_settings())
     assert verdict.winner == "equal_weight"
     assert "using equal weight" in verdict.reason
+
+
+def test_judge_never_reselects_on_the_holdout() -> None:
+    """hrp is the only method that leads on the earlier folds. inverse_volatility is far better
+    on the holdout, but the holdout must not change the choice: it only checks it. hrp has no
+    holdout edge, so the answer is equal weight, not inverse_volatility."""
+    rng = np.random.default_rng(14)
+    early = pd.Series(rng.normal(0, 1, 500))
+    late = pd.Series(rng.normal(0, 1, 250))
+    select = {m: early.copy() for m in METHODS}
+    holdout = {m: late.copy() for m in METHODS}
+    select["hrp"] = early + 0.6
+    holdout["inverse_volatility"] = late + 2.0
+    verdict = judge(_walk_from(select, holdout), small_settings())
+    assert verdict.winner == "equal_weight"
+    assert verdict.winner != "inverse_volatility"
+
+
+def test_judge_with_no_holdout_folds_gives_no_verdict() -> None:
+    rng = np.random.default_rng(15)
+    series = {m: pd.Series(rng.normal(0, 1, 300)) for m in METHODS}
+    walk = WalkForward(folds=1, oos=series, turnover=dict.fromkeys(METHODS, 0.0))
+    verdict = judge(walk, small_settings())
+    assert verdict.winner == "equal_weight" and "No holdout folds" in verdict.reason
 
 
 # --- plan -------------------------------------------------------------------------------
@@ -378,6 +442,76 @@ def test_plan_is_blocked_when_history_is_too_short() -> None:
     pnl = _scope_pnl(12, n_days=120)  # train 200 + test 60 do not fit
     plan = build_plan(pnl, statuses_for(list(pnl.columns)), "USA", 1, small_settings())
     assert plan.blocked is not None and "Not enough history" in plan.blocked
+
+
+def test_plan_is_blocked_when_too_few_folds_can_be_scored() -> None:
+    """One fold is 126 days of evidence. It must not produce a verdict on its own."""
+    pnl = _scope_pnl(12, n_days=300)  # train 200 + test 60 + 3 * step 60 = 440 days for 4 folds
+    plan = build_plan(pnl, statuses_for(list(pnl.columns)), "USA", 1, small_settings())
+    assert plan.blocked is not None
+    assert "Only 1 walk-forward fold" in plan.blocked and "need 4" in plan.blocked
+    assert "440 days" in plan.blocked and plan.points is None
+
+
+def test_skipped_folds_are_counted_and_named_in_the_decision() -> None:
+    pnl = _scope_pnl(12)
+    # Eleven of twelve Alphas have no PnL in the first 60 days. Only fold 0's training window
+    # reaches those days, and it is left with one usable Alpha, so fold 0 is skipped.
+    pnl.iloc[:60, :11] = np.nan
+    walk = run_walkforward(pnl, small_settings())
+    assert walk.skipped_folds == 1 and walk.folds == 7
+    plan = build_plan(pnl, statuses_for(list(pnl.columns)), "USA", 1, small_settings())
+    assert plan.blocked is None and plan.skipped_folds == 1
+    assert "1 fold(s) skipped" in plan.decision
+
+
+def test_scopes_on_different_calendars_keep_their_own_folds() -> None:
+    """A day only the USA scope traded must not become an all-NaN gap in the EUR scope."""
+    usa = _scope_pnl(11, seed=15)
+    eur_clean = _scope_pnl(11, seed=16).add_prefix("E_")
+    eur_closed = eur_clean.drop(eur_clean.index[-400:-300])  # EUR market shut on these days
+    eur_on_usa_calendar = eur_clean.copy()
+    eur_on_usa_calendar.iloc[-400:-300] = np.nan  # same days, kept on the shared calendar
+    pnl = pd.concat([usa, eur_on_usa_calendar], axis=1)
+    scope_of = dict.fromkeys(usa.columns, ("USA", 1)) | dict.fromkeys(eur_clean.columns, ("EUR", 1))
+    statuses = statuses_for(list(pnl.columns))
+    settings = small_settings()
+    eur_plan = {p.label: p for p in plan_all(pnl, statuses, scope_of, settings)}["EUR D1"]
+    reference = build_plan(eur_closed, statuses, "EUR", 1, settings)
+    assert eur_plan.blocked is None and eur_plan.folds == reference.folds
+    assert eur_plan.skipped_folds == reference.skipped_folds == 0
+    assert eur_plan.points is not None and reference.points is not None
+    pd.testing.assert_series_equal(eur_plan.points, reference.points)
+
+
+def test_fallback_weighting_is_labelled_in_the_csv(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the solver has no answer, the plan ships equal weight. The CSV must say so, not
+    report the judged method as if its weights had been used."""
+    real_allocate = plan_mod.allocate
+
+    def solver_fails(method: str, train: pd.DataFrame, settings: Settings) -> Allocation:
+        allocation = real_allocate(method, train, settings)  # type: ignore[arg-type]
+        if method == "equal_weight":
+            return allocation
+        return Allocation(allocation.weights, fallback=True)
+
+    forced = Judgement("hrp", "forced for this test", ())
+    monkeypatch.setattr(plan_mod, "judge", lambda _walk, _settings: forced)
+    monkeypatch.setattr(plan_mod, "allocate", solver_fails)
+    pnl = _scope_pnl(12)
+    statuses = statuses_for(list(pnl.columns))
+    plan = build_plan(pnl, statuses, "USA", 1, small_settings())
+    assert plan.fallback and plan.method == "equal_weight"
+    assert "found no solution" in plan.decision
+    text = to_csv([plan], statuses, generated_at="g", data_through="d")
+    assert "equal_weight (fallback)" in text and ",hrp," not in text
+
+
+def test_min_folds_and_holdout_must_leave_selection_folds() -> None:
+    with pytest.raises(ValueError, match="holdout_folds"):
+        from_mapping({"holdout_folds": 0})
+    with pytest.raises(ValueError, match="holdout_folds"):
+        from_mapping({"min_folds": 3, "holdout_folds": 2})
 
 
 def test_plan_all_splits_scopes_and_csv_has_no_payment_field() -> None:

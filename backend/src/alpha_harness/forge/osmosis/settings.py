@@ -35,6 +35,10 @@ class Settings:
     test_days: int = 126
     #: How far the window rolls forward between folds, in trading days.
     step: int = 126
+    #: Fewest scored folds a scope needs before a plan is made. Fewer is too little evidence.
+    min_folds: int = 4
+    #: The most recent scored folds, held out of method selection and used only for the CI check.
+    holdout_folds: int = 2
     #: Largest share of the total any one Alpha may hold (0.25 = 25,000 of 100,000 points).
     cap: float = 0.25
     #: Smallest share any selected Alpha must hold (0.01 = 1,000 of 100,000 points).
@@ -83,6 +87,12 @@ def _validate(s: Settings) -> None:
         raise ValueError("max_selected and min_eligible must each be at least 2")
     if s.train_days < 2 or s.test_days < 1 or s.step < 1:
         raise ValueError("train_days >= 2, test_days >= 1 and step >= 1 are required")
+    if s.holdout_folds < 1 or s.min_folds < s.holdout_folds + 2:
+        raise ValueError(
+            "holdout_folds must be >= 1, and min_folds must be at least holdout_folds + 2 "
+            f"so the selection folds are not empty; got min_folds={s.min_folds}, "
+            f"holdout_folds={s.holdout_folds}"
+        )
     if not 0 <= s.mean_shrink <= 1:
         raise ValueError(f"mean_shrink must be in [0, 1], got {s.mean_shrink}")
     if s.bootstrap_samples < 100 or s.bootstrap_block < 1:
