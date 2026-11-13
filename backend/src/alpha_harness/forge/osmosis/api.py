@@ -20,10 +20,12 @@ to this tool.
 
 import asyncio
 import math
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
+import structlog
 from fastapi import APIRouter
 from fastapi.responses import Response
 
@@ -34,6 +36,7 @@ from ...schemas import Out
 from ...vault.store import json_list
 from ...vault.yields import SUBMITTED, checks_of
 from .eligibility import OsmosisStatus, osmosis_status
+from .inputs import ResolvedBasis, apply_basis, resolve_basis, turnover_complete
 from .plan import ScopePlan, method_rows, plan_all, scope_frames, to_csv
 from .scope import ScopeAnalysis, analyse_scope
 from .settings import Settings, load_settings
@@ -79,6 +82,18 @@ class OsmosisMethod(Out):
     passed_holdout: bool | None
     #: True for the method this scope ships.
     is_plan: bool
+    #: True when the holdout days are identical to equal weight's: no interval, not a test.
+    #: ``None`` for equal weight itself.
+    identical: bool | None = None
+
+
+class OsmosisProgress(Out):
+    """A cold load in progress: which scope is being calculated, out of how many."""
+
+    calculating: bool
+    done: int
+    total: int
+    current: str | None
 
 
 class OsmosisScope(Out):
@@ -249,6 +264,9 @@ class OsmosisScopeView(Out):
     ranked_beyond_n: int
     methods: list[OsmosisMethod]
     warnings: list[str]
+    #: The PnL basis this scope is on (``gross`` or ``after_cost_5bps``), and the reason.
+    basis: str
+    basis_reason: str
 
 
 class OsmosisSummaryRow(Out):
@@ -264,6 +282,10 @@ class OsmosisSummaryRow(Out):
     banner: str | None
     #: Sharpe of the combined allocation at its N and method, over the selection window.
     combined_sharpe: float | None
+    #: Largest fall of the combined allocation's cumulative PnL, in PnL units.
+    max_drawdown: float | None
+    #: The PnL basis this scope is on (``gross`` or ``after_cost_5bps``).
+    basis: str
     below_minimum: bool
 
 
@@ -289,6 +311,10 @@ class _Inputs:
     #: Each submitted Alpha's stored row, keyed by ID: BRAIN's figures, shown as they are.
     facts: dict[str, dict[str, Any]]
     parents: list[str]
+    #: Each scope's PnL frame on its basis (``pnl`` holds every Alpha on its own scope's basis).
+    frames: dict[tuple[str, int], pd.DataFrame]
+    #: The basis each scope resolved to, and why.
+    bases: dict[tuple[str, int], ResolvedBasis]
 
 
 def _num(value: object) -> float | None:
@@ -334,18 +360,50 @@ async def _load(state: AppState) -> _Inputs:
         for r in rows
         if r.get("region") and r.get("delay") is not None
     }
-    pnl = _frame(series, [a for a in ids if series.get(a)])
+    have = [a for a in ids if series.get(a)]
+    gross = _frame(series, have)
+    turnover = _frame({a: {d: (v[1], v[1]) for d, v in series[a].items()} for a in have}, have)
+    settings = load_settings()
+    pnl, bases = apply_scope_bases(gross, turnover, scope_of, settings)
     data_through = None if pnl.empty else pnl.index.max().date().isoformat()
     return _Inputs(
         pnl=pnl,
         statuses=statuses,
         scope_of=scope_of,
-        settings=load_settings(),
+        settings=settings,
         generated_at=utcnow().isoformat(timespec="seconds"),
         data_through=data_through,
         facts={str(r["alpha_id"]): dict(r) for r in rows},
         parents=await _parents(state),
+        frames=scope_frames(pnl, scope_of),
+        bases=bases,
     )
+
+
+def apply_scope_bases(
+    gross: pd.DataFrame,
+    turnover: pd.DataFrame,
+    scope_of: dict[str, tuple[str, int]],
+    settings: Settings,
+) -> tuple[pd.DataFrame, dict[tuple[str, int], ResolvedBasis]]:
+    """Every Alpha's PnL on its own scope's basis, and the basis each scope resolved to.
+
+    A scope uses the requested basis only when every candidate in it has turnover stored
+    (:func:`inputs.resolve_basis`). Each Alpha belongs to one scope, so the net frame is built
+    column by column, and every scope read downstream sees its own basis without further change.
+    """
+    cols = list(gross.columns)
+    aligned = turnover.reindex(index=gross.index, columns=cols)
+    complete = dict(zip(cols, turnover_complete(gross.to_numpy(), aligned.to_numpy()), strict=True))
+    net = gross.copy()
+    bases: dict[tuple[str, int], ResolvedBasis] = {}
+    for key in sorted({scope_of[a] for a in cols if a in scope_of}):
+        members = [a for a in cols if scope_of.get(a) == key]
+        basis = resolve_basis(settings.pnl_basis, {a: bool(complete[a]) for a in members})
+        bases[key] = basis
+        for a in members:
+            net[a] = apply_basis(gross[a].to_numpy(), aligned[a].to_numpy(), basis.cost_bps)
+    return net, bases
 
 
 def _turnover(data: _Inputs) -> dict[str, float]:
@@ -362,23 +420,64 @@ def _analyse(
     data: _Inputs, region: str, delay: int, n: int | None, method: Method | None
 ) -> ScopeAnalysis:
     """One scope's analysis, or a blocked one when the scope holds no PnL at all."""
-    frame = scope_frames(data.pnl, data.scope_of).get((region, delay))
+    key = (region, delay)
+    frame = data.frames.get(key)
     if frame is None:
-        return ScopeAnalysis(
+        analysis = ScopeAnalysis(
             region=region,
             delay=delay,
             alpha_count=0,
             blocked=f"No submitted Alphas with stored PnL in {region} D{delay}.",
         )
-    return analyse_scope(frame, region, delay, data.settings, _turnover(data), n, method)
+    else:
+        analysis = analyse_scope(frame, region, delay, data.settings, _turnover(data), n, method)
+    basis = data.bases.get(key)
+    if basis is not None:
+        analysis.basis = basis.name
+        analysis.basis_reason = basis.reason
+    return analysis
 
 
-def _analyse_all(data: _Inputs) -> list[ScopeAnalysis]:
-    """Every scope at its default N and method, for the summary and the plan."""
-    return [
-        analyse_scope(frame, region, delay, data.settings, _turnover(data))
-        for (region, delay), frame in scope_frames(data.pnl, data.scope_of).items()
-    ]
+# forge: the analyses of the current stored-data revision, so a warm load does no maths. A new
+# revision (new PnL rows, or a later last date) clears them. Progress is read by /progress.
+_ANALYSES: dict[tuple[tuple[str, int], int | None, Method | None], ScopeAnalysis] = {}
+_analyses_revision: str | None = None
+_PROGRESS: dict[str, Any] = {"calculating": False, "done": 0, "total": 0, "current": None}
+_log = structlog.get_logger(__name__)
+
+
+async def _revision(state: AppState) -> str:
+    """The stored-data revision: the PnL row count and the last PnL date. A sync or a new
+    simulation changes one of them; a check result alone does not change any analysis."""
+    rows = await state.alphas.catalog.query(
+        "SELECT count(*) AS n, max(date) AS last FROM alpha_pnl"
+    )
+    return f"{rows[0]['n']}:{rows[0]['last']}"
+
+
+async def _scope_analysis(
+    data: _Inputs, revision: str, key: tuple[str, int], n: int | None, method: Method | None
+) -> ScopeAnalysis:
+    """One scope's analysis, from the cache of this revision when it is there."""
+    global _analyses_revision
+    if revision != _analyses_revision:
+        _ANALYSES.clear()
+        _analyses_revision = revision
+    cache_key = (key, n, method)
+    hit = _ANALYSES.get(cache_key)
+    if hit is None:
+        started = time.perf_counter()
+        hit = await asyncio.to_thread(_analyse, data, key[0], key[1], n, method)
+        _log.info(
+            "osmosis.scope.calculated",
+            region=key[0],
+            delay=key[1],
+            seconds=round(time.perf_counter() - started, 2),
+            folds=hit.folds,
+            basis=hit.basis,
+        )
+        _ANALYSES[cache_key] = hit
+    return hit
 
 
 def _method_views(analysis: ScopeAnalysis, settings: Settings) -> list[OsmosisMethod]:
@@ -401,6 +500,7 @@ def _method_views(analysis: ScopeAnalysis, settings: Settings) -> list[OsmosisMe
                 ci_high=_num(verdict.ci_high) if verdict else None,
                 passed_holdout=verdict.beats_equal_weight if verdict else None,
                 is_plan=row.method == analysis.method,
+                identical=verdict.identical if verdict else None,
             )
         )
     return views
@@ -439,7 +539,7 @@ def _rows(analysis: ScopeAnalysis, data: _Inputs) -> list[OsmosisRow]:
 _EXCLUSION_DETAIL = {
     "correlation": "Correlation with {partner} is above the cap, so it cannot be added.",
     "gap": "No PnL on every day of the selection window, so it cannot be ranked.",
-    "flat": "Its PnL has no day-to-day variation, so its correlation cannot be measured.",
+    "flat": "No PnL variation in the latest window, so it cannot be ranked or correlated.",
 }
 
 
@@ -538,6 +638,8 @@ def _scope_view(analysis: ScopeAnalysis, data: _Inputs) -> OsmosisScopeView:
         ranked_beyond_n=max(len(analysis.ranking) - analysis.n, 0),
         methods=_method_views(analysis, settings),
         warnings=analysis.warnings,
+        basis=analysis.basis,
+        basis_reason=analysis.basis_reason,
     )
 
 
@@ -574,6 +676,7 @@ def _scope_out(plan: ScopePlan, statuses: dict[str, OsmosisStatus]) -> OsmosisSc
                 ci_high=_num(verdict.ci_high) if verdict else None,
                 passed_holdout=verdict.beats_equal_weight if verdict else None,
                 is_plan=row.method == plan.method,
+                identical=verdict.identical if verdict else None,
             )
         )
     return OsmosisScope(
@@ -600,11 +703,32 @@ async def _plans(state: AppState) -> tuple[list[ScopePlan], _Inputs]:
     return plans, data
 
 
+@router.get("/progress")
+async def osmosis_progress() -> OsmosisProgress:
+    """How far a cold summary load has got: scope ``done`` of ``total``, and the one in progress.
+    Polled by the screen while ``/summary`` is calculating. Read-only, no storage access."""
+    return OsmosisProgress(**_PROGRESS)
+
+
 @router.get("/summary")
 async def osmosis_summary(state: State) -> OsmosisSummary:
-    """Every scope at a glance: its alpha count, recommended N, method and combined Sharpe."""
+    """Every scope at a glance: its alpha count, recommended N, method and combined Sharpe.
+
+    A cold load calculates each scope in turn and reports it on ``/progress``; a warm load of the
+    same stored data returns from the cache.
+    """
     data = await _load(state)
-    analyses = await asyncio.to_thread(_analyse_all, data)
+    revision = await _revision(state)
+    keys = list(data.frames)
+    _PROGRESS.update(calculating=True, done=0, total=len(keys), current=None)
+    analyses: list[ScopeAnalysis] = []
+    try:
+        for key in keys:
+            _PROGRESS["current"] = f"{key[0]} D{key[1]}"
+            analyses.append(await _scope_analysis(data, revision, key, None, None))
+            _PROGRESS["done"] = int(_PROGRESS["done"]) + 1
+    finally:
+        _PROGRESS.update(calculating=False, current=None)
     scopes = [
         OsmosisSummaryRow(
             region=a.region,
@@ -618,6 +742,8 @@ async def osmosis_summary(state: State) -> OsmosisSummary:
             validated=a.validated,
             banner=a.banner,
             combined_sharpe=_num(a.combined["allocation"]["sharpe"]) if a.combined else None,
+            max_drawdown=_num(a.combined["allocation"]["max_drawdown"]) if a.combined else None,
+            basis=a.basis,
             below_minimum=a.below_minimum,
         )
         for a in analyses
@@ -638,7 +764,8 @@ async def osmosis_scope(
     """One scope in full. ``n`` and ``method`` are optional; omit them for the recommendation and
     the default method. Read-only: nothing here calls BRAIN."""
     data = await _load(state)
-    analysis = await asyncio.to_thread(_analyse, data, region, delay, n, method)
+    revision = await _revision(state)
+    analysis = await _scope_analysis(data, revision, (region, delay), n, method)
     return _scope_view(analysis, data)
 
 

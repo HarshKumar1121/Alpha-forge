@@ -30,10 +30,10 @@ import numpy as np
 import pandas as pd
 
 from .selection import greedy_select, sharpe
+from .weights import METHODS, Allocation, Method, allocate
 
 if TYPE_CHECKING:
     from .settings import Settings
-from .weights import METHODS, Method, allocate
 
 
 @dataclass(frozen=True)
@@ -78,6 +78,19 @@ class WalkForward:
     oos_holdout: dict[str, pd.Series] = field(default_factory=dict)
     #: Chosen-Alpha test days with no PnL, counted as zero with weights held fixed.
     filled_test_days: int = 0
+    #: Per method, one ``(fell_back, equal_only)`` pair per scored fold, in fold order.
+    #: ``fell_back``: the optimiser had no answer, so equal weight was used. ``equal_only``: the
+    #: weights came out as equal weight anyway, because the cap left no other mix (4 Alphas at
+    #: a 25% cap). The judge reports the two differently.
+    fold_flags: dict[str, list[tuple[bool, bool]]] = field(default_factory=dict)
+    #: Alphas left out of some fold because their training PnL had no variation.
+    no_variation: list[str] = field(default_factory=list)
+
+
+def has_variation(series: pd.Series) -> bool:
+    """True when the series moves. A flat PnL has no correlation with anything, and its
+    covariance row is zero, so it would divide by zero in every method that inverts one."""
+    return float(series.std(ddof=1)) > 1e-12
 
 
 def _dedupe(daily: pd.Series) -> pd.Series:
@@ -95,6 +108,9 @@ def run_walkforward(pnl: pd.DataFrame, settings: Settings) -> WalkForward:
     and flatter the out-of-sample record, so they stay in with their missing days counted as
     zero PnL, and ``filled_test_days`` reports how many days that was.
     """
+    # forge: local import, because robust.py imports this module's bootstrap helper.
+    from .robust import ensemble_of
+
     spans = fold_spans(len(pnl.index), settings)
     result = WalkForward(folds=0)
     if not spans:
@@ -103,12 +119,20 @@ def run_walkforward(pnl: pd.DataFrame, settings: Settings) -> WalkForward:
     wins: dict[str, int] = dict.fromkeys(METHODS, 0)
     previous: dict[str, pd.Series] = {}
     changes: dict[str, list[float]] = {m: [] for m in METHODS}
+    flags: dict[str, list[tuple[bool, bool]]] = {m: [] for m in METHODS}
+    # forge: folds use fewer bootstrap resamples to keep the walk fast; the final fit uses the
+    # full resample_count (see docs/forge/OSMOSIS_ROBUST_METHODS.md).
+    fold_settings = replace(settings, resample_count=settings.fold_resample_count)
+    no_variation: set[str] = set()
     scored = 0
 
     for span in spans:
         train = pnl.iloc[span.train]
         test = pnl.iloc[span.test]
-        usable = [c for c in pnl.columns if train[c].notna().all()]
+        complete = [c for c in pnl.columns if train[c].notna().all()]
+        # forge: an Alpha with no variation in this training window is left out of the fold.
+        usable = [c for c in complete if has_variation(train[c])]
+        no_variation.update(c for c in complete if c not in usable)
         chosen = greedy_select(train[usable], settings) if usable else []
         if len(chosen) < 2:
             result.skipped_folds += 1
@@ -119,9 +143,18 @@ def run_walkforward(pnl: pd.DataFrame, settings: Settings) -> WalkForward:
         result.filled_test_days += int(test_chosen.isna().sum().sum())
         test_values = test_chosen.fillna(0.0).to_numpy()
         fold_mean: dict[str, float] = {}
+        # forge: the ensemble is built from the other methods' allocations in this fold, not by
+        # refitting them, so each fold fits every method once.
+        fold_allocations: dict[str, Allocation] = {}
         for method in METHODS:
-            allocation = allocate(method, train[chosen], settings)
+            if method != "ensemble":
+                fold_allocations[method] = allocate(method, train[chosen], fold_settings)
+        fold_allocations["ensemble"] = ensemble_of(fold_allocations, chosen)
+        for method in METHODS:
+            allocation = fold_allocations[method]
             weights = allocation.weights
+            equal_only = np.allclose(weights.to_numpy(), 1.0 / len(chosen), atol=1e-9)
+            flags[method].append((allocation.fallback, equal_only))
             combined = pd.Series(test_values @ weights.reindex(chosen).to_numpy(), index=test.index)
             pieces[method].append(combined)
             fold_mean[method] = float(combined.mean())
@@ -137,6 +170,8 @@ def run_walkforward(pnl: pd.DataFrame, settings: Settings) -> WalkForward:
                 wins[method] += 1
 
     result.folds = scored
+    result.fold_flags = flags
+    result.no_variation = sorted(no_variation)
     if scored == 0:
         return result
     # The holdout needs at least one selection fold before it, so it is empty on short runs.
@@ -200,6 +235,9 @@ class MethodVerdict:
     ci_low: float
     ci_high: float
     beats_equal_weight: bool
+    #: True when the method's holdout series is identical to equal weight's. Then no interval is
+    #: computed (``ci_low``/``ci_high`` are NaN): identical series are not a test.
+    identical: bool = False
 
 
 @dataclass(frozen=True)
@@ -209,6 +247,16 @@ class Judgement:
     winner: Method
     reason: str
     verdicts: tuple[MethodVerdict, ...]
+
+
+def _sharpe_rows(rows: np.ndarray, periods_per_year: int) -> np.ndarray:
+    """The annualised Sharpe of each row of a days-by-draws matrix, as :func:`selection.sharpe`
+    computes it for one series: NaN where a row has no variation."""
+    sd = np.std(rows, axis=1, ddof=1)
+    mean = np.mean(rows, axis=1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out = mean / sd * np.sqrt(periods_per_year)
+    return np.where(np.isfinite(sd) & (sd > 0), out, np.nan)
 
 
 def sharpe_gap_interval(
@@ -222,18 +270,70 @@ def sharpe_gap_interval(
     a = np.asarray(method_daily, dtype=float)
     b = np.asarray(equal_daily, dtype=float)
     gain = sharpe(a, settings.periods_per_year) - sharpe(b, settings.periods_per_year)
+    # forge: draws are generated in the same order as before (same seed, same numbers), then the
+    # Sharpe of every draw is computed in one matrix pass rather than a Python loop.
     rng = np.random.default_rng(settings.seed)
-    gaps = np.empty(settings.bootstrap_samples)
-    for k in range(settings.bootstrap_samples):
-        idx = stationary_bootstrap_indices(a.size, settings.bootstrap_block, rng)
-        gaps[k] = sharpe(a[idx], settings.periods_per_year) - sharpe(
-            b[idx], settings.periods_per_year
-        )
+    draws = np.stack(
+        [
+            stationary_bootstrap_indices(a.size, settings.bootstrap_block, rng)
+            for _ in range(settings.bootstrap_samples)
+        ]
+    )
+    gaps = _sharpe_rows(a[draws], settings.periods_per_year) - _sharpe_rows(
+        b[draws], settings.periods_per_year
+    )
     finite = gaps[np.isfinite(gaps)]
     if finite.size == 0:
         return float(gain), math.nan, math.nan
     low, high = np.percentile(finite, [2.5, 97.5])
     return float(gain), float(low), float(high)
+
+
+def _identical_to(method_days: pd.Series, equal_days: pd.Series) -> bool:
+    """True when a method's days equal equal weight's, day for day (to float precision)."""
+    aligned = method_days.reindex(equal_days.index).fillna(0.0).to_numpy(dtype=float)
+    return bool(
+        np.allclose(aligned, equal_days.fillna(0.0).to_numpy(dtype=float), rtol=1e-9, atol=1e-6)
+    )
+
+
+def _cap_forces_equal(size: int, cap: float) -> bool:
+    """True when the cap leaves exactly one feasible mix: equal weight (``size * cap == 1``)."""
+    return abs(size * cap - 1.0) < 1e-9
+
+
+def _identical_reason(walk: WalkForward, settings: Settings, method: Method | None) -> str:
+    """The one-line reason for a holdout that cannot test anything, and why.
+
+    Two different causes read the same on the holdout, so they get different words. A method
+    that **fell back** had no answer from its optimiser on every holdout fold. A combination the
+    **cap forces** to equal weight had a size where only one mix is allowed. Neither is a test.
+    """
+    holdout = walk.holdout_folds
+    if method is not None:
+        flags = walk.fold_flags.get(method, [])[-holdout:]
+        if flags and all(fell for fell, _ in flags):
+            return (
+                f"{method} fell back to equal weight on the holdout folds; identical series, "
+                "not a test. Using equal weight."
+            )
+    sizes = sorted({len(s) for s in walk.selections[-holdout:]})
+    if len(sizes) == 1 and _cap_forces_equal(sizes[0], settings.cap):
+        who = f"{method} " if method is not None else "Every method "
+        return (
+            f"{who}gave equal weight on the holdout: the holdout combinations held "
+            f"{sizes[0]} Alphas, and the {round(settings.cap * 100)}% cap leaves equal weight as "
+            "the only mix. Identical series, not a test. Using equal weight."
+        )
+    if method is None:
+        return (
+            "Every method gave equal weight on the holdout folds: identical series, not a test. "
+            "Using equal weight."
+        )
+    return (
+        f"{method} gave equal weight on the holdout folds: identical series, not a test. "
+        "Using equal weight."
+    )
 
 
 def judge(walk: WalkForward, settings: Settings) -> Judgement:
@@ -255,7 +355,8 @@ def judge(walk: WalkForward, settings: Settings) -> Judgement:
     n_select = len(walk.oos_select["equal_weight"])
     n_holdout = len(walk.oos_holdout["equal_weight"])
     equal_select = walk.oos_select["equal_weight"].to_numpy(dtype=float)
-    equal_hold = walk.oos_holdout["equal_weight"].to_numpy(dtype=float)
+    equal_hold_series = walk.oos_holdout["equal_weight"]
+    equal_hold = equal_hold_series.to_numpy(dtype=float)
 
     candidates: dict[Method, float] = {}
     for method in METHODS[1:]:
@@ -264,25 +365,27 @@ def judge(walk: WalkForward, settings: Settings) -> Judgement:
         if math.isfinite(gap) and gap > 0:
             candidates[method] = gap
 
+    # forge: a method whose holdout days are identical to equal weight's has nothing to test.
+    identical = {m for m in METHODS[1:] if _identical_to(walk.oos_holdout[m], equal_hold_series)}
     verdicts: list[MethodVerdict] = []
     for method in METHODS[1:]:
+        if method in identical:
+            verdicts.append(MethodVerdict(method, 0.0, math.nan, math.nan, False, identical=True))
+            continue
         gain, low, high = sharpe_gap_interval(
             walk.oos_holdout[method].to_numpy(dtype=float), equal_hold, settings
         )
-        verdicts.append(
-            MethodVerdict(
-                method=method,
-                gain=gain,
-                ci_low=low,
-                ci_high=high,
-                beats_equal_weight=False,
-            )
-        )
+        verdicts.append(MethodVerdict(method, gain, low, high, beats_equal_weight=False))
+    if len(identical) == len(METHODS) - 1:
+        reason = _identical_reason(walk, settings, None)
+        return Judgement("equal_weight", reason, tuple(verdicts))
     if not candidates:
         reason = "No method beat equal weight on the earlier folds; using equal weight."
         return Judgement("equal_weight", reason, tuple(verdicts))
 
     chosen = max(candidates, key=lambda m: candidates[m])
+    if chosen in identical:
+        return Judgement("equal_weight", _identical_reason(walk, settings, chosen), tuple(verdicts))
     check = next(v for v in verdicts if v.method == chosen)
     scope = f"chosen on {n_select} earlier days, checked on {n_holdout} holdout days"
     if math.isfinite(check.ci_low) and check.ci_low > 0:

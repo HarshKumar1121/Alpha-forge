@@ -12,7 +12,7 @@ import { fmt } from '@/lib/format'
 import type { Choice } from '@/lib/scope'
 import { Badge, Button, ErrorNotice, Input, Notice, Page, PageHeader, Skeleton } from '@/ui/kit'
 import { Select, Tooltip } from '@/ui/overlay'
-import { type OsmosisScopeView, type OsmosisSummary, osmosis } from './api'
+import { type OsmosisProgress, type OsmosisScopeView, type OsmosisSummary, osmosis } from './api'
 import { allocationCsv, METHOD_LABEL, ScopeBody, Tip } from './scope'
 import { SummaryPanel } from './summary'
 
@@ -26,6 +26,14 @@ export function OsmosisScreen() {
   const summary = useQuery({
     queryKey: ['forge', 'osmosis', 'summary'],
     queryFn: () => osmosis.summary(),
+  })
+  // forge: while the summary calculates (a cold load), poll its progress so the screen can say
+  // which scope is being worked on. Stops as soon as the summary has loaded.
+  const progress = useQuery({
+    queryKey: ['forge', 'osmosis', 'progress'],
+    queryFn: () => osmosis.progress(),
+    enabled: summary.isPending,
+    refetchInterval: summary.isPending ? 500 : false,
   })
   const [picked, setPicked] = useState<ScopeKey | null>(null)
   const [nPick, setNPick] = useState<number | null>(null)
@@ -51,7 +59,8 @@ export function OsmosisScreen() {
   if (summary.isPending) {
     return (
       <Page>
-        <Skeleton className="h-64" label="Loading scopes" />
+        <CalculatingNotice progress={progress.data} />
+        <Skeleton className="h-64" label="Calculating scopes" />
       </Page>
     )
   }
@@ -119,6 +128,21 @@ export function OsmosisScreen() {
         </>
       )}
     </Page>
+  )
+}
+
+/** The cold-load message: which scope is being calculated, out of how many. Warm loads skip it. */
+function CalculatingNotice({ progress }: { progress: OsmosisProgress | undefined }) {
+  const total = progress?.total ?? 0
+  const position = total > 0 ? Math.min((progress?.done ?? 0) + 1, total) : 0
+  return (
+    <Notice tone="info" title="Calculating the Osmosis allocation">
+      {total > 0 && progress?.current
+        ? `Scope ${position} of ${total} (${progress.current}). `
+        : 'Starting the calculation. '}
+      The first load takes about 20 to 25 seconds across all scopes; later loads of the same data
+      come from the cache.
+    </Notice>
   )
 }
 

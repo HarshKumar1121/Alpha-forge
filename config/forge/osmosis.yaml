@@ -23,3 +23,13 @@ bootstrap_block: 21       # mean stationary-bootstrap block length, days
 mean_shrink: 0.5          # how far Max-Sharpe pulls each mean toward the group mean
 seed: 7                   # fixed seed, so the same data gives the same verdict
 periods_per_year: 252     # trading days per year, for annualising Sharpe
+
+# Robust methods (docs/forge/OSMOSIS_ROBUST_METHODS.md)
+pnl_basis: after_cost_5bps  # gross or after_cost_5bps; a scope uses it only if every candidate has turnover
+resample_count: 200       # stationary-bootstrap draws for resampled_max_sharpe, final fit only
+fold_resample_count: 50   # draws inside each walk-forward fold (faster cold load); see OSMOSIS_ROBUST_METHODS.md
+bl_risk_aversion: 2.5     # Black-Litterman risk aversion (lambda); starting value, synthetic data only
+bl_tau: 0.05              # Black-Litterman prior uncertainty (tau); starting value, synthetic data only
+bl_kappa: 1.0             # how strongly an inconsistent Alpha's view is discounted; synthetic data only
+half_year_days: 126       # half-year length for the consistency score
+min_half_years: 4         # fewest measurable half-years before an Alpha is scored (else neutral)

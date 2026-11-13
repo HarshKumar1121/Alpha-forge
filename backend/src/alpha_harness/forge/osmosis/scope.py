@@ -44,8 +44,15 @@ import pandas as pd
 from .effective_bets import bets_curve, recommended_size
 from .points import to_points
 from .selection import Pick, greedy_trace, min_combination_size
-from .walkforward import Judgement, WalkForward, combo_stats, judge, run_walkforward
-from .weights import Method, allocate
+from .walkforward import (
+    Judgement,
+    WalkForward,
+    combo_stats,
+    has_variation,
+    judge,
+    run_walkforward,
+)
+from .weights import Allocation, Method, allocate
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -54,7 +61,39 @@ if TYPE_CHECKING:
 
 #: Cache of walk-forward judgements. Changing N or method on screen must not rerun the walk.
 _JUDGED: dict[tuple[object, ...], tuple[WalkForward, Judgement | None]] = {}
+#: Cache of final-plan refits: the same chosen Alphas, method and settings give the same weights.
+_FITS: dict[tuple[object, ...], Allocation] = {}
 _JUDGED_LIMIT = 64
+
+
+def _content_key(frame: pd.DataFrame, *extra: object) -> tuple[object, ...]:
+    """A cache key from a frame's columns, its first and last day, and its values. The values are
+    part of the key: frames of the same shape can hold different PnL."""
+    values = np.ascontiguousarray(frame.to_numpy(dtype=float))
+    return (
+        tuple(frame.columns),
+        tuple(str(d) for d in frame.index[[0, -1]]) if len(frame.index) else (),
+        hashlib.blake2b(values.tobytes(), digest_size=16).hexdigest(),
+        *extra,
+    )
+
+
+def clear_caches() -> None:
+    """Forget every cached walk-forward and refit. For tests that must judge or fit afresh."""
+    _JUDGED.clear()
+    _FITS.clear()
+
+
+def cached_fit(method: Method, tail: pd.DataFrame, settings: Settings) -> Allocation:
+    """The final-plan refit, computed once per distinct window, method and settings."""
+    key = _content_key(tail, method, repr(settings))
+    hit = _FITS.get(key)
+    if hit is None:
+        hit = allocate(method, tail, settings)
+        if len(_FITS) >= _JUDGED_LIMIT:
+            _FITS.clear()
+        _FITS[key] = hit
+    return hit
 
 
 @dataclass(frozen=True)
@@ -88,6 +127,9 @@ class ScopeAnalysis:
     delay: int
     alpha_count: int
     blocked: str | None = None
+    #: The PnL basis this scope's numbers are on, and why (see :mod:`inputs`). Set by the caller.
+    basis: str = "gross"
+    basis_reason: str = ""
     #: Days of complete history the selection used.
     window_days: int = 0
     have_days: int = 0
@@ -138,14 +180,7 @@ def _trailing_run(series: pd.Series) -> int:
 
 def judged_walk(pnl: pd.DataFrame, settings: Settings) -> tuple[WalkForward, Judgement | None]:
     """The walk-forward and its judgement, computed once per distinct input."""
-    # The values are part of the key: frames of the same shape can hold different PnL.
-    values = np.ascontiguousarray(pnl.to_numpy(dtype=float))
-    key = (
-        tuple(pnl.columns),
-        tuple(str(d) for d in pnl.index[[0, -1]]) if len(pnl.index) else (),
-        hashlib.blake2b(values.tobytes(), digest_size=16).hexdigest(),
-        repr(settings),
-    )
+    key = _content_key(pnl, repr(settings))
     hit = _JUDGED.get(key)
     if hit is not None:
         return hit
@@ -238,6 +273,10 @@ def analyse_scope(
     tail = pnl.iloc[-window:]
     complete = [c for c in cols if runs[c] >= window]
     gaps = [c for c in cols if runs[c] < window]
+    # forge: an Alpha with no PnL variation in the latest window has no correlation and a zero
+    # covariance row. It is excluded from the window, counted and named, never blocks the scope.
+    flat = [c for c in complete if not has_variation(tail[c])]
+    complete = [c for c in complete if c not in flat]
 
     # Ranking over every complete candidate: no size limit and no stopping rule, so the whole
     # order is known and N can be chosen afterwards. The correlation cap still applies.
@@ -271,7 +310,7 @@ def analyse_scope(
     chosen = [p.alpha for p in ranking[: out.n]]
     out.chosen = chosen
     tail_chosen = tail[chosen]
-    allocation = allocate(requested, tail_chosen, settings)
+    allocation = cached_fit(requested, tail_chosen, settings)
     out.fallback = allocation.fallback
     out.method = "equal_weight" if allocation.fallback else requested
     out.weights = allocation.weights
@@ -292,6 +331,8 @@ def analyse_scope(
     # Exclusions: candidates the ranking could not add, and those with a gap in the window.
     for alpha in gaps:
         out.excluded.append(Exclusion(alpha, "gap"))
+    for alpha in flat:
+        out.excluded.append(Exclusion(alpha, "flat"))
     corr = tail[complete].corr().abs().to_numpy()
     where = {c: i for i, c in enumerate(complete)}
     ranked = [p.alpha for p in ranking]

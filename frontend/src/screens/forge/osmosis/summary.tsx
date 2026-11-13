@@ -4,7 +4,7 @@ import { DASH, fmt } from '@/lib/format'
 import { Badge, Panel } from '@/ui/kit'
 import { type Column, DataTable } from '@/ui/table'
 import type { OsmosisSummary, OsmosisSummaryRow } from './api'
-import { methodLabel, Tip } from './scope'
+import { basisLabel, methodLabel, Tip } from './scope'
 
 const key = (r: Pick<OsmosisSummaryRow, 'region' | 'delay'>) => `${r.region} D${r.delay}`
 
@@ -77,6 +77,27 @@ const COLUMNS: Column<OsmosisSummaryRow>[] = [
     width: '96px',
     align: 'right',
     cell: (r) => <span className="num">{fmt.ratio(r.combinedSharpe)}</span>,
+  },
+  {
+    key: 'drawdown',
+    header: (
+      <Tip text="Largest fall from a running peak of the combined allocation's cumulative PnL, over the selection window, in PnL units.">
+        Max drawdown
+      </Tip>
+    ),
+    width: '112px',
+    align: 'right',
+    cell: (r) => <span className="num">{r.blocked ? DASH : fmt.int(r.maxDrawdown)}</span>,
+  },
+  {
+    key: 'basis',
+    header: (
+      <Tip text="The PnL the numbers are on. After cost charges 5 bps per dollar traded. A scope is net only when every candidate has turnover stored; otherwise gross.">
+        PnL basis
+      </Tip>
+    ),
+    width: '130px',
+    cell: (r) => <span className="text-ink-muted">{basisLabel(r.basis)}</span>,
   },
   {
     key: 'notes',

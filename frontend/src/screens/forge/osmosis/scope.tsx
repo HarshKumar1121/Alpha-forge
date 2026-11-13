@@ -24,6 +24,10 @@ export const METHOD_LABEL: Record<string, string> = {
 export const methodLabel = (method: string | null | undefined) =>
   method ? (METHOD_LABEL[method] ?? method) : DASH
 
+// forge: the PnL basis as the screen names it. Gross is BRAIN's own figure; net is after a cost.
+export const basisLabel = (basis: string | null | undefined) =>
+  basis === 'after_cost_5bps' ? 'After cost, 5 bps' : basis === 'gross' ? 'Gross' : (basis ?? DASH)
+
 /** A Sharpe-scale number with its sign, so a negative gap reads as negative. */
 export const signed = (v: number | null | undefined) =>
   isNum(v) ? `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(2)}` : DASH
@@ -244,7 +248,7 @@ const EXCLUDED_COLUMNS: Column<OsmosisExcluded>[] = [
           ? 'Correlated'
           : r.reason === 'gap'
             ? 'Gap in history'
-            : 'Flat PnL'}
+            : 'No variation'}
       </Badge>
     ),
   },
@@ -330,7 +334,11 @@ const METHOD_COLUMNS: Column<OsmosisMethod>[] = [
     header: <Tip text="Sharpe gap over equal weight, on the holdout folds only.">Gap vs equal</Tip>,
     width: '84px',
     align: 'right',
-    cell: (r) => <span className="num">{r.isPlan || r.gain == null ? DASH : signed(r.gain)}</span>,
+    cell: (r) => (
+      <span className="num">
+        {r.isPlan || r.identical || r.gain == null ? DASH : signed(r.gain)}
+      </span>
+    ),
   },
   {
     key: 'ci',
@@ -355,7 +363,11 @@ const METHOD_COLUMNS: Column<OsmosisMethod>[] = [
     ),
     width: '100px',
     cell: (r) =>
-      r.passedHoldout == null ? (
+      r.identical ? (
+        <Tip text="The holdout days are identical to equal weight's, so there is nothing to test. Not a failure and not a pass.">
+          <Badge tone="muted">Identical, not a test</Badge>
+        </Tip>
+      ) : r.passedHoldout == null ? (
         <span className="text-ink-subtle">{DASH}</span>
       ) : (
         <Badge tone={r.passedHoldout ? 'profit' : 'muted'}>
@@ -412,6 +424,18 @@ function BetsChart({ view }: { view: OsmosisScopeView }) {
     ],
   }
   return <EChart option={option} label="Effective number of independent bets as Alphas are added" />
+}
+
+/** The basis the numbers are on, and why: shown once per scope, above the Why panel. */
+function BasisLine({ view }: { view: OsmosisScopeView }) {
+  return (
+    <p className="text-xs text-ink-subtle">
+      <Tip text="The PnL every number on this screen is measured on. After cost charges 5 bps on each dollar traded. A scope uses it only when every candidate has turnover stored; otherwise it is gross, and the reason names the alpha that lacked it.">
+        PnL basis: {basisLabel(view.basis)}.
+      </Tip>{' '}
+      {view.basisReason}
+    </p>
+  )
 }
 
 /** The "Why this allocation" panel: the method, the size, and the evidence behind them. */
@@ -514,6 +538,9 @@ export function ScopeBody({ view }: { view: OsmosisScopeView }) {
   }
   const total = view.totalPoints
   const combined = view.combined
+  const noVariation = view.excluded.filter((e) => e.reason === 'flat').length
+  const sameDrawdown =
+    view.methods.length > 1 && new Set(view.methods.map((m) => m.maxDrawdown)).size === 1
   return (
     <div className="flex flex-col gap-4">
       {view.warnings.length > 0 && (
@@ -525,6 +552,8 @@ export function ScopeBody({ view }: { view: OsmosisScopeView }) {
           </ul>
         </Notice>
       )}
+
+      <BasisLine view={view} />
 
       <WhyPanel view={view} />
 
@@ -625,6 +654,12 @@ export function ScopeBody({ view }: { view: OsmosisScopeView }) {
         title="Excluded"
         description="Candidates left out of the ranking: correlated above the cap with a ranked alpha, with a gap in the selection window, or with no variation in PnL. Each names the alpha it collided with."
       >
+        {noVariation > 0 && (
+          <p className="mb-2 text-xs text-ink-subtle">
+            {noVariation} alpha{noVariation === 1 ? '' : 's'} with no PnL variation in the latest
+            window. Counted here, not dropped silently: a flat PnL has no correlation to measure.
+          </p>
+        )}
         {view.excluded.length > 0 ? (
           <DataTable
             label="Excluded alphas"
@@ -647,6 +682,12 @@ export function ScopeBody({ view }: { view: OsmosisScopeView }) {
           default is validated: a method that did not pass the holdout check is shown for
           comparison, not as a plan.
         </p>
+        {sameDrawdown && (
+          <p className="mt-2 text-xs text-ink-subtle">
+            Every method has the same max drawdown here, so the worst stretch did not separate them:
+            their combined PnL matched over it.
+          </p>
+        )}
         <div className="mt-2">
           {view.methods.length > 0 ? (
             <DataTable

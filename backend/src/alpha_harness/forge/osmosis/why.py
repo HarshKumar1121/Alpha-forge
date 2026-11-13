@@ -11,6 +11,8 @@ not stored, so no out-of-sample check is possible yet. The panel says so.
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from .weights import METHODS
+
 if TYPE_CHECKING:
     from .scope import ScopeAnalysis
     from .settings import Settings
@@ -53,11 +55,26 @@ def build_why(analysis: ScopeAnalysis, settings: Settings) -> WhyPanel:
             correlation_exclusions=correlated,
         )
 
+    judgement = analysis.judgement
+    equal_won = judgement is not None and judgement.winner == "equal_weight"
     if analysis.validated:
         method_line = (
             f"{analysis.method} was chosen on the earlier walk-forward folds and beat equal "
             "weight on the holdout folds."
         )
+    elif equal_won and judgement is not None and judgement.verdicts:
+        # forge: equal weight winning is the common, expected answer here, so it leads the panel.
+        if all(v.identical for v in judgement.verdicts):
+            method_line = (
+                f"Equal weight: every method gave the same weights out of sample, so none was "
+                f"tested ({len(METHODS)} tried). Selection and diversification matter more than "
+                "weighting here."
+            )
+        else:
+            method_line = (
+                f"Equal weight: no method beat it out of sample ({len(METHODS)} tested). "
+                "Selection and diversification matter more than weighting here."
+            )
     elif analysis.fallback:
         method_line = (
             f"{analysis.requested_method} found no solution on this window, so equal weight is "

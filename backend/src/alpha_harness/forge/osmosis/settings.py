@@ -10,6 +10,7 @@ from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING, Any
 
 from ..config import config_dir, read_yaml
+from .inputs import BASIS_COST_BPS
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -60,6 +61,27 @@ class Settings:
     seed: int = 7
     #: Trading days per year, for annualising Sharpe ratios.
     periods_per_year: int = 252
+    #: PnL basis for a scope: ``gross`` or ``after_cost_5bps`` (see :mod:`inputs`). A scope uses
+    #: the basis only when every candidate there has turnover stored, otherwise gross.
+    pnl_basis: str = "after_cost_5bps"
+    #: Resamples the resampled max-Sharpe method averages over, for the final fit. Each is a
+    #: stationary bootstrap.
+    resample_count: int = 200
+    #: Resamples used inside each walk-forward fold, to keep the walk fast. The final fit uses
+    #: ``resample_count``. Documented in docs/forge/OSMOSIS_ROBUST_METHODS.md.
+    fold_resample_count: int = 50
+    #: Risk aversion in the Black-Litterman prior: how much return the equal-risk-contribution
+    #: mix implies. Starting value, tuned on synthetic data only.
+    bl_risk_aversion: float = 2.5
+    #: Black-Litterman prior uncertainty (tau). Small: the prior is trusted, views must earn weight.
+    bl_tau: float = 0.05
+    #: How strongly an inconsistent Alpha's view is discounted (kappa). Starting value, tuned on
+    #: synthetic data only.
+    bl_kappa: float = 1.0
+    #: Length of a half-year, in trading days, for the consistency score.
+    half_year_days: int = 126
+    #: Fewest measurable half-years before an Alpha gets a consistency score. Fewer is neutral.
+    min_half_years: int = 4
 
 
 def from_mapping(raw: dict[str, Any]) -> Settings:
@@ -104,3 +126,14 @@ def _validate(s: Settings) -> None:
         raise ValueError("bootstrap_samples must be >= 100 and bootstrap_block >= 1")
     if s.total_points <= 0 or s.periods_per_year <= 0:
         raise ValueError("total_points and periods_per_year must be positive")
+    if s.pnl_basis not in BASIS_COST_BPS:
+        raise ValueError(f"pnl_basis must be one of {sorted(BASIS_COST_BPS)}, got {s.pnl_basis!r}")
+    if s.resample_count < 10 or s.fold_resample_count < 10:
+        raise ValueError(
+            "resample_count and fold_resample_count must each be at least 10, got "
+            f"{s.resample_count} and {s.fold_resample_count}"
+        )
+    if s.bl_risk_aversion <= 0 or s.bl_tau <= 0 or s.bl_kappa < 0:
+        raise ValueError("bl_risk_aversion and bl_tau must be > 0, and bl_kappa >= 0")
+    if s.half_year_days < 20 or s.min_half_years < 2:
+        raise ValueError("half_year_days must be >= 20 and min_half_years >= 2")

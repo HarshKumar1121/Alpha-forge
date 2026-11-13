@@ -41,6 +41,9 @@ def small_settings(**overrides: object) -> Settings:
         "step": 60,
         "bootstrap_samples": 200,
         "bootstrap_block": 10.0,
+        # forge: fewer resamples keep the walk-forward fast; these tests check plumbing, not the
+        # estimate. The production value (200) is tested in test_forge_osmosis_robust.py.
+        "resample_count": 20,
     }
     base.update(overrides)
     return Settings(**base)  # type: ignore[arg-type]
@@ -477,6 +480,7 @@ def test_fallback_weighting_is_labelled_in_the_csv(monkeypatch: pytest.MonkeyPat
 
     forced = Judgement("hrp", "forced for this test", ())
     monkeypatch.setattr(scope_mod, "_JUDGED", {})  # the walk is cached: judge it afresh
+    monkeypatch.setattr(scope_mod, "_FITS", {})  # so is the refit: solve it afresh
     monkeypatch.setattr(scope_mod, "judge", lambda _walk, _settings: forced)
     monkeypatch.setattr(scope_mod, "allocate", solver_fails)
     pnl = _scope_pnl(12)

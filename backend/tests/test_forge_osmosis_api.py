@@ -34,15 +34,23 @@ PARENT = "PAR1"
 
 def small_settings() -> Settings:
     """Settings small enough for fast tests, with the same fold layout logic as the defaults."""
+    # forge: small resample_count keeps the walk-forward fast in tests (see test_forge_osmosis.py).
     return Settings(
-        train_days=200, test_days=60, step=60, bootstrap_samples=200, bootstrap_block=10.0
+        train_days=200,
+        test_days=60,
+        step=60,
+        bootstrap_samples=200,
+        bootstrap_block=10.0,
+        resample_count=20,
     )
 
 
 class FakeCatalog:
     """The one catalog read the route makes: the submitted parent alphas."""
 
-    async def query(self, _sql: str, _params: object = None) -> list[dict[str, Any]]:
+    async def query(self, sql: str, _params: object = None) -> list[dict[str, Any]]:
+        if "count(*)" in sql:  # the stored-data revision: row count and last PnL date
+            return [{"n": 1, "last": "2024-01-01"}]
         return [{"alpha_id": PARENT}]
 
 

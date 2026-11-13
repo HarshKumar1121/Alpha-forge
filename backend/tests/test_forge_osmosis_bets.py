@@ -138,7 +138,7 @@ def test_erc_matches_inverse_volatility_when_alphas_are_uncorrelated() -> None:
 
 
 def test_erc_falls_back_to_equal_weight_and_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(weights_mod, "_equal_risk_contribution", lambda _cov: None)
+    monkeypatch.setattr(weights_mod, "equal_risk_contribution_solution", lambda _cov: None)
     train = _factor_returns(300, 4, rho=0.2, seed=9)
     result = allocate("equal_risk_contribution", train, small_settings(cap=0.6))
     assert result.fallback is True

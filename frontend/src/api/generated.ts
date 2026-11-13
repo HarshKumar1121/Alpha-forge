@@ -1590,6 +1590,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/forge/osmosis/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Osmosis Progress
+         * @description How far a cold summary load has got: scope ``done`` of ``total``, and the one in progress.
+         *     Polled by the screen while ``/summary`` is calculating. Read-only, no storage access.
+         */
+        get: operations["osmosis_progress_api_forge_osmosis_progress_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/forge/osmosis/scope": {
         parameters: {
             query?: never;
@@ -1621,6 +1642,9 @@ export interface paths {
         /**
          * Osmosis Summary
          * @description Every scope at a glance: its alpha count, recommended N, method and combined Sharpe.
+         *
+         *     A cold load calculates each scope in turn and reports it on ``/progress``; a warm load of the
+         *     same stored data returns from the cache.
          */
         get: operations["osmosis_summary_api_forge_osmosis_summary_get"];
         put?: never;
@@ -6942,6 +6966,8 @@ export interface components {
             foldWinRate: number | null;
             /** Gain */
             gain: number | null;
+            /** Identical */
+            identical?: boolean | null;
             /** Isplan */
             isPlan: boolean;
             /** Maxdrawdown */
@@ -6977,6 +7003,20 @@ export interface components {
             points: number;
             /** Weight */
             weight: number;
+        };
+        /**
+         * OsmosisProgress
+         * @description A cold load in progress: which scope is being calculated, out of how many.
+         */
+        OsmosisProgress: {
+            /** Calculating */
+            calculating: boolean;
+            /** Current */
+            current: string | null;
+            /** Done */
+            done: number;
+            /** Total */
+            total: number;
         };
         /** OsmosisRow */
         OsmosisRow: {
@@ -7038,6 +7078,10 @@ export interface components {
             alphaCount: number;
             /** Banner */
             banner: string | null;
+            /** Basis */
+            basis: string;
+            /** Basisreason */
+            basisReason: string;
             /** Belowminimum */
             belowMinimum: boolean;
             /** Betscurve */
@@ -7146,6 +7190,8 @@ export interface components {
             alphaCount: number;
             /** Banner */
             banner: string | null;
+            /** Basis */
+            basis: string;
             /** Belowminimum */
             belowMinimum: boolean;
             /** Blocked */
@@ -7156,6 +7202,8 @@ export interface components {
             defaultMethod: string;
             /** Delay */
             delay: number;
+            /** Maxdrawdown */
+            maxDrawdown: number | null;
             /** Method */
             method: string | null;
             /** N */
@@ -13234,13 +13282,33 @@ export interface operations {
             };
         };
     };
+    osmosis_progress_api_forge_osmosis_progress_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OsmosisProgress"];
+                };
+            };
+        };
+    };
     osmosis_scope_api_forge_osmosis_scope_get: {
         parameters: {
             query: {
                 region: string;
                 delay: number;
                 n?: number | null;
-                method?: ("equal_weight" | "inverse_volatility" | "min_variance" | "hrp" | "max_sharpe" | "equal_risk_contribution") | null;
+                method?: ("equal_weight" | "inverse_volatility" | "min_variance" | "hrp" | "max_sharpe" | "equal_risk_contribution" | "resampled_max_sharpe" | "nco" | "max_diversification" | "bayesian_blend" | "ensemble") | null;
             };
             header?: never;
             path?: never;

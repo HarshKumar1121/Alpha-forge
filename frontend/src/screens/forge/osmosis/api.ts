@@ -14,6 +14,7 @@ export type OsmosisExcluded = Schemas['OsmosisExcluded']
 export type OsmosisMethod = Schemas['OsmosisMethod']
 export type OsmosisChartPoint = Schemas['OsmosisChartPoint']
 export type OsmosisCurvePoint = Schemas['OsmosisCurvePoint']
+export type OsmosisProgress = Schemas['OsmosisProgress']
 
 const P = '/api/forge/osmosis'
 
@@ -25,4 +26,6 @@ export const osmosis = {
     http.get<OsmosisScopeView>(
       `${P}/scope${qs({ region, delay, n: n ?? undefined, method: method ?? undefined })}`,
     ),
+  /** How far a cold summary load has got. Read-only; polled while the summary calculates. */
+  progress: () => http.get<OsmosisProgress>(`${P}/progress`),
 }

@@ -45,6 +45,12 @@ Method = Literal[
     "hrp",
     "max_sharpe",
     "equal_risk_contribution",
+    # forge: the robust methods live in robust.py (docs/forge/OSMOSIS_ROBUST_METHODS.md)
+    "resampled_max_sharpe",
+    "nco",
+    "max_diversification",
+    "bayesian_blend",
+    "ensemble",
 ]
 #: Equal weight first: it is the baseline the others must beat.
 METHODS: tuple[Method, ...] = (
@@ -54,6 +60,15 @@ METHODS: tuple[Method, ...] = (
     "hrp",
     "max_sharpe",
     "equal_risk_contribution",
+    "resampled_max_sharpe",
+    "nco",
+    "max_diversification",
+    "bayesian_blend",
+    "ensemble",
+)
+#: Computed in :mod:`robust`. Imported lazily there, because robust reads this module's solvers.
+ROBUST_METHODS: frozenset[str] = frozenset(
+    {"resampled_max_sharpe", "nco", "max_diversification", "bayesian_blend", "ensemble"}
 )
 
 #: How close each Alpha's risk share must be to 1/N for the solver's answer to count.
@@ -148,7 +163,7 @@ def _hrp(cov: np.ndarray) -> np.ndarray:
     return weights / weights.sum()
 
 
-def _min_variance(cov: np.ndarray) -> np.ndarray | None:
+def min_variance_solution(cov: np.ndarray) -> np.ndarray | None:
     """The long-only minimum-variance mix, or ``None`` if the solver does not converge."""
     p = cov.shape[0]
     res = minimize(
@@ -173,7 +188,7 @@ def risk_shares(weights: np.ndarray, cov: np.ndarray) -> np.ndarray:
     return contributions / contributions.sum()
 
 
-def _equal_risk_contribution(cov: np.ndarray) -> np.ndarray | None:
+def equal_risk_contribution_solution(cov: np.ndarray) -> np.ndarray | None:
     """The long-only mix where every Alpha carries the same share of risk, or ``None``.
 
     Solved as a least-squares problem: find weights that make every pair of risk shares equal.
@@ -206,7 +221,21 @@ def _equal_risk_contribution(cov: np.ndarray) -> np.ndarray | None:
     return solved
 
 
-def _max_sharpe(cov: np.ndarray, train: np.ndarray, settings: Settings) -> np.ndarray | None:
+def negative_ratio_gradient(w: np.ndarray, cov: np.ndarray, vector: np.ndarray) -> np.ndarray:
+    """Gradient of ``-(vector . w) / sqrt(w' cov w)`` with respect to ``w``.
+
+    Analytic, so the optimiser does not estimate it by finite differences: that took most of the
+    walk-forward's time. The max-Sharpe objective is this with the shrunk means as ``vector``, and
+    the diversification ratio is this with the volatilities.
+    """
+    variance = max(float(w @ cov @ w), 1e-18)
+    s = np.sqrt(variance)
+    return -vector / s + float(w @ vector) * (cov @ w) / s**3
+
+
+def max_sharpe_solution(
+    cov: np.ndarray, train: np.ndarray, settings: Settings
+) -> np.ndarray | None:
     """The long-only mix with the highest Sharpe, using shrunk means.
 
     Each Alpha's mean is pulled toward the group mean by ``mean_shrink``. Raw means are the
@@ -227,6 +256,7 @@ def _max_sharpe(cov: np.ndarray, train: np.ndarray, settings: Settings) -> np.nd
     res = minimize(
         negative_sharpe,
         np.full(p, 1.0 / p),
+        jac=lambda w: negative_ratio_gradient(w, cov, mu_shrunk),
         bounds=[(0.0, 1.0)] * p,
         constraints=({"type": "eq", "fun": lambda w: float(w.sum()) - 1.0},),
         method="SLSQP",
@@ -254,33 +284,44 @@ def allocate(method: Method, train: pd.DataFrame, settings: Settings) -> Allocat
     if not np.isfinite(scale) or scale == 0.0:
         raise ValueError("training PnL has no variation; cannot allocate")
     x = values / scale
-    equal = np.full(p, 1.0 / p)
-    fallback = False
-
-    if method == "equal_weight":
-        raw = equal
-    elif method == "inverse_volatility":
-        sd = x.std(axis=0, ddof=1)
-        if not np.all(sd > 0):
-            raise ValueError("an Alpha has zero training volatility; cannot invert it")
-        raw = (1.0 / sd) / (1.0 / sd).sum()
-    else:
-        cov = ledoit_wolf_cov(x)
-        if method == "hrp":
-            raw = _hrp(cov)
-        elif method == "min_variance":
-            solved = _min_variance(cov)
-            fallback = solved is None
-            raw = equal if solved is None else np.clip(solved, 0.0, None)
-        elif method == "equal_risk_contribution":
-            solved = _equal_risk_contribution(cov)
-            fallback = solved is None
-            raw = equal if solved is None else np.clip(solved, 0.0, None)
-        else:
-            solved = _max_sharpe(cov, x, settings)
-            fallback = solved is None
-            raw = equal if solved is None else np.clip(solved, 0.0, None)
-        raw = raw / raw.sum()
+    raw, fallback = solve_raw(method, x, settings)
 
     bounded = bound_weights(raw, settings.floor, settings.cap)
     return Allocation(pd.Series(bounded, index=cols), fallback=fallback)
+
+
+def solve_raw(method: Method, x: np.ndarray, settings: Settings) -> tuple[np.ndarray, bool]:
+    """Raw, unbounded weights for ``method`` on scaled days-by-Alphas ``x``, and the fallback flag.
+
+    Shared by :func:`allocate` and by the ensemble, so an ensemble's inputs are computed exactly as
+    the standalone methods are.
+    """
+    p = x.shape[1]
+    equal = np.full(p, 1.0 / p)
+
+    if method == "equal_weight":
+        return equal, False
+    if method in ROBUST_METHODS:
+        # forge: local import, because robust.py imports this module's solvers.
+        from .robust import solve_robust
+
+        return solve_robust(method, x, settings)
+    if method == "inverse_volatility":
+        sd = x.std(axis=0, ddof=1)
+        if not np.all(sd > 0):
+            raise ValueError("an Alpha has zero training volatility; cannot invert it")
+        return (1.0 / sd) / (1.0 / sd).sum(), False
+
+    cov = ledoit_wolf_cov(x)
+    if method == "hrp":
+        return _hrp(cov), False
+    if method == "min_variance":
+        solved = min_variance_solution(cov)
+    elif method == "equal_risk_contribution":
+        solved = equal_risk_contribution_solution(cov)
+    else:
+        solved = max_sharpe_solution(cov, x, settings)
+    if solved is None:
+        return equal, True
+    clipped = np.clip(solved, 0.0, None)
+    return clipped / clipped.sum(), False
